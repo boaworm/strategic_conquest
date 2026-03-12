@@ -83,7 +83,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (mapWidth) body.mapWidth = mapWidth;
     if (mapHeight) body.mapHeight = mapHeight;
 
-    const res = await fetch('/api/games', {
+    const res = await fetch('api/games', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -100,6 +100,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (existing) existing.disconnect();
 
     const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io({
+      path: window.location.pathname.replace(/\/?$/, '') + '/socket.io/',
       auth: { token },
     });
 

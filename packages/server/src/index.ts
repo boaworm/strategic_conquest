@@ -194,7 +194,4 @@ io.on('connection', (socket) => {
 
 server.listen(PORT, () => {
   console.log(`Strategic Conquest server listening on port ${PORT}`);
-  console.log(`  Open:       http://localhost:${PORT}`);
-  console.log(`  REST API:   http://localhost:${PORT}/api/games`);
-  console.log(`  Health:     http://localhost:${PORT}/health`);
 });
