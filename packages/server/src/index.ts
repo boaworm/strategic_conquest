@@ -45,6 +45,20 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Proxy-resilient path handling: if request is /subpath/api/... or /subpath/assets/...
+// rewrite it to /api/... or /assets/... so it matches local routes.
+app.use((req, _res, next) => {
+  const prefixes = ['/api', '/socket.io', '/assets', '/health'];
+  for (const p of prefixes) {
+    const idx = req.url.indexOf(p);
+    if (idx > 0) {
+      req.url = req.url.substring(idx);
+      break;
+    }
+  }
+  next();
+});
+
 const server = http.createServer(app);
 const io = new SocketIOServer<ClientToServerEvents, ServerToClientEvents>(
   server,
