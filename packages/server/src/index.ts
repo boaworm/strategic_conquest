@@ -1,0 +1,200 @@
+import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+import cors from 'cors';
+import { Server as SocketIOServer } from 'socket.io';
+import type {
+  PlayerId,
+  GameAction,
+  ServerToClientEvents,
+  ClientToServerEvents,
+} from '@sc/shared';
+import { GamePhase } from '@sc/shared';
+import { GameManager } from './gameManager.js';
+import { createGameRoutes } from './routes/game.js';
+
+// ── Parse port from CLI args ─────────────────────────────────
+
+function parsePort(): number {
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--port' || args[i] === '-p') {
+      const val = Number(args[i + 1]);
+      if (!Number.isNaN(val) && val > 0 && val < 65536) return val;
+    }
+    // Also accept --port=N
+    if (args[i].startsWith('--port=')) {
+      const val = Number(args[i].split('=')[1]);
+      if (!Number.isNaN(val) && val > 0 && val < 65536) return val;
+    }
+  }
+  // Bare number as first arg
+  if (args.length > 0) {
+    const val = Number(args[0]);
+    if (!Number.isNaN(val) && val > 0 && val < 65536) return val;
+  }
+  return 4000;
+}
+
+const PORT = parsePort();
+
+// ── Server setup ─────────────────────────────────────────────
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const server = http.createServer(app);
+const io = new SocketIOServer<ClientToServerEvents, ServerToClientEvents>(
+  server,
+  {
+    cors: { origin: '*' },
+  },
+);
+
+const manager = new GameManager();
+
+// ── REST routes ──────────────────────────────────────────────
+
+app.use('/api', createGameRoutes(manager));
+
+// Health check
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', games: manager.listGames().length });
+});
+
+// ── Serve the built client ───────────────────────────────────
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const clientDir = path.resolve(__dirname, '..', 'public');
+app.use(express.static(clientDir));
+
+// SPA fallback: any non-API, non-socket route serves index.html
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(clientDir, 'index.html'));
+});
+
+// ── WebSocket handling ───────────────────────────────────────
+
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token as string | undefined;
+  if (!token) {
+    return next(new Error('Missing auth token'));
+  }
+
+  const auth = manager.authenticate(token);
+  if (!auth) {
+    return next(new Error('Invalid token'));
+  }
+  if (auth.role === 'admin') {
+    return next(new Error('Admin token cannot be used for socket connections'));
+  }
+
+  // Attach game info to socket
+  (socket as any).gameId = auth.session.id;
+  (socket as any).playerId = auth.role;
+  next();
+});
+
+io.on('connection', (socket) => {
+  const gameId = (socket as any).gameId as string;
+  const playerId = (socket as any).playerId as PlayerId;
+
+  const session = manager.getGame(gameId);
+  if (!session) {
+    socket.emit('error', { message: 'Game not found' });
+    socket.disconnect();
+    return;
+  }
+
+  // Join a Socket.IO room for this game
+  socket.join(gameId);
+
+  // Register socket
+  const shouldStart = manager.addSocket(session, playerId, socket.id);
+
+  // Notify others that a player joined
+  socket.to(gameId).emit('playerJoined', { playerId });
+
+  if (shouldStart) {
+    // Game transitions from Lobby to Active — send initial state to both players
+    for (const pid of ['player1', 'player2'] as PlayerId[]) {
+      const view = manager.getPlayerView(session, pid);
+      const sockets = session.sockets.get(pid)!;
+      for (const sid of sockets) {
+        io.to(sid).emit('gameStart', view);
+      }
+    }
+  } else if (session.state.phase === GamePhase.Active) {
+    // Game already active (reconnect or second tab) — send current state
+    const view = manager.getPlayerView(session, playerId);
+    socket.emit('stateUpdate', view);
+
+    // If game was paused, resume
+    socket.to(gameId).emit('gameResumed');
+  }
+
+  // ── Handle game actions ────────────────────────────────────
+
+  socket.on('action', (action: GameAction) => {
+    if (session.state.phase !== GamePhase.Active) {
+      socket.emit('actionRejected', { reason: 'Game is not active' });
+      return;
+    }
+
+    const result = manager.processAction(session, playerId, action);
+
+    if (!result.success) {
+      socket.emit('actionRejected', { reason: result.error ?? 'Unknown error' });
+      return;
+    }
+
+    // Send action result to the acting player's connections
+    const actorSockets = session.sockets.get(playerId)!;
+    for (const sid of actorSockets) {
+      io.to(sid).emit('actionResult', result);
+    }
+
+    // Send updated view to all connected players
+    for (const pid of ['player1', 'player2'] as PlayerId[]) {
+      const view = manager.getPlayerView(session, pid);
+      const sockets = session.sockets.get(pid)!;
+      for (const sid of sockets) {
+        io.to(sid).emit('stateUpdate', view);
+      }
+    }
+
+    // Check for game over
+    if (session.state.phase === (GamePhase.Finished as GamePhase) && session.state.winner) {
+      io.to(gameId).emit('gameOver', { winner: session.state.winner });
+    }
+  });
+
+  // ── Handle disconnect ──────────────────────────────────────
+
+  socket.on('disconnect', () => {
+    const status = manager.removeSocket(session, playerId, socket.id, () => {
+      // Forfeit callback
+      if (session.state.winner) {
+        io.to(gameId).emit('gameOver', { winner: session.state.winner });
+      }
+    });
+
+    if (status === 'paused') {
+      io.to(gameId).emit('gamePaused', {
+        reason: `${playerId} disconnected. Waiting for reconnect...`,
+      });
+      socket.to(gameId).emit('playerDisconnected', { playerId });
+    }
+  });
+});
+
+// ── Start ────────────────────────────────────────────────────
+
+server.listen(PORT, () => {
+  console.log(`Strategic Conquest server listening on port ${PORT}`);
+  console.log(`  Open:       http://localhost:${PORT}`);
+  console.log(`  REST API:   http://localhost:${PORT}/api/games`);
+  console.log(`  Health:     http://localhost:${PORT}/health`);
+});

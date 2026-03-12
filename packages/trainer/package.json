@@ -1,0 +1,14 @@
+{
+  "name": "@sc/trainer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --enable-source-maps dist/index.js",
+    "train": "npx tsx src/index.ts"
+  },
+  "dependencies": {
+    "@sc/shared": "*"
+  }
+}

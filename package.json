@@ -1,0 +1,17 @@
+{
+  "name": "strategic-conquest",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/client",
+    "packages/trainer"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=packages/shared && npm run build --workspace=packages/client",
+    "start": "npm run build && npx tsx packages/server/src/index.ts",
+    "dev": "npm run build && npx tsx watch packages/server/src/index.ts",
+    "test": "npm test --workspaces --if-present"
+  }
+}

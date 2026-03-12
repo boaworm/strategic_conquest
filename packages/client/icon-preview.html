@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Unit Icon Preview</title>
+  <style>
+    body { background: #1a1a2e; color: #fff; font-family: sans-serif; padding: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 20px; max-width: 900px; }
+    .unit { text-align: center; }
+    .unit canvas { border: 1px solid #333; border-radius: 4px; }
+    .unit .label { margin-top: 6px; font-size: 14px; text-transform: capitalize; }
+    h1 { margin-bottom: 20px; }
+    .row-label { grid-column: 1 / -1; font-size: 12px; color: #888; margin-top: 10px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Unit Icon Preview</h1>
+  <div class="grid" id="grid"></div>
+  <script>
+    const TILE = 80;
+    const P1 = '#4a9eed';
+    const P2 = '#ed4a4a';
+
+    const unitTypes = [
+      { name: 'infantry', label: 'Infantry' },
+      { name: 'tank', label: 'Tank' },
+      { name: 'fighter', label: 'Fighter' },
+      { name: 'bomber', label: 'Bomber' },
+      { name: 'transport', label: 'Transport' },
+      { name: 'destroyer', label: 'Destroyer' },
+      { name: 'submarine', label: 'Submarine' },
+      { name: 'carrier', label: 'Carrier' },
+      { name: 'battleship', label: 'Battleship' },
+    ];
+
+    function drawUnitShape(ctx, type, cx, cy, size, color) {
+      ctx.save();
+      const r = size * 0.38;
+      ctx.fillStyle = color;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, size / 12);
+      ctx.globalAlpha = 1;
+
+      switch (type) {
+        case 'infantry': {
+          const lw = Math.max(1.5, size / 10);
+          ctx.lineWidth = lw;
+          ctx.lineCap = 'round';
+          const headR = r * 0.18;
+          const headY = cy - r * 0.55;
+          const shoulderY = headY + headR + r * 0.08;
+          const hipY = cy + r * 0.15;
+          const footY = cy + r * 0.7;
+          ctx.beginPath();
+          ctx.arc(cx, headY, headR, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(cx, shoulderY);
+          ctx.lineTo(cx, hipY);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx - r * 0.4, shoulderY + r * 0.3);
+          ctx.lineTo(cx, shoulderY);
+          ctx.lineTo(cx + r * 0.35, shoulderY + r * 0.35);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx - r * 0.3, footY);
+          ctx.lineTo(cx, hipY);
+          ctx.lineTo(cx + r * 0.3, footY);
+          ctx.stroke();
+          ctx.lineWidth = lw * 0.8;
+          ctx.beginPath();
+          ctx.moveTo(cx + r * 0.35, shoulderY + r * 0.35);
+          ctx.lineTo(cx + r * 0.15, headY - headR * 0.5);
+          ctx.stroke();
+          break;
+        }
+        case 'tank': {
+          const hw = r * 0.9;
+          const hh = r * 0.35;
+          const trackY = cy + r * 0.25;
+          ctx.fillStyle = '#000';
+          ctx.globalAlpha = 0.4;
+          const trackH = r * 0.3;
+          ctx.beginPath();
+          ctx.roundRect(cx - hw, trackY, hw * 2, trackH, trackH * 0.4);
+          ctx.fill();
+          ctx.globalAlpha = 0.25;
+          ctx.fillStyle = '#fff';
+          const wheelR = trackH * 0.25;
+          for (let i = 0; i < 4; i++) {
+            const wx = cx - hw * 0.7 + (i * hw * 1.4) / 3;
+            ctx.beginPath();
+            ctx.arc(wx, trackY + trackH * 0.5, wheelR, 0, 2 * Math.PI);
+            ctx.fill();
+          }
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = color;
+          const hullTop = trackY - hh * 1.6;
+          ctx.beginPath();
+          ctx.moveTo(cx - hw, trackY);
+          ctx.lineTo(cx - hw * 0.75, hullTop);
+          ctx.lineTo(cx + hw * 0.85, hullTop);
+          ctx.lineTo(cx + hw, trackY);
+          ctx.closePath();
+          ctx.fill();
+          const turretW = hw * 0.7;
+          const turretH = hh * 0.9;
+          const turretLeft = cx - hw * 0.35;
+          const turretTop = hullTop - turretH;
+          ctx.fillRect(turretLeft, turretTop, turretW, turretH);
+          const barrelH = turretH * 0.3;
+          const barrelY = turretTop + turretH * 0.35;
+          ctx.fillRect(turretLeft + turretW, barrelY, hw * 0.65, barrelH);
+          break;
+        }
+        case 'fighter': {
+          ctx.beginPath();
+          ctx.moveTo(cx, cy - r);
+          ctx.lineTo(cx + r * 0.15, cy - r * 0.2);
+          ctx.lineTo(cx + r, cy + r * 0.1);
+          ctx.lineTo(cx + r * 0.8, cy + r * 0.35);
+          ctx.lineTo(cx + r * 0.15, cy + r * 0.15);
+          ctx.lineTo(cx + r * 0.15, cy + r * 0.55);
+          ctx.lineTo(cx + r * 0.45, cy + r);
+          ctx.lineTo(cx + r * 0.3, cy + r);
+          ctx.lineTo(cx, cy + r * 0.7);
+          ctx.lineTo(cx - r * 0.3, cy + r);
+          ctx.lineTo(cx - r * 0.45, cy + r);
+          ctx.lineTo(cx - r * 0.15, cy + r * 0.55);
+          ctx.lineTo(cx - r * 0.15, cy + r * 0.15);
+          ctx.lineTo(cx - r * 0.8, cy + r * 0.35);
+          ctx.lineTo(cx - r, cy + r * 0.1);
+          ctx.lineTo(cx - r * 0.15, cy - r * 0.2);
+          ctx.closePath();
+          ctx.fill();
+          break;
+        }
+        case 'bomber': {
+          ctx.beginPath();
+          ctx.moveTo(cx - r * 0.2, cy - r * 0.7);
+          ctx.quadraticCurveTo(cx, cy - r, cx + r * 0.2, cy - r * 0.7);
+          ctx.lineTo(cx + r * 0.2, cy - r * 0.15);
+          ctx.lineTo(cx + r * 1.1, cy - r * 0.05);
+          ctx.lineTo(cx + r * 1.1, cy + r * 0.2);
+          ctx.lineTo(cx + r * 0.2, cy + r * 0.15);
+          ctx.lineTo(cx + r * 0.2, cy + r * 0.6);
+          ctx.lineTo(cx + r * 0.5, cy + r);
+          ctx.lineTo(cx + r * 0.35, cy + r);
+          ctx.lineTo(cx, cy + r * 0.75);
+          ctx.lineTo(cx - r * 0.35, cy + r);
+          ctx.lineTo(cx - r * 0.5, cy + r);
+          ctx.lineTo(cx - r * 0.2, cy + r * 0.6);
+          ctx.lineTo(cx - r * 0.2, cy + r * 0.15);
+          ctx.lineTo(cx - r * 1.1, cy + r * 0.2);
+          ctx.lineTo(cx - r * 1.1, cy - r * 0.05);
+          ctx.lineTo(cx - r * 0.2, cy - r * 0.15);
+          ctx.closePath();
+          ctx.fill();
+          break;
+        }
+        case 'transport': {
+          const hw = r * 0.95;
+          const hullTop = cy - r * 0.1;
+          const waterline = cy + r * 0.2;
+          const hullBottom = cy + r * 0.55;
+          ctx.beginPath();
+          ctx.moveTo(cx - hw, hullTop);
+          ctx.lineTo(cx + hw * 0.6, hullTop);
+          ctx.lineTo(cx + hw, waterline);
+          ctx.lineTo(cx + hw * 0.85, hullBottom);
+          ctx.lineTo(cx - hw * 0.8, hullBottom);
+          ctx.lineTo(cx - hw, waterline);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = '#000';
+          ctx.globalAlpha = 0.3;
+          ctx.lineWidth = Math.max(1, size / 14);
+          ctx.beginPath();
+          ctx.moveTo(cx - hw, waterline);
+          ctx.lineTo(cx + hw, waterline);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#000';
+          ctx.globalAlpha = 0.35;
+          const bridgeW = hw * 0.3;
+          const bridgeH = r * 0.45;
+          ctx.fillRect(cx - hw + hw * 0.05, hullTop - bridgeH, bridgeW, bridgeH);
+          const stackW = hw * 0.1;
+          const stackH = r * 0.3;
+          ctx.fillRect(cx - hw + hw * 0.12, hullTop - bridgeH - stackH, stackW, stackH);
+          ctx.globalAlpha = 0.25;
+          const hatchW = hw * 0.2;
+          const hatchH = r * 0.13;
+          ctx.fillRect(cx - hw * 0.2, hullTop - hatchH * 0.8, hatchW, hatchH);
+          ctx.fillRect(cx + hw * 0.1, hullTop - hatchH * 0.8, hatchW, hatchH);
+          ctx.fillRect(cx + hw * 0.38, hullTop - hatchH * 0.8, hatchW * 0.8, hatchH);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = color;
+          break;
+        }
+        case 'destroyer': {
+          const dhw = r * 0.9;
+          const dhullTop = cy - r * 0.05;
+          const dwl = cy + r * 0.2;
+          const dkeel = cy + r * 0.45;
+          ctx.beginPath();
+          ctx.moveTo(cx - dhw, dhullTop);
+          ctx.lineTo(cx + dhw * 0.65, dhullTop);
+          ctx.lineTo(cx + dhw, dwl);
+          ctx.lineTo(cx + dhw * 0.8, dkeel);
+          ctx.lineTo(cx - dhw * 0.75, dkeel);
+          ctx.lineTo(cx - dhw, dwl);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = '#000';
+          ctx.globalAlpha = 0.3;
+          ctx.lineWidth = Math.max(1, size / 16);
+          ctx.beginPath();
+          ctx.moveTo(cx - dhw, dwl);
+          ctx.lineTo(cx + dhw, dwl);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#000';
+          ctx.globalAlpha = 0.35;
+          ctx.fillRect(cx - dhw * 0.3, dhullTop - r * 0.35, dhw * 0.35, r * 0.35);
+          ctx.fillRect(cx - dhw * 0.12, dhullTop - r * 0.6, dhw * 0.06, r * 0.25);
+          ctx.globalAlpha = 0.4;
+          ctx.beginPath();
+          ctx.arc(cx + dhw * 0.3, dhullTop - r * 0.05, r * 0.1, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.fillRect(cx + dhw * 0.3, dhullTop - r * 0.08, dhw * 0.3, r * 0.06);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = color;
+          break;
+        }
+        case 'submarine': {
+          const shw = r * 0.9;
+          const shullMid = cy + r * 0.15;
+          const shullH = r * 0.28;
+          ctx.beginPath();
+          ctx.moveTo(cx + shw, shullMid);
+          ctx.quadraticCurveTo(cx + shw * 0.3, shullMid - shullH, cx - shw * 0.7, shullMid - shullH * 0.8);
+          ctx.lineTo(cx - shw, shullMid);
+          ctx.lineTo(cx - shw * 0.7, shullMid + shullH * 0.8);
+          ctx.quadraticCurveTo(cx + shw * 0.3, shullMid + shullH, cx + shw, shullMid);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = '#000';
+          ctx.globalAlpha = 0.35;
+          const sailW = shw * 0.25;
+          const sailH = r * 0.4;
+          ctx.beginPath();
+          ctx.moveTo(cx - sailW * 0.3, shullMid - shullH * 0.7);
+          ctx.lineTo(cx - sailW * 0.1, shullMid - shullH * 0.7 - sailH);
+          ctx.lineTo(cx + sailW, shullMid - shullH * 0.7 - sailH * 0.7);
+          ctx.lineTo(cx + sailW, shullMid - shullH * 0.7);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillRect(cx + sailW * 0.3, shullMid - shullH * 0.7 - sailH - r * 0.15, sailW * 0.1, r * 0.15);
+          ctx.globalAlpha = 0.3;
+          ctx.beginPath();
+          ctx.moveTo(cx - shw, shullMid);
+          ctx.lineTo(cx - shw * 0.85, shullMid - shullH * 1.1);
+          ctx.lineTo(cx - shw * 0.7, shullMid);
+          ctx.closePath();
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(cx - shw, shullMid);
+          ctx.lineTo(cx - shw * 0.85, shullMid + shullH * 1.1);
+          ctx.lineTo(cx - shw * 0.7, shullMid);
+          ctx.closePath();
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = color;
+          break;
+        }
+        case 'carrier': {
+          const chw = r * 0.95;
+          const cDeck = cy + r * 0.05;
+          const cwl = cy + r * 0.25;
+          const ckeel = cy + r * 0.45;
+          ctx.beginPath();
+          ctx.moveTo(cx - chw, cDeck);
+          ctx.lineTo(cx + chw * 0.8, cDeck);
+          ctx.lineTo(cx + chw, cDeck + r * 0.05);
+          ctx.lineTo(cx + chw * 0.9, ckeel);
+          ctx.lineTo(cx - chw * 0.85, ckeel);
+          ctx.lineTo(cx - chw, cwl);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = '#000';
+          ctx.globalAlpha = 0.2;
+          ctx.lineWidth = Math.max(1, size / 14);
+          ctx.beginPath();
+          ctx.moveTo(cx - chw, cDeck);
+          ctx.lineTo(cx + chw * 0.8, cDeck);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#000';
+          ctx.globalAlpha = 0.4;
+          const islandW = chw * 0.15;
+          const islandH = r * 0.35;
+          ctx.fillRect(cx - chw * 0.1, cDeck - islandH, islandW, islandH);
+          ctx.fillRect(cx - chw * 0.04, cDeck - islandH - r * 0.18, islandW * 0.2, r * 0.18);
+          ctx.globalAlpha = 0.15;
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = Math.max(1, size / 18);
+          ctx.beginPath();
+          ctx.moveTo(cx + chw * 0.65, cDeck - r * 0.01);
+          ctx.lineTo(cx - chw * 0.6, cDeck - r * 0.01);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = color;
+          break;
+        }
+        case 'battleship': {
+          const bhw = r * 0.95;
+          const bhullTop = cy - r * 0.05;
+          const bwl = cy + r * 0.22;
+          const bkeel = cy + r * 0.55;
+          ctx.beginPath();
+          ctx.moveTo(cx - bhw, bhullTop);
+          ctx.lineTo(cx + bhw * 0.6, bhullTop);
+          ctx.lineTo(cx + bhw, bwl);
+          ctx.lineTo(cx + bhw * 0.85, bkeel);
+          ctx.lineTo(cx - bhw * 0.8, bkeel);
+          ctx.lineTo(cx - bhw, bwl);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = '#000';
+          ctx.globalAlpha = 0.25;
+          ctx.lineWidth = Math.max(1, size / 14);
+          ctx.beginPath();
+          ctx.moveTo(cx - bhw, bwl);
+          ctx.lineTo(cx + bhw, bwl);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#000';
+          ctx.globalAlpha = 0.35;
+          const btowerW = bhw * 0.4;
+          const btowerH = r * 0.5;
+          ctx.fillRect(cx - btowerW * 0.5, bhullTop - btowerH, btowerW, btowerH);
+          const ubW = btowerW * 0.6;
+          const ubH = r * 0.25;
+          ctx.fillRect(cx - ubW * 0.5, bhullTop - btowerH - ubH, ubW, ubH);
+          ctx.fillRect(cx - ubW * 0.08, bhullTop - btowerH - ubH - r * 0.2, ubW * 0.12, r * 0.2);
+          ctx.fillRect(cx - bhw * 0.35, bhullTop - r * 0.4, bhw * 0.15, r * 0.4);
+          ctx.fillRect(cx - bhw * 0.48, bhullTop - r * 0.32, bhw * 0.1, r * 0.32);
+          ctx.globalAlpha = 0.4;
+          ctx.beginPath();
+          ctx.arc(cx + bhw * 0.3, bhullTop - r * 0.05, r * 0.13, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.fillRect(cx + bhw * 0.3, bhullTop - r * 0.1, bhw * 0.35, r * 0.04);
+          ctx.fillRect(cx + bhw * 0.3, bhullTop - r * 0.02, bhw * 0.35, r * 0.04);
+          ctx.beginPath();
+          ctx.arc(cx - bhw * 0.6, bhullTop - r * 0.05, r * 0.12, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.fillRect(cx - bhw * 0.9, bhullTop - r * 0.08, bhw * 0.3, r * 0.03);
+          ctx.fillRect(cx - bhw * 0.9, bhullTop - r * 0.01, bhw * 0.3, r * 0.03);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = color;
+          break;
+        }
+      }
+      ctx.restore();
+    }
+
+    const grid = document.getElementById('grid');
+
+    // Land units
+    const landLabel = document.createElement('div');
+    landLabel.className = 'row-label';
+    landLabel.textContent = 'LAND UNITS';
+    grid.appendChild(landLabel);
+
+    // Group by domain
+    const groups = {
+      land: ['infantry', 'tank'],
+      air: ['fighter', 'bomber'],
+      sea: ['transport', 'destroyer', 'submarine', 'carrier', 'battleship'],
+    };
+
+    const labels = { land: 'LAND UNITS', air: 'AIR UNITS', sea: 'NAVAL UNITS' };
+    // Remove the extra one we added
+    grid.removeChild(landLabel);
+
+    for (const [domain, types] of Object.entries(groups)) {
+      const label = document.createElement('div');
+      label.className = 'row-label';
+      label.textContent = labels[domain];
+      grid.appendChild(label);
+
+      for (const ut of types) {
+        const info = unitTypes.find(u => u.name === ut);
+        const div = document.createElement('div');
+        div.className = 'unit';
+
+        // Draw on ocean bg for sea, land bg for land, sky for air
+        const bgColors = { land: '#3a7d44', air: '#5577aa', sea: '#0a2463' };
+
+        // Two canvases side by side (P1 and P2)
+        for (const [pColor, pLabel] of [[P1, 'P1'], [P2, 'P2']]) {
+          const canvas = document.createElement('canvas');
+          canvas.width = TILE;
+          canvas.height = TILE;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = bgColors[domain];
+          ctx.fillRect(0, 0, TILE, TILE);
+          drawUnitShape(ctx, ut, TILE / 2, TILE / 2, TILE, pColor);
+          div.appendChild(canvas);
+        }
+
+        const lbl = document.createElement('div');
+        lbl.className = 'label';
+        lbl.textContent = info.label;
+        div.appendChild(lbl);
+        grid.appendChild(div);
+      }
+    }
+  </script>
+</body>
+</html>
