@@ -83,32 +83,51 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (mapWidth) body.mapWidth = mapWidth;
     if (mapHeight) body.mapHeight = mapHeight;
 
-    const res = await fetch('api/games', {
+    console.log('Creating game via fetch("./api/games")...');
+    const res = await fetch('./api/games', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
 
-    if (!res.ok) throw new Error('Failed to create game');
+    if (!res.ok) {
+      const text = await res.text();
+      console.error('Failed to create game:', res.status, text);
+      throw new Error(`Failed to create game: ${res.status}`);
+    }
     const data: CreateGameResponse = await res.json();
     set({ gameId: data.gameId });
     return data;
   },
 
   joinGame: (token: string) => {
+    if (!token) {
+      console.error('joinGame called with empty token');
+      return;
+    }
     const existing = get().socket;
     if (existing) existing.disconnect();
 
+    const socketPath = window.location.pathname.replace(/\/?$/, '') + '/socket.io/';
+    console.log('Joining game, socket path:', socketPath);
+
     const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io({
-      path: window.location.pathname.replace(/\/?$/, '') + '/socket.io/',
+      path: socketPath,
       auth: { token },
     });
 
     socket.on('connect', () => {
+      console.log('Socket connected!');
       set({ connected: true, token, error: null });
     });
 
-    socket.on('disconnect', () => {
+    socket.on('connect_error', (err) => {
+      console.error('Socket connection error:', err);
+      set({ error: `Connection failed: ${err.message}` });
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log('Socket disconnected:', reason);
       set({ connected: false });
     });
 

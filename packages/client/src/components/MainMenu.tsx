@@ -1,43 +1,60 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
 import type { CreateGameResponse } from '@sc/shared';
 
 const WORLD_SIZES = [
-  { label: 'Tiny',        width: 30,  height: 10 },
-  { label: 'Small',       width: 50,  height: 20 },
-  { label: 'Medium',      width: 65,  height: 25 },
-  { label: 'Large',       width: 80,  height: 30 },
+  { label: 'Tiny', width: 30, height: 10 },
+  { label: 'Small', width: 50, height: 20 },
+  { label: 'Medium', width: 65, height: 25 },
+  { label: 'Large', width: 80, height: 30 },
   { label: 'Extra Large', width: 120, height: 40 },
 ] as const;
 
 export function MainMenu() {
   const createGame = useGameStore((s) => s.createGame);
   const joinGame = useGameStore((s) => s.joinGame);
+  const storeError = useGameStore((s) => s.error);
+  const connected = useGameStore((s) => s.connected);
 
   const [mode, setMode] = useState<'menu' | 'create' | 'join'>('menu');
   const [tokenInput, setTokenInput] = useState('');
   const [createdGame, setCreatedGame] = useState<CreateGameResponse | null>(null);
-  const [error, setError] = useState('');
+  const [localError, setLocalError] = useState('');
+  const [isConnecting, setIsConnecting] = useState(false);
   const [worldSize, setWorldSize] = useState(2); // default: Medium
+
+  const error = localError || storeError;
+
+  // Reset connecting state if error occurs or if we finish connecting
+  useEffect(() => {
+    if (error || connected) {
+      setIsConnecting(false);
+    }
+  }, [error, connected]);
 
   async function handleCreate() {
     try {
+      setLocalError('');
       const size = WORLD_SIZES[worldSize];
       const result = await createGame(size.width, size.height);
       setCreatedGame(result);
       setMode('create');
     } catch {
-      setError('Failed to create game');
+      setLocalError('Failed to create game');
     }
   }
 
   function handleJoin() {
     const token = tokenInput.trim();
     if (!token) return;
+    setLocalError('');
+    setIsConnecting(true);
     joinGame(token);
   }
 
   function joinAsPlayer(token: string) {
+    setLocalError('');
+    setIsConnecting(true);
     joinGame(token);
   }
 
@@ -95,10 +112,11 @@ export function MainMenu() {
         />
         <div className="flex gap-2">
           <button
-            className="px-4 py-2 bg-green-700 rounded hover:bg-green-600"
+            className="px-4 py-2 bg-green-700 rounded hover:bg-green-600 disabled:opacity-50"
             onClick={handleJoin}
+            disabled={isConnecting}
           >
-            Connect
+            {isConnecting ? 'Connecting...' : 'Connect'}
           </button>
           <button
             className="px-4 py-2 bg-gray-600 rounded hover:bg-gray-500"
@@ -123,11 +141,10 @@ export function MainMenu() {
             {WORLD_SIZES.map((s, i) => (
               <button
                 key={s.label}
-                className={`px-3 py-1.5 rounded text-sm ${
-                  i === worldSize
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                }`}
+                className={`px-3 py-1.5 rounded text-sm ${i === worldSize
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
                 onClick={() => setWorldSize(i)}
               >
                 {s.label}
