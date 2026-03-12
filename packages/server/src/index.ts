@@ -48,6 +48,7 @@ app.use(express.json());
 // Proxy-resilient path handling: if request is /subpath/api/... or /subpath/assets/...
 // rewrite it to /api/... or /assets/... so it matches local routes.
 app.use((req, _res, next) => {
+  console.log(`[HTTP] ${req.method} ${req.url}`);
   const prefixes = ['/api', '/socket.io', '/assets', '/health'];
   for (const p of prefixes) {
     const idx = req.url.indexOf(p);
@@ -66,6 +67,20 @@ const io = new SocketIOServer<ClientToServerEvents, ServerToClientEvents>(
     cors: { origin: '*' },
   },
 );
+
+// Deep logging for debugging reverse proxy / WebSocket issues
+server.on('upgrade', (req, _socket, _head) => {
+  console.log(`[Upgrade] ${req.method} ${req.url}`);
+});
+
+io.engine.on('connection_error', (err) => {
+  console.error('[Socket.IO Error]', {
+    url: err.req.url,
+    code: err.code,
+    message: err.message,
+    context: err.context,
+  });
+});
 
 const manager = new GameManager();
 

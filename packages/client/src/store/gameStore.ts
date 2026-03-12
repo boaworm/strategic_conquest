@@ -114,7 +114,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io({
       path: socketPath,
       auth: { token },
-      transports: ['websocket'], // bypass polling issues through proxy
+      transports: ['websocket', 'polling'], // allow fallback to polling if ws fails
     });
 
     socket.on('connect', () => {
