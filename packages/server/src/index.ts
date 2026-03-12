@@ -94,11 +94,13 @@ app.get('*', (_req, res) => {
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token as string | undefined;
   if (!token) {
+    console.error('Socket connection rejected: Missing auth token');
     return next(new Error('Missing auth token'));
   }
 
   const auth = manager.authenticate(token);
   if (!auth) {
+    console.error('Socket connection rejected: Invalid token', token);
     return next(new Error('Invalid token'));
   }
   if (auth.role === 'admin') {
