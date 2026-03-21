@@ -13,6 +13,7 @@ import type {
 import { GamePhase } from '@sc/shared';
 import { GameManager } from './gameManager.js';
 import { createGameRoutes } from './routes/game.js';
+import { createTrainingRoutes } from './routes/training.js';
 
 // ── Parse port from CLI args ─────────────────────────────────
 
@@ -87,6 +88,7 @@ const manager = new GameManager();
 // ── REST routes ──────────────────────────────────────────────
 
 app.use('/api', createGameRoutes(manager));
+app.use('/api', createTrainingRoutes(manager));
 
 // Health check
 app.get('/health', (_req, res) => {

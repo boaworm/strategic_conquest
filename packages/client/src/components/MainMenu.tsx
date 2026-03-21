@@ -10,18 +10,25 @@ const WORLD_SIZES = [
   { label: 'Extra Large', width: 120, height: 40 },
 ] as const;
 
+const AI_DIFFICULTIES = [
+  { label: 'Easy', value: 'easy' },
+  { label: 'Medium', value: 'medium' },
+  { label: 'Hard', value: 'hard' },
+] as const;
+
 export function MainMenu() {
   const createGame = useGameStore((s) => s.createGame);
   const joinGame = useGameStore((s) => s.joinGame);
   const storeError = useGameStore((s) => s.error);
   const connected = useGameStore((s) => s.connected);
 
-  const [mode, setMode] = useState<'menu' | 'create' | 'join'>('menu');
+  const [mode, setMode] = useState<'menu' | 'create' | 'join' | 'ai-select'>('menu');
   const [tokenInput, setTokenInput] = useState('');
   const [createdGame, setCreatedGame] = useState<CreateGameResponse | null>(null);
   const [localError, setLocalError] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [worldSize, setWorldSize] = useState(2); // default: Medium
+  const [aiDifficulty, setAiDifficulty] = useState('medium'); // default: Medium
 
   const error = localError || storeError;
 
@@ -36,7 +43,19 @@ export function MainMenu() {
     try {
       setLocalError('');
       const size = WORLD_SIZES[worldSize];
-      const result = await createGame(size.width, size.height);
+      const result = await createGame(size.width, size.height, 'pvp');
+      setCreatedGame(result);
+      setMode('create');
+    } catch {
+      setLocalError('Failed to create game');
+    }
+  }
+
+  async function handleCreateAI() {
+    try {
+      setLocalError('');
+      const size = WORLD_SIZES[worldSize];
+      const result = await createGame(size.width, size.height, 'pve', aiDifficulty);
       setCreatedGame(result);
       setMode('create');
     } catch {
@@ -129,6 +148,68 @@ export function MainMenu() {
     );
   }
 
+  if (mode === 'ai-select') {
+    return (
+      <div className="max-w-lg mx-auto mt-20 bg-gray-800 text-white rounded-lg p-6 space-y-6">
+        <h2 className="text-xl font-bold">Play vs AI</h2>
+        <p className="text-gray-300 text-sm">Select difficulty level</p>
+        {error && <p className="text-red-400">{error}</p>}
+
+        <div className="text-left space-y-2">
+          <label className="text-sm text-gray-300 block">World Size</label>
+          <div className="flex gap-2 justify-center flex-wrap">
+            {WORLD_SIZES.map((s, i) => (
+              <button
+                key={s.label}
+                className={`px-3 py-1.5 rounded text-sm ${i === worldSize
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                onClick={() => setWorldSize(i)}
+              >
+                {s.label}
+                <span className="block text-xs text-gray-400">{s.width}×{s.height}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="text-left space-y-2">
+          <label className="text-sm text-gray-300 block">AI Difficulty</label>
+          <div className="flex gap-2 justify-center">
+            {AI_DIFFICULTIES.map((diff) => (
+              <button
+                key={diff.value}
+                className={`px-4 py-2 rounded ${diff.value === aiDifficulty
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                onClick={() => setAiDifficulty(diff.value)}
+              >
+                {diff.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <button
+            className="px-6 py-3 bg-purple-700 rounded-lg text-lg hover:bg-purple-600"
+            onClick={handleCreateAI}
+          >
+            Start Game vs AI
+          </button>
+          <button
+            className="px-4 py-2 bg-gray-600 rounded hover:bg-gray-500"
+            onClick={() => setMode('menu')}
+          >
+            Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-lg mx-auto mt-20 bg-gray-800 text-white rounded-lg p-6 space-y-6 text-center">
       <h1 className="text-3xl font-bold">Strategic Conquest</h1>
@@ -158,6 +239,12 @@ export function MainMenu() {
           onClick={handleCreate}
         >
           Create New Game
+        </button>
+        <button
+          className="px-6 py-3 bg-purple-700 rounded-lg text-lg hover:bg-purple-600"
+          onClick={() => setMode('ai-select')}
+        >
+          Play vs AI
         </button>
         <button
           className="px-6 py-3 bg-green-700 rounded-lg text-lg hover:bg-green-600"

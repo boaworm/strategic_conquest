@@ -27,7 +27,12 @@ interface GameStore {
   socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
 
   // Actions
-  createGame: (mapWidth?: number, mapHeight?: number) => Promise<CreateGameResponse>;
+  createGame: (
+    mapWidth?: number,
+    mapHeight?: number,
+    mode?: 'pvp' | 'pve',
+    difficulty?: string,
+  ) => Promise<CreateGameResponse>;
   joinGame: (token: string) => void;
   sendAction: (action: GameAction) => void;
   disconnect: () => void;
@@ -78,10 +83,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
   cameraY: 0,
   viewportInitialized: false,
 
-  createGame: async (mapWidth?: number, mapHeight?: number) => {
-    const body: Record<string, number> = {};
+  createGame: async (
+    mapWidth?: number,
+    mapHeight?: number,
+    mode: 'pvp' | 'pve' = 'pvp',
+    difficulty?: string,
+  ) => {
+    const body: Record<string, number | string> = {};
     if (mapWidth) body.mapWidth = mapWidth;
     if (mapHeight) body.mapHeight = mapHeight;
+    body.mode = mode;
+    if (difficulty) body.difficulty = difficulty;
 
     console.log('Creating game via fetch("./api/games")...');
     const res = await fetch('./api/games', {

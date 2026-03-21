@@ -7,6 +7,7 @@ import {
   createGameState,
   applyAction,
   getPlayerView,
+  type AIDifficulty,
 } from '@sc/shared';
 import { generateTokens, type GameTokens } from './tokenAuth.js';
 
@@ -20,6 +21,10 @@ export interface GameSession {
   disconnectTimers: Map<PlayerId, ReturnType<typeof setTimeout>>;
   /** Track which players have joined at least once */
   joinedPlayers: Set<PlayerId>;
+  /** AI difficulty if PvE mode */
+  difficulty?: AIDifficulty;
+  /** Is this a PvE game? */
+  isPvE: boolean;
   createdAt: number;
 }
 
@@ -33,7 +38,12 @@ export class GameManager {
     { gameId: string; role: 'admin' | PlayerId }
   >();
 
-  createGame(mapWidth = 60, mapHeight = 40): GameSession {
+  createGame(
+    mapWidth = 60,
+    mapHeight = 40,
+    isPvE = false,
+    difficulty: AIDifficulty = 'medium',
+  ): GameSession {
     const id = crypto.randomUUID();
     const tokens = generateTokens();
 
@@ -51,6 +61,8 @@ export class GameManager {
       ]),
       disconnectTimers: new Map(),
       joinedPlayers: new Set(),
+      difficulty: isPvE ? difficulty : undefined,
+      isPvE,
       createdAt: Date.now(),
     };
 

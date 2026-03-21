@@ -359,9 +359,13 @@ export interface ClientToServerEvents {
 
 // ── Game creation (REST) ─────────────────────────────────────
 
+export type AIDifficulty = 'easy' | 'medium' | 'hard';
+
 export interface CreateGameRequest {
   mapWidth?: number;  // default 60
   mapHeight?: number; // default 40
+  mode?: 'pvp' | 'pve'; // default 'pvp'
+  difficulty?: AIDifficulty; // default 'medium'
 }
 
 export interface CreateGameResponse {
@@ -369,6 +373,8 @@ export interface CreateGameResponse {
   adminToken: string;
   p1Token: string;
   p2Token: string;
+  mode: 'pvp' | 'pve';
+  difficulty?: AIDifficulty;
 }
 
 export interface GameInfo {
