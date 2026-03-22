@@ -10,10 +10,9 @@ const WORLD_SIZES = [
   { label: 'Extra Large', width: 120, height: 40 },
 ] as const;
 
-const AI_DIFFICULTIES = [
-  { label: 'Easy', value: 'easy' },
-  { label: 'Medium', value: 'medium' },
-  { label: 'Hard', value: 'hard' },
+const AI_PLAYERS = [
+  { label: 'Adam (Beginner)', value: 'adam', description: 'Simply ends turn immediately' },
+  { label: 'Basic (Greedy)', value: 'basic', description: 'Aggressive expansion and combat' },
 ] as const;
 
 export function MainMenu() {
@@ -28,7 +27,7 @@ export function MainMenu() {
   const [localError, setLocalError] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [worldSize, setWorldSize] = useState(2); // default: Medium
-  const [aiDifficulty, setAiDifficulty] = useState('medium'); // default: Medium
+  const [aiPlayer, setAiPlayer] = useState('adam'); // default: Adam
 
   const error = localError || storeError;
 
@@ -55,7 +54,8 @@ export function MainMenu() {
     try {
       setLocalError('');
       const size = WORLD_SIZES[worldSize];
-      const result = await createGame(size.width, size.height, 'pve', aiDifficulty);
+      // Adam is just an AI opponent - PvE with Adam
+      const result = await createGame(size.width, size.height, 'pve', 'human', aiPlayer as 'ai');
       setCreatedGame(result);
       setMode('create');
     } catch {
@@ -152,7 +152,7 @@ export function MainMenu() {
     return (
       <div className="max-w-lg mx-auto mt-20 bg-gray-800 text-white rounded-lg p-6 space-y-6">
         <h2 className="text-xl font-bold">Play vs AI</h2>
-        <p className="text-gray-300 text-sm">Select difficulty level</p>
+        <p className="text-gray-300 text-sm">Select an AI opponent</p>
         {error && <p className="text-red-400">{error}</p>}
 
         <div className="text-left space-y-2">
@@ -175,21 +175,22 @@ export function MainMenu() {
         </div>
 
         <div className="text-left space-y-2">
-          <label className="text-sm text-gray-300 block">AI Difficulty</label>
-          <div className="flex gap-2 justify-center">
-            {AI_DIFFICULTIES.map((diff) => (
+          <label className="text-sm text-gray-300 block">AI Opponent</label>
+          <div className="flex gap-2 justify-center flex-wrap">
+            {AI_PLAYERS.map((ai) => (
               <button
-                key={diff.value}
-                className={`px-4 py-2 rounded ${diff.value === aiDifficulty
+                key={ai.value}
+                className={`px-4 py-2 rounded ${ai.value === aiPlayer
                   ? 'bg-purple-600 text-white'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   }`}
-                onClick={() => setAiDifficulty(diff.value)}
+                onClick={() => setAiPlayer(ai.value)}
               >
-                {diff.label}
+                {ai.label}
               </button>
             ))}
           </div>
+          <p className="text-xs text-gray-400 mt-1">{AI_PLAYERS.find(a => a.value === aiPlayer)?.description}</p>
         </div>
 
         <div className="flex flex-col gap-3">

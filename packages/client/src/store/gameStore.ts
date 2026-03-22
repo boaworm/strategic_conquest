@@ -30,8 +30,9 @@ interface GameStore {
   createGame: (
     mapWidth?: number,
     mapHeight?: number,
-    mode?: 'pvp' | 'pve',
-    difficulty?: string,
+    mode?: 'pvp' | 'pve' | 'ai_vs_ai',
+    p1Type?: 'human' | 'ai',
+    p2Type?: 'human' | 'ai',
   ) => Promise<CreateGameResponse>;
   joinGame: (token: string) => void;
   sendAction: (action: GameAction) => void;
@@ -81,14 +82,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
   createGame: async (
     mapWidth?: number,
     mapHeight?: number,
-    mode: 'pvp' | 'pve' = 'pvp',
-    difficulty?: string,
+    mode: 'pvp' | 'pve' | 'ai_vs_ai' = 'pvp',
+    p1Type: 'human' | 'ai' = 'human',
+    p2Type: 'human' | 'ai' = 'human',
   ) => {
     const body: Record<string, number | string> = {};
     if (mapWidth) body.mapWidth = mapWidth;
     if (mapHeight) body.mapHeight = mapHeight;
     body.mode = mode;
-    if (difficulty) body.difficulty = difficulty;
+    if (p1Type) body.p1Type = p1Type;
+    if (p2Type) body.p2Type = p2Type;
 
     console.log('Creating game via fetch("./api/games")...');
     const res = await fetch('./api/games', {
