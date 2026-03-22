@@ -106,6 +106,12 @@ export default function App() {
                 <div className="text-xl text-gray-300">Better luck next time...</div>
               </>
             )}
+            <button
+              className="mt-6 px-6 py-2 bg-blue-700 rounded hover:bg-blue-600 text-white font-semibold"
+              onClick={() => window.location.reload()}
+            >
+              Play New Game
+            </button>
           </div>
         </div>
       )}
