@@ -34,19 +34,35 @@ export class BasicAgent implements Agent {
   }
 
   act(obs: AgentObservation): AgentAction {
-    // 1. Move all units that still have moves
+    // ── Phase 1: Handle all units ──────────────────────────────
+    // For each unit that still has moves, decide what to do.
+    // If the unit is sleeping, wake it so it can act next cycle.
+    // If we can't find a valid action (unit completely blocked), SKIP it
+    // to exhaust its moves — this is critical to prevent an infinite loop
+    // where the same stuck unit is re-evaluated every stateUpdate.
     for (const unit of obs.myUnits) {
-      if (unit.sleeping || unit.movesLeft <= 0 || unit.carriedBy !== null) {
+      if (unit.carriedBy !== null) continue;
+
+      if (unit.sleeping) {
+        if (unit.movesLeft > 0) {
+          return { type: 'WAKE', unitId: unit.id };
+        }
         continue;
       }
+
+      if (unit.movesLeft <= 0) continue;
 
       const action = this.decideUnitAction(obs, unit);
       if (action) {
         return action;
       }
+      // decideUnitAction returned null — unit is completely blocked.
+      // SKIP it so the server marks its moves as exhausted, preventing
+      // this unit from being looped over indefinitely.
+      return { type: 'SKIP', unitId: unit.id };
     }
 
-    // 2. Set production for any idle city (only after all units have moved)
+    // ── Phase 2: Ensure all cities are producing ───────────────
     for (const city of obs.myCities) {
       if (city.producing === null) {
         const unitType = this.chooseProduction(obs, city);
@@ -54,7 +70,7 @@ export class BasicAgent implements Agent {
       }
     }
 
-    // 3. End turn
+    // All units have acted and all cities are producing — end the turn.
     return { type: 'END_TURN' };
   }
 
@@ -355,7 +371,12 @@ export class BasicAgent implements Agent {
       const tile = obs.tiles[c.y]?.[c.x];
       if (!tile) return false;
       if (stats.domain === UnitDomain.Land && tile.terrain === Terrain.Ocean) return false;
-      if (stats.domain === UnitDomain.Sea && tile.terrain === Terrain.Land) return false;
+      if (stats.domain === UnitDomain.Sea && tile.terrain === Terrain.Land) {
+        const hasCity = [...obs.myCities, ...obs.visibleEnemyCities].some(
+          (ct) => ct.x === c.x && ct.y === c.y,
+        );
+        if (!hasCity) return false;
+      }
       return true;
     });
 
@@ -364,7 +385,8 @@ export class BasicAgent implements Agent {
       return { type: 'MOVE', unitId: unit.id, to: pick };
     }
 
-    return null;
+    // No valid moves - sleep or skip instead of returning null
+    return { type: 'SLEEP', unitId: unit.id };
   }
 
   private getAdjacentTiles(x: number, y: number): Coord[] {

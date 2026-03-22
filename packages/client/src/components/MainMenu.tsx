@@ -46,7 +46,6 @@ const WORLD_SIZES = [
 ] as const;
 
 const AI_PLAYERS = [
-  { label: 'Adam (Beginner)', value: 'adam', description: 'Simply ends turn immediately' },
   { label: 'Basic (Greedy)', value: 'basic', description: 'Aggressive expansion and combat' },
 ] as const;
 
@@ -62,7 +61,7 @@ export function MainMenu() {
   const [localError, setLocalError] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [mainWorldSize, setMainWorldSize] = useState(2); // default: Medium
-  const [aiPlayer, setAiPlayer] = useState('adam'); // default: Adam
+  const [aiPlayer, setAiPlayer] = useState('basic'); // default: Basic
 
   const error = localError || storeError;
 

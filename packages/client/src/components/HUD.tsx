@@ -67,15 +67,10 @@ export function HUD() {
               e.preventDefault();
               if (!gameId) return;
 
-              // Prompt for admin token
-              const adminToken = prompt('Enter admin token to force end turn:');
-              if (!adminToken) return;
-
               try {
                 const res = await fetch(`/api/games/${gameId}/force-end-turn`, {
                   method: 'POST',
                   headers: {
-                    'Authorization': `Bearer ${adminToken}`,
                     'Content-Type': 'application/json',
                   },
                 });

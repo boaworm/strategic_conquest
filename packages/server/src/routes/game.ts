@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { GameManager } from '../gameManager.js';
-import type { AIDifficulty, UnitStats, UNIT_STATS } from '@sc/shared';
+import type { AIDifficulty } from '@sc/shared';
 
 export function createGameRoutes(manager: GameManager): Router {
   const router = Router();
@@ -22,8 +22,8 @@ export function createGameRoutes(manager: GameManager): Router {
       diff,
       p1Type ?? 'human',
       p2Type ?? 'human',
-      p1AI ?? 'adam',
-      p2AI ?? 'adam',
+      p1AI ?? 'basic',
+      p2AI ?? 'basic',
     );
 
     const response = {
@@ -72,23 +72,17 @@ export function createGameRoutes(manager: GameManager): Router {
   /**
    * POST /api/games/:id/force-end-turn
    * Force end the current player's turn (for debugging/fixing stuck turns).
-   * Requires admin token.
+   * No authentication required - for testing only.
    */
   router.post('/games/:id/force-end-turn', (req, res) => {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      res.status(401).json({ error: 'Missing authorization token' });
-      return;
-    }
-
-    const auth = manager.authenticate(token);
-    if (!auth || auth.session.id !== req.params.id || auth.role !== 'admin') {
-      res.status(403).json({ error: 'Invalid or unauthorized token' });
+    const session = manager.getGame(req.params.id);
+    if (!session) {
+      res.status(404).json({ error: 'Game not found' });
       return;
     }
 
     try {
-      const result = manager.forceEndTurn(auth.session);
+      const result = manager.forceEndTurn(session);
       res.json({
         success: true,
         ...result,

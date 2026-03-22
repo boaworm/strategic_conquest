@@ -20,6 +20,8 @@ export type AgentAction =
   | { type: 'LOAD'; unitId: string; transportId: string }
   | { type: 'UNLOAD'; unitId: string; to: Coord }
   | { type: 'SLEEP'; unitId: string }
+  | { type: 'WAKE'; unitId: string }
+  | { type: 'SKIP'; unitId: string }
   | { type: 'END_TURN' };
 
 // ── Agent Configuration ──────────────────────────────────────

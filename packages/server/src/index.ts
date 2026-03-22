@@ -84,8 +84,8 @@ io.engine.on('connection_error', (err) => {
 });
 
 const manager = new GameManager();
-// Add io to manager for force-end-turn emissions (using type assertion)
-(manager as unknown as { io?: typeof io }).io = io;
+// Wire up io so forceEndTurn can emit socket events
+manager.io = io;
 
 // ── REST routes ──────────────────────────────────────────────
 

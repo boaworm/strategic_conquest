@@ -44,11 +44,16 @@ export interface MapOptions {
 /**
  * Generate a map using a simple blob-based land generator.
  * Places starting cities for both players on opposite sides.
+ *
+ * `height` is the number of *playable* rows. Two extra rows are added
+ * automatically for the north and south ice caps, so the actual tile
+ * grid is height + 2 rows tall.
  */
 export function generateMap(opts: MapOptions): {
   tiles: Terrain[][];
   cities: City[];
   units: Unit[];
+  totalHeight: number;
 } {
   const {
     width,
@@ -58,28 +63,32 @@ export function generateMap(opts: MapOptions): {
     cityCount = 15,
   } = opts;
 
+  // Add 2 rows for ice caps (north pole at y=0, south pole at y=totalHeight-1)
+  const totalHeight = height + 2;
+
   const rng = mulberry32(seed);
 
-  // Init all ocean
-  const tiles: Terrain[][] = Array.from({ length: height }, () =>
+  // Init all ocean (totalHeight rows)
+  const tiles: Terrain[][] = Array.from({ length: totalHeight }, () =>
     Array.from({ length: width }, () => Terrain.Ocean),
   );
 
-  // Generate land blobs
+  // Generate land blobs (only in the playable area, rows 1..totalHeight-2)
   const targetLand = Math.floor(width * height * landRatio);
   let landCount = 0;
 
-  // Seed several land blobs
+  // Seed several land blobs within the playable area
   const blobCount = 6 + Math.floor(rng() * 6);
   const blobCenters: Coord[] = [];
 
   for (let i = 0; i < blobCount; i++) {
     const cx = Math.floor(rng() * width);
-    const cy = Math.floor(rng() * height);
+    // Keep blobs in the playable area (rows 1..totalHeight-2)
+    const cy = 1 + Math.floor(rng() * height);
     blobCenters.push({ x: cx, y: cy });
   }
 
-  // Grow land from blob centers
+  // Grow land from blob centers (clamped to playable area)
   while (landCount < targetLand) {
     for (const center of blobCenters) {
       if (landCount >= targetLand) break;
@@ -92,7 +101,8 @@ export function generateMap(opts: MapOptions): {
       for (let s = 0; s < steps && landCount < targetLand; s++) {
         // Wrap X for cylindrical map
         x = wrapX(x, width);
-        if (x >= 0 && x < width && y >= 0 && y < height) {
+        // Stay inside playable rows (1..totalHeight-2)
+        if (x >= 0 && x < width && y >= 1 && y <= totalHeight - 2) {
           if (tiles[y][x] === Terrain.Ocean) {
             tiles[y][x] = Terrain.Land;
             landCount++;
@@ -109,7 +119,7 @@ export function generateMap(opts: MapOptions): {
   }
 
   // Find all islands and filter out single-tile islands
-  const islandTiles = findIslandTiles(tiles, width, height);
+  const islandTiles = findIslandTiles(tiles, width, totalHeight);
   // Remove single-tile islands by turning them back to ocean
   for (const island of islandTiles) {
     if (island.length === 1) {
@@ -118,9 +128,9 @@ export function generateMap(opts: MapOptions): {
     }
   }
 
-  // Collect all land tiles (excluding ice cap border rows and now single-tile islands)
+  // Collect all land tiles (excluding ice cap border rows and single-tile islands)
   const landTiles: Coord[] = [];
-  for (let y = 1; y < height - 1; y++) {
+  for (let y = 1; y <= totalHeight - 2; y++) {
     for (let x = 0; x < width; x++) {
       if (tiles[y][x] === Terrain.Land) {
         landTiles.push({ x, y });
@@ -232,7 +242,7 @@ export function generateMap(opts: MapOptions): {
     },
   ];
 
-  return { tiles, cities, units };
+  return { tiles, cities, units, totalHeight };
 }
 
 /**
@@ -288,10 +298,11 @@ function findIslandTiles(tiles: Terrain[][], width: number, height: number): Coo
  */
 export function createGameState(opts: MapOptions): GameState {
   resetIdCounter();
-  const { tiles, cities, units } = generateMap(opts);
+  const { tiles, cities, units, totalHeight } = generateMap(opts);
   return {
     mapWidth: opts.width,
-    mapHeight: opts.height,
+    // mapHeight reflects the full tile grid including the two ice cap rows
+    mapHeight: totalHeight,
     tiles,
     cities,
     units,

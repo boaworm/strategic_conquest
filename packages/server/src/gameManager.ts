@@ -38,6 +38,9 @@ export interface GameSession {
 const DISCONNECT_TIMEOUT_MS = 60_000;
 
 export class GameManager {
+  /** Injected after construction so forceEndTurn can push socket events. */
+  public io?: import('socket.io').Server;
+
   private games = new Map<string, GameSession>();
   /** token → { gameId, role } */
   private tokenIndex = new Map<
@@ -55,8 +58,8 @@ export class GameManager {
     difficulty: AIDifficulty = 'medium',
     p1Type: 'human' | 'ai' = 'human',
     p2Type: 'human' | 'ai' = 'human',
-    p1AI: 'adam' | 'basic' = 'adam',
-    p2AI: 'adam' | 'basic' = 'adam',
+    p1AI: 'adam' | 'basic' = 'basic',
+    p2AI: 'adam' | 'basic' = 'basic',
   ): Promise<GameSession> {
     const id = crypto.randomUUID();
     const tokens = generateTokens();
@@ -270,23 +273,16 @@ export class GameManager {
       }
     }
 
-    // Emit state update to all connected players
-    if (session.io) {
+    // Emit updated state to all connected players via the manager-level io reference
+    if (this.io) {
       const view1 = this.getPlayerView(session, 'player1');
       const view2 = this.getPlayerView(session, 'player2');
 
       session.sockets.get('player1')?.forEach((socketId) => {
-        session.io?.to(socketId).emit('stateUpdate', view1);
+        this.io?.to(socketId).emit('stateUpdate', view1);
       });
       session.sockets.get('player2')?.forEach((socketId) => {
-        session.io?.to(socketId).emit('stateUpdate', view2);
-      });
-
-      // Emit turn change notification
-      session.io.to(session.id).emit('turnChanged', {
-        previousPlayer: currentTurn,
-        newPlayer: nextPlayer,
-        turn: session.state.turn,
+        this.io?.to(socketId).emit('stateUpdate', view2);
       });
     }
 

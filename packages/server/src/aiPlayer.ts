@@ -1,8 +1,10 @@
 import { io, type Socket } from 'socket.io-client';
-import { AdamAI, BasicAgent } from '@sc/shared';
-import type { Agent } from '@sc/shared';
+import { AdamAI, BasicAgent, UNIT_STATS } from '@sc/shared';
+import type { Agent, AgentAction } from '@sc/shared';
 import type { GameSession } from './gameManager.js';
 import type { PlayerId } from '@sc/shared';
+
+const TAG = '[AI]';
 
 /**
  * Spawns an AI player that connects to the game via WebSocket
@@ -15,8 +17,6 @@ export async function spawnAIPlayer(
 ): Promise<Socket> {
   const token = playerId === 'player1' ? session.tokens.p1Token : session.tokens.p2Token;
   const serverUrl = process.env.SERVER_URL || 'http://localhost:4000';
-  // socket.io uses the default namespace "/" - the "/socket.io/" is just the transport path
-  const socketPath = serverUrl;
 
   // Create the appropriate AI agent
   let agent: Agent;
@@ -32,22 +32,16 @@ export async function spawnAIPlayer(
   });
 
   // Connect the socket and wait for connection
-  const socket = io(socketPath, {
+  const socket = io(serverUrl, {
     auth: { token },
     transports: ['websocket', 'polling'],
   });
 
   // Wait for connection
   await new Promise<void>((resolve, reject) => {
-    socket.on('connect', () => {
-      resolve();
-    });
-    socket.on('connect_error', (err) => {
-      reject(err);
-    });
-    socket.on('error', (err) => {
-      reject(err);
-    });
+    socket.on('connect', () => { resolve(); });
+    socket.on('connect_error', (err) => { reject(err); });
+    socket.on('error', (err) => { reject(err); });
   });
 
   socket.on('gameStart', (view: any) => {
@@ -58,22 +52,60 @@ export async function spawnAIPlayer(
     triggerAITurn(socket, agent, view, playerId);
   });
 
+  /**
+   * actionRejected — the server refused the last action.
+   * No stateUpdate will follow, so we must self-recover here.
+   * Safest fallback: end the turn. This prevents the AI from
+   * silently freezing and blocking the game indefinitely.
+   */
+  socket.on('actionRejected', (data: { reason: string }) => {
+    console.error(`${TAG} ${playerId} action rejected: ${data.reason} — sending END_TURN to unblock`);
+    socket.emit('action', { type: 'END_TURN' });
+  });
+
   return socket;
 }
 
 /**
- * Trigger the AI to take its turn
+ * Trigger the AI to take its turn.
+ * Decides the next action and emits it, with full debug logging.
  */
 function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId: string) {
-  // Check if it's this player's turn
-  const currentPlayer = view.currentPlayer;
+  if (view.currentPlayer !== expectedPlayerId) return;
 
-  if (currentPlayer !== expectedPlayerId) {
-    return;
+  const prefix = `${TAG} ${expectedPlayerId} turn ${view.turn}`;
+
+  // Log current unit status
+  const activeUnits = (view.myUnits as any[]).filter(
+    (u: any) => !u.sleeping && u.movesLeft > 0 && u.carriedBy === null,
+  );
+  for (const u of activeUnits) {
+    const stats = UNIT_STATS[u.type as keyof typeof UNIT_STATS];
+    console.log(
+      `${prefix} | Unit ${u.type} (${u.id}) at (${u.x},${u.y}) — moves ${u.movesLeft}/${stats.movesPerTurn}`,
+    );
   }
 
-  // Let the AI decide on an action
-  const action = agent.act({
+  const sleepingUnits = (view.myUnits as any[]).filter(
+    (u: any) => u.sleeping && u.movesLeft > 0 && u.carriedBy === null,
+  );
+  for (const u of sleepingUnits) {
+    console.log(`${prefix} | Unit ${u.type} (${u.id}) at (${u.x},${u.y}) — sleeping, will wake`);
+  }
+
+  // Log city production status
+  for (const city of view.myCities as any[]) {
+    if (city.producing) {
+      console.log(
+        `${prefix} | City (${city.x},${city.y}) producing ${city.producing} (${city.productionTurnsLeft} turns left)`,
+      );
+    } else {
+      console.log(`${prefix} | City (${city.x},${city.y}) — idle, will assign production`);
+    }
+  }
+
+  // Let the AI decide and log the chosen action
+  const action: AgentAction = agent.act({
     tiles: view.tiles,
     myUnits: view.myUnits,
     myCities: view.myCities,
@@ -83,5 +115,52 @@ function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId
     myPlayerId: expectedPlayerId as any,
   });
 
+  logAction(prefix, action, view);
   socket.emit('action', action);
+}
+
+/** Pretty-print the action the AI chose. */
+function logAction(prefix: string, action: AgentAction, view: any) {
+  switch (action.type) {
+    case 'MOVE': {
+      const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
+      const from = unit ? `(${unit.x},${unit.y})` : '(??)';
+      console.log(`${prefix} | → MOVE ${unit?.type ?? action.unitId} from ${from} to (${action.to.x},${action.to.y})`);
+      break;
+    }
+    case 'SKIP': {
+      const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
+      console.log(`${prefix} | → SKIP ${unit?.type ?? action.unitId} (stuck — no valid moves)`);
+      break;
+    }
+    case 'SLEEP': {
+      const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
+      console.log(`${prefix} | → SLEEP ${unit?.type ?? action.unitId}`);
+      break;
+    }
+    case 'WAKE': {
+      const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
+      console.log(`${prefix} | → WAKE ${unit?.type ?? action.unitId}`);
+      break;
+    }
+    case 'SET_PRODUCTION': {
+      const city = (view.myCities as any[]).find((c: any) => c.id === action.cityId);
+      const was = city?.producing ?? 'idle';
+      const now = action.unitType;
+      const change = was === now ? `stays ${now}` : `${was} → ${now}`;
+      console.log(`${prefix} | → SET_PRODUCTION city (${city?.x ?? '?'},${city?.y ?? '?'}): ${change}`);
+      break;
+    }
+    case 'LOAD':
+      console.log(`${prefix} | → LOAD unit ${action.unitId} onto transport ${action.transportId}`);
+      break;
+    case 'UNLOAD':
+      console.log(`${prefix} | → UNLOAD unit ${action.unitId} to (${action.to.x},${action.to.y})`);
+      break;
+    case 'END_TURN':
+      console.log(`${prefix} | → END_TURN`);
+      break;
+    default:
+      console.log(`${prefix} | → ${JSON.stringify(action)}`);
+  }
 }
