@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { GameManager } from '../gameManager.js';
-import type { AIDifficulty, AIPlayer, CreateGameRequest, CreateGameResponse } from '@sc/shared';
+import type { AIDifficulty } from '@sc/shared';
 
 export function createGameRoutes(manager: GameManager): Router {
   const router = Router();
@@ -9,19 +9,21 @@ export function createGameRoutes(manager: GameManager): Router {
    * POST /api/games
    * Create a new game. Returns gameId + all three tokens.
    */
-  router.post('/games', (req, res) => {
-    const { mapWidth, mapHeight, mode, difficulty, p1Type, p2Type } = req.body ?? {};
+  router.post('/games', async (req, res) => {
+    const { mapWidth, mapHeight, mode, difficulty, p1Type, p2Type, p1AI, p2AI } = req.body ?? {};
     const isPvE = mode === 'pve';
     const isAiVsAi = mode === 'ai_vs_ai';
     const diff: AIDifficulty = (isPvE || isAiVsAi) ? (difficulty ?? 'medium') : 'medium';
 
-    const session = manager.createGame(
+    const session = await manager.createGame(
       mapWidth ?? 60,
       mapHeight ?? 40,
       isPvE,
       diff,
       p1Type ?? 'human',
       p2Type ?? 'human',
+      p1AI ?? 'adam',
+      p2AI ?? 'adam',
     );
 
     const response = {

@@ -54,8 +54,9 @@ export function MainMenu() {
     try {
       setLocalError('');
       const size = WORLD_SIZES[worldSize];
-      // Adam is just an AI opponent - PvE with Adam
-      const result = await createGame(size.width, size.height, 'pve', 'human', aiPlayer as 'ai');
+      // Map AI player name to type and pass to server
+      const aiType = 'ai' as const;
+      const result = await createGame(size.width, size.height, 'pve', 'human', aiType, undefined, aiPlayer as 'adam' | 'basic');
       setCreatedGame(result);
       setMode('create');
     } catch {

@@ -59,9 +59,9 @@ export function createTrainingRoutes(manager: GameManager): Router {
    * Create a new training game for an AI agent.
    * Returns a token that the agent can use to connect via WebSocket or HTTP.
    */
-  router.post('/training/games', (req, res) => {
+  router.post('/training/games', async (req, res) => {
     const { mapWidth, mapHeight, difficulty = 'medium' } = req.body ?? {};
-    const session = manager.createGame(
+    const session = await manager.createGame(
       mapWidth ?? 30,
       mapHeight ?? 20,
       true, // isPvE

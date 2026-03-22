@@ -11,6 +11,7 @@ import {
   type AIDifficulty,
 } from '@sc/shared';
 import { generateTokens, type GameTokens } from './tokenAuth.js';
+import { spawnAIPlayer } from './aiPlayer.js';
 
 export interface GameSession {
   id: string;
@@ -43,14 +44,19 @@ export class GameManager {
     { gameId: string; role: 'admin' | PlayerId }
   >();
 
-  createGame(
+  /**
+   * Create a game and spawn AI players if needed
+   */
+  async createGame(
     mapWidth = 60,
     mapHeight = 40,
     isPvE = false,
     difficulty: AIDifficulty = 'medium',
     p1Type: 'human' | 'ai' = 'human',
     p2Type: 'human' | 'ai' = 'human',
-  ): GameSession {
+    p1AI: 'adam' | 'basic' = 'adam',
+    p2AI: 'adam' | 'basic' = 'adam',
+  ): Promise<GameSession> {
     const id = crypto.randomUUID();
     const tokens = generateTokens();
 
@@ -84,6 +90,17 @@ export class GameManager {
     this.tokenIndex.set(tokens.adminToken, { gameId: id, role: 'admin' });
     this.tokenIndex.set(tokens.p1Token, { gameId: id, role: 'player1' });
     this.tokenIndex.set(tokens.p2Token, { gameId: id, role: 'player2' });
+
+    // Spawn AI players if needed
+    if (p1Type === 'ai') {
+      console.log(`[AI Manager] Spawning ${p1AI} as player1 for game ${id}`);
+      await spawnAIPlayer(session, 'player1', p1AI);
+    }
+
+    if (p2Type === 'ai') {
+      console.log(`[AI Manager] Spawning ${p2AI} as player2 for game ${id}`);
+      await spawnAIPlayer(session, 'player2', p2AI);
+    }
 
     // For AI vs AI, start immediately (both players are AI and will connect)
     if (isAiVsAi) {
