@@ -21,12 +21,14 @@ export function resolveCombat(
   const dStats = UNIT_STATS[defender.type];
 
   // Attacker rolls
-  const attackerHits = d6() <= aStats.attack;
+  const attackerRoll = Math.floor(Math.random() * 6) + 1;
+  const attackerHits = attackerRoll <= aStats.attack;
   // Defender rolls (suppressed for submarine attacker or shore bombardment)
+  const defenderRoll = Math.floor(Math.random() * 6) + 1;
   const defenderHits =
     noRetaliation || attacker.type === UnitType.Submarine
       ? false
-      : d6() <= dStats.defense;
+      : defenderRoll <= dStats.defense;
 
   let attackerDmg = 0;
   let defenderDmg = 0;
@@ -39,6 +41,9 @@ export function resolveCombat(
     attacker.health--;
     attackerDmg++;
   }
+
+  console.log(`[Combat] Attacker ${attacker.id} (${attacker.type}) rolled ${attackerRoll} vs defense ${dStats.defense} -> ${attackerHits ? 'HIT!' : 'miss'}; Defender ${defender.id} (${defender.type}) rolled ${defenderRoll} vs attack ${aStats.attack} -> ${defenderHits ? 'HIT!' : 'miss'}`);
+  console.log(`[Combat] After combat: Attacker health=${attacker.health}, Defender health=${defender.health}`);
 
   return {
     attackerId: attacker.id,
@@ -61,10 +66,12 @@ export function removeDestroyedUnits(state: GameState): string[] {
     if (unit.health <= 0) {
       toRemove.add(unit.id);
       removedIds.push(unit.id);
+      console.log(`[Combat] Unit ${unit.id} (${unit.type}) destroyed`);
       // Remove cargo too
       for (const cargoId of unit.cargo) {
         toRemove.add(cargoId);
         removedIds.push(cargoId);
+        console.log(`[Combat] Cargo unit ${cargoId} destroyed with carrier`);
       }
     }
   }

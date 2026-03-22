@@ -180,9 +180,21 @@ io.on('connection', (socket) => {
       return;
     }
 
+    console.log(`[Server] Action received from ${playerId}: ${action.type}`);
+    if (action.type === 'MOVE' && action.unitId) {
+      console.log(`[Server] Unit ${action.unitId} moving to (${action.to.x},${action.to.y})`);
+    }
+    if (action.type === 'SET_PRODUCTION' && action.cityId) {
+      console.log(`[Server] City ${action.cityId} production set to ${action.unitType}`);
+    }
+    if (action.type === 'END_TURN') {
+      console.log(`[Server] ${playerId} END_TURN`);
+    }
+
     const result = manager.processAction(session, playerId, action);
 
     if (!result.success) {
+      console.log(`[Server] Action rejected: ${result.error}`);
       socket.emit('actionRejected', { reason: result.error ?? 'Unknown error' });
       return;
     }
@@ -197,8 +209,10 @@ io.on('connection', (socket) => {
     for (const pid of ['player1', 'player2'] as PlayerId[]) {
       const view = manager.getPlayerView(session, pid);
       const sockets = session.sockets.get(pid)!;
+      console.log(`[Server] Sending stateUpdate to ${pid}: turn=${view.turn}, currentPlayer=${view.currentPlayer}, units=${view.myUnits.length}, cities=${view.myCities.length}`);
       for (const sid of sockets) {
         io.to(sid).emit('stateUpdate', view);
+        console.log(`[Server] Sent stateUpdate to ${pid} socket ${sid}`);
       }
     }
 

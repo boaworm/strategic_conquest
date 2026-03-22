@@ -149,6 +149,7 @@ function handleMove(
 
   // Check for enemy units at destination
   const allEnemyUnits = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
+  console.log(`[Combat] Unit ${unit.id} moving to (${target.x},${target.y}), enemies found: ${allEnemyUnits.map(u => u.id).join(', ')}`);
 
   // Filter out undetected submarines — only DD/SS can reveal them
   const subDetected = canDetectSubmarine(state, target.x, target.y, playerId);
@@ -157,6 +158,7 @@ function handleMove(
   );
 
   if (enemyUnits.length > 0) {
+    console.log(`[Combat] ${enemyUnits.length} enemy units after sub filter: ${enemyUnits.map(u => u.id).join(', ')}`);
     if (unit.hasAttacked) {
       return { success: false, error: 'Already attacked this turn' };
     }
@@ -210,6 +212,7 @@ function handleMove(
     // If attacker survived AND no enemies remain on the target tile, move in
     if (!combat.attackerDestroyed) {
       const remainingEnemies = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
+      console.log(`[Combat] Attacker ${unit.id} moved to (${target.x},${target.y}), enemies remaining: ${remainingEnemies.length}`);
       if (remainingEnemies.length === 0) {
         unit.x = target.x;
         unit.y = target.y;
@@ -524,6 +527,7 @@ function handleUnload(
 }
 
 function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
+  console.log(`[Engine] handleEndTurn called for ${playerId}`);
   // Advance production for current player
   advanceProduction(state, playerId);
 
@@ -553,12 +557,15 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
     state.turn++;
   }
 
+  console.log(`[Engine] Turn advanced to turn ${state.turn}, currentPlayer is now ${state.currentPlayer}`);
+
   // Refresh moves for the new current player's units
   for (const unit of state.units) {
     if (unit.owner === state.currentPlayer) {
       const stats = UNIT_STATS[unit.type];
       unit.movesLeft = stats.movesPerTurn;
       unit.hasAttacked = false;
+      console.log(`[Engine] Refreshed unit ${unit.id} (${unit.type}): movesLeft=${unit.movesLeft}`);
     }
   }
 

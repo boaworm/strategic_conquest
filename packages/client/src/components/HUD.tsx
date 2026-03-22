@@ -17,7 +17,7 @@ export function HUD() {
   const isMyTurn = view.currentPlayer === playerId;
 
   return (
-    <div className="bg-gray-900 text-white px-4 py-2 flex items-center justify-between gap-4 text-sm">
+    <div className="bg-gray-900 text-white px-4 py-2 flex items-center justify-between gap-4 text-sm relative z-50">
       <div className="flex items-center gap-4">
         <span className="font-bold">Turn {view.turn}</span>
         <span className={isMyTurn ? 'text-green-400 font-bold' : 'text-gray-400'}>

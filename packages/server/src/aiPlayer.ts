@@ -40,26 +40,23 @@ export async function spawnAIPlayer(
   // Wait for connection
   await new Promise<void>((resolve, reject) => {
     socket.on('connect', () => {
-      console.log(`[AI Player] ${playerId} connected as ${aiName}`);
       resolve();
     });
     socket.on('connect_error', (err) => {
-      console.error(`[AI Player] ${playerId} connection error:`, err);
       reject(err);
     });
     socket.on('error', (err) => {
-      console.error(`[AI Player] ${playerId} error:`, err);
       reject(err);
     });
   });
 
   socket.on('gameStart', (view: any) => {
-    console.log(`[AI Player] ${playerId} starting game`);
+    console.log(`[AI Player] ${playerId} received gameStart`);
     triggerAITurn(socket, agent, view, playerId);
   });
 
   socket.on('stateUpdate', (view: any) => {
-    console.log(`[AI Player] ${playerId} state update, turn ${view.turn}`);
+    console.log(`[AI Player] ${playerId} received stateUpdate, turn=${view.turn}, currentPlayer=${view.currentPlayer}`);
     triggerAITurn(socket, agent, view, playerId);
   });
 
@@ -73,10 +70,14 @@ function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId
   // Check if it's this player's turn
   const currentPlayer = view.currentPlayer;
 
+  console.log(`[AI Player] ${expectedPlayerId} turn check: currentPlayer=${currentPlayer}, expected=${expectedPlayerId}`);
+
   if (currentPlayer !== expectedPlayerId) {
-    console.log(`[AI Player] ${expectedPlayerId}: not my turn (current: ${currentPlayer})`);
+    console.log(`[AI Player] ${expectedPlayerId} - Not my turn, skipping`);
     return;
   }
+
+  console.log(`[AI Player] ${expectedPlayerId} - My turn! Cities: ${view.myCities.length}, Units: ${view.myUnits.length}`);
 
   // Let the AI decide on an action
   const action = agent.act({
@@ -89,6 +90,6 @@ function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId
     myPlayerId: expectedPlayerId as any,
   });
 
-  console.log(`[AI Player] ${expectedPlayerId} playing: ${action.type}`);
+  console.log(`[AI Player] ${expectedPlayerId} - Action: ${action.type}`);
   socket.emit('action', action);
 }

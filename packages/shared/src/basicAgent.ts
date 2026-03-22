@@ -34,22 +34,41 @@ export class BasicAgent implements Agent {
   }
 
   act(obs: AgentObservation): AgentAction {
-    // 1. Set production for any idle city
+    console.log(`[AI] --- Turn ${obs.turn}, My units: ${obs.myUnits.length}, Cities: ${obs.myCities.length} ---`);
+    // 1. Move all units that still have moves
+    for (const unit of obs.myUnits) {
+      if (unit.sleeping || unit.movesLeft <= 0 || unit.carriedBy !== null) {
+        console.log(`[AI] Unit ${unit.id}: Skipping (sleeping=${unit.sleeping}, movesLeft=${unit.movesLeft}, carriedBy=${unit.carriedBy})`);
+        continue;
+      }
+
+      console.log(`[AI] Unit ${unit.id}: ${unit.type}, ${unit.movesLeft} moves left, at (${unit.x},${unit.y})`);
+
+      const action = this.decideUnitAction(obs, unit);
+      if (action) {
+        console.log(`[AI] Unit ${unit.id}: Action ${action.type}`);
+        if (action.type === 'MOVE' && action.to) {
+          console.log(`[AI] Unit ${unit.id}: Moving to (${action.to.x},${action.to.y})`);
+        }
+        return action;
+      }
+      console.log(`[AI] Unit ${unit.id}: No valid move`);
+    }
+
+    console.log(`[AI] Done checking all units, moving to production phase`);
+    // 2. Set production for any idle city (only after all units have moved)
     for (const city of obs.myCities) {
+      console.log(`[AI] City ${city.id}: producing=${city.producing}, turnsLeft=${city.productionTurnsLeft}`);
       if (city.producing === null) {
         const unitType = this.chooseProduction(obs, city);
+        console.log(`[AI] City ${city.id}: Setting production to ${unitType}`);
         return { type: 'SET_PRODUCTION', cityId: city.id, unitType };
       }
     }
 
-    // 2. Move units that still have moves
-    for (const unit of obs.myUnits) {
-      if (unit.sleeping || unit.movesLeft <= 0 || unit.carriedBy !== null) continue;
-
-      const action = this.decideUnitAction(obs, unit);
-      if (action) return action;
-    }
-
+    console.log(`[AI] No units to move, no cities idle - Ending turn`);
+    // 3. End turn
+    console.log(`[AI] Returning END_TURN`);
     return { type: 'END_TURN' };
   }
 
@@ -217,6 +236,9 @@ export class BasicAgent implements Agent {
     for (const c of candidates) {
       if (c.y < 0 || c.y >= this.mapHeight) continue;
 
+      // Check for ice caps (north and south edges)
+      if (c.y === 0 || c.y === this.mapHeight - 1) continue;
+
       const tile = obs.tiles[c.y]?.[c.x];
       if (!tile) continue;
 
@@ -251,6 +273,9 @@ export class BasicAgent implements Agent {
 
     for (const c of candidates) {
       if (c.y < 0 || c.y >= this.mapHeight) continue;
+      // Check for ice caps
+      if (c.y === 0 || c.y === this.mapHeight - 1) continue;
+
       const tile = obs.tiles[c.y]?.[c.x];
       if (!tile) continue;
 
@@ -266,6 +291,7 @@ export class BasicAgent implements Agent {
       let score = 0;
       for (const adj of this.getAdjacentTiles(c.x, c.y)) {
         if (adj.y < 0 || adj.y >= this.mapHeight) continue;
+        if (adj.y === 0 || adj.y === this.mapHeight - 1) continue;
         const adjTile = obs.tiles[adj.y]?.[adj.x];
         if (adjTile && adjTile.visibility === TileVisibility.Hidden) {
           score++;
@@ -285,6 +311,8 @@ export class BasicAgent implements Agent {
     // No hidden tiles nearby — just pick a random valid adjacent tile
     const valid = candidates.filter((c) => {
       if (c.y < 0 || c.y >= this.mapHeight) return false;
+      // Check for ice caps
+      if (c.y === 0 || c.y === this.mapHeight - 1) return false;
       const tile = obs.tiles[c.y]?.[c.x];
       if (!tile) return false;
       if (stats.domain === UnitDomain.Land && tile.terrain === Terrain.Ocean) return false;
@@ -316,6 +344,8 @@ export class BasicAgent implements Agent {
     const adj = this.getAdjacentTiles(unit.x, unit.y);
     for (const c of adj) {
       if (c.y < 0 || c.y >= this.mapHeight) continue;
+      // Check for ice caps
+      if (c.y === 0 || c.y === this.mapHeight - 1) continue;
       const tile = obs.tiles[c.y]?.[c.x];
       if (tile && tile.terrain === Terrain.Land) {
         return c;

@@ -108,7 +108,17 @@ export function generateMap(opts: MapOptions): {
     }
   }
 
-  // Collect all land tiles (excluding ice cap border rows)
+  // Find all islands and filter out single-tile islands
+  const islandTiles = findIslandTiles(tiles, width, height);
+  // Remove single-tile islands by turning them back to ocean
+  for (const island of islandTiles) {
+    if (island.length === 1) {
+      const t = island[0];
+      tiles[t.y][t.x] = Terrain.Ocean;
+    }
+  }
+
+  // Collect all land tiles (excluding ice cap border rows and now single-tile islands)
   const landTiles: Coord[] = [];
   for (let y = 1; y < height - 1; y++) {
     for (let x = 0; x < width; x++) {
@@ -169,9 +179,13 @@ export function generateMap(opts: MapOptions): {
     const key = posKey(tile);
     if (usedPositions.has(key)) continue;
 
-    // Minimum distance from existing cities (using wrapped X distance)
+    // Check if adjacent to any existing city (Chebyshev distance <= 1)
     const tooClose = cities.some(
-      (c) => wrappedDistX(c.x, tile.x, width) + Math.abs(c.y - tile.y) < 4,
+      (c) => {
+        const dx = wrappedDistX(c.x, tile.x, width);
+        const dy = Math.abs(c.y - tile.y);
+        return dx <= 1 && dy <= 1;
+      },
     );
     if (tooClose) continue;
 
@@ -219,6 +233,54 @@ export function generateMap(opts: MapOptions): {
   ];
 
   return { tiles, cities, units };
+}
+
+/**
+ * Find all connected land tiles (islands) using flood fill.
+ * Returns an array of islands, where each island is an array of coordinates.
+ */
+function findIslandTiles(tiles: Terrain[][], width: number, height: number): Coord[][] {
+  const visited: boolean[][] = Array.from({ length: height }, () =>
+    Array.from({ length: width }, () => false),
+  );
+  const islands: Coord[][] = [];
+
+  // Directions for 8-connectivity (including diagonals)
+  const dirs = [
+    { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+    { x: -1, y: 0 },                 { x: 1, y: 0 },
+    { x: -1, y: 1 },  { x: 0, y: 1 },  { x: 1, y: 1 },
+  ];
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (tiles[y][x] === Terrain.Land && !visited[y][x]) {
+        const island: Coord[] = [];
+        const stack: Coord[] = [{ x, y }];
+        visited[y][x] = true;
+
+        while (stack.length > 0) {
+          const curr = stack.pop()!;
+          island.push(curr);
+
+          // Check all 8 directions for connected land
+          for (const d of dirs) {
+            const nx = wrapX(curr.x + d.x, width);
+            const ny = curr.y + d.y;
+
+            if (ny >= 0 && ny < height && !visited[ny][nx] && tiles[ny][nx] === Terrain.Land) {
+              visited[ny][nx] = true;
+              stack.push({ x: nx, y: ny });
+            }
+          }
+        }
+
+        islands.push(island);
+      }
+    }
+  }
+
+  return islands;
 }
 
 /**
