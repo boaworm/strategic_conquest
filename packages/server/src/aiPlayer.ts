@@ -51,12 +51,10 @@ export async function spawnAIPlayer(
   });
 
   socket.on('gameStart', (view: any) => {
-    console.log(`[AI Player] ${playerId} received gameStart`);
     triggerAITurn(socket, agent, view, playerId);
   });
 
   socket.on('stateUpdate', (view: any) => {
-    console.log(`[AI Player] ${playerId} received stateUpdate, turn=${view.turn}, currentPlayer=${view.currentPlayer}`);
     triggerAITurn(socket, agent, view, playerId);
   });
 
@@ -70,14 +68,9 @@ function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId
   // Check if it's this player's turn
   const currentPlayer = view.currentPlayer;
 
-  console.log(`[AI Player] ${expectedPlayerId} turn check: currentPlayer=${currentPlayer}, expected=${expectedPlayerId}`);
-
   if (currentPlayer !== expectedPlayerId) {
-    console.log(`[AI Player] ${expectedPlayerId} - Not my turn, skipping`);
     return;
   }
-
-  console.log(`[AI Player] ${expectedPlayerId} - My turn! Cities: ${view.myCities.length}, Units: ${view.myUnits.length}`);
 
   // Let the AI decide on an action
   const action = agent.act({
@@ -90,6 +83,5 @@ function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId
     myPlayerId: expectedPlayerId as any,
   });
 
-  console.log(`[AI Player] ${expectedPlayerId} - Action: ${action.type}`);
   socket.emit('action', action);
 }

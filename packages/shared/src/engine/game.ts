@@ -55,7 +55,10 @@ export function applyAction(
 
   switch (action.type) {
     case 'MOVE':
-      return handleMove(state, action.unitId, action.to, playerId);
+      console.log('[GAME DEBUG] applyAction MOVE:', { unitId, to, playerId });
+      const moveResult = handleMove(state, action.unitId, action.to, playerId);
+      console.log('[GAME DEBUG] applyAction MOVE result:', moveResult);
+      return moveResult;
     case 'LOAD':
       return handleLoad(state, action.unitId, action.transportId, playerId);
     case 'UNLOAD':
@@ -80,6 +83,7 @@ function handleMove(
 
   // Normalize target for cylindrical wrapping
   const target = normalizeCoord(to, state.mapWidth);
+  console.log('[GAME DEBUG] handleMove:', { unitId, from: { x: unit.x, y: unit.y }, to: target, playerId });
 
   // Shore bombardment: Battleship can attack land units on adjacent non-ocean tiles (including cities)
   if (unit.type === UnitType.Battleship) {
@@ -149,16 +153,16 @@ function handleMove(
 
   // Check for enemy units at destination
   const allEnemyUnits = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
-  console.log(`[Combat] Unit ${unit.id} moving to (${target.x},${target.y}), enemies found: ${allEnemyUnits.map(u => u.id).join(', ')}`);
+  console.log('[GAME DEBUG] Enemy units at target:', allEnemyUnits.length, allEnemyUnits.map((u) => ({ id: u.id, type: u.type })));
 
   // Filter out undetected submarines — only DD/SS can reveal them
   const subDetected = canDetectSubmarine(state, target.x, target.y, playerId);
   const enemyUnits = allEnemyUnits.filter(
     (u) => u.type !== UnitType.Submarine || subDetected,
   );
+  console.log('[GAME DEBUG] Visible enemy units (after sub filter):', enemyUnits.length);
 
   if (enemyUnits.length > 0) {
-    console.log(`[Combat] ${enemyUnits.length} enemy units after sub filter: ${enemyUnits.map(u => u.id).join(', ')}`);
     if (unit.hasAttacked) {
       return { success: false, error: 'Already attacked this turn' };
     }
@@ -207,12 +211,21 @@ function handleMove(
 
     // Normal combat with the selected defender
     const combat = resolveCombat(state, unit, defender);
+    console.log('[GAME DEBUG] Combat result:', {
+      attackerId: combat.attackerId,
+      defenderId: combat.defenderId,
+      attackerDamage: combat.attackerDamage,
+      defenderDamage: combat.defenderDamage,
+      attackerDestroyed: combat.attackerDestroyed,
+      defenderDestroyed: combat.defenderDestroyed,
+    });
     removeDestroyedUnits(state);
 
     // If attacker survived AND no enemies remain on the target tile, move in
     if (!combat.attackerDestroyed) {
-      const remainingEnemies = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
-      console.log(`[Combat] Attacker ${unit.id} moved to (${target.x},${target.y}), enemies remaining: ${remainingEnemies.length}`);
+      const allUnitsAtTarget = getUnitsAt(state, target);
+      const remainingEnemies = allUnitsAtTarget.filter((u) => u.owner !== playerId);
+      console.log('[GAME DEBUG] Remaining enemies after combat:', remainingEnemies.length, 'All units at target:', allUnitsAtTarget.map((u) => ({ id: u.id, type: u.type, owner: u.owner, x: u.x, y: u.y })));
       if (remainingEnemies.length === 0) {
         unit.x = target.x;
         unit.y = target.y;
@@ -249,12 +262,14 @@ function handleMove(
         return { success: true, combat, cityCaptured: cityCaptured ?? undefined };
       }
       // Attacker survived but defenders remain — stay put
+      console.log('[GAME DEBUG] Attacker survived but defenders remain - staying put');
       unit.movesLeft--;
       unit.hasAttacked = true;
       checkWinCondition(state);
       return { success: true, combat };
     }
 
+    console.log('[GAME DEBUG] Attacker destroyed in combat - staying put');
     unit.hasAttacked = true;
     unit.movesLeft--;
     checkWinCondition(state);
@@ -262,6 +277,7 @@ function handleMove(
   }
 
   // No combat — just move
+  console.log('[GAME DEBUG] No combat, moving unit to', target);
   unit.x = target.x;
   unit.y = target.y;
   unit.movesLeft--;
@@ -324,6 +340,7 @@ function handleMove(
 
   // Check for city capture
   const cityCaptured = tryCaptureCity(state, unit, playerId);
+  console.log('[GAME DEBUG] handleMove complete:', { unitId, finalPos: { x: unit.x, y: unit.y }, cityCaptured });
   return { success: true, cityCaptured: cityCaptured ?? undefined };
 }
 
@@ -527,7 +544,6 @@ function handleUnload(
 }
 
 function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
-  console.log(`[Engine] handleEndTurn called for ${playerId}`);
   // Advance production for current player
   advanceProduction(state, playerId);
 
@@ -557,15 +573,12 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
     state.turn++;
   }
 
-  console.log(`[Engine] Turn advanced to turn ${state.turn}, currentPlayer is now ${state.currentPlayer}`);
-
   // Refresh moves for the new current player's units
   for (const unit of state.units) {
     if (unit.owner === state.currentPlayer) {
       const stats = UNIT_STATS[unit.type];
       unit.movesLeft = stats.movesPerTurn;
       unit.hasAttacked = false;
-      console.log(`[Engine] Refreshed unit ${unit.id} (${unit.type}): movesLeft=${unit.movesLeft}`);
     }
   }
 

@@ -4,6 +4,7 @@ import { GamePhase } from '@sc/shared';
 export function HUD() {
   const view = useGameStore((s) => s.view);
   const playerId = useGameStore((s) => s.playerId);
+  const gameId = useGameStore((s) => s.gameId);
   const sendAction = useGameStore((s) => s.sendAction);
   const gamePaused = useGameStore((s) => s.gamePaused);
   const error = useGameStore((s) => s.error);
@@ -59,6 +60,47 @@ export function HUD() {
           >
             End Turn
           </button>
+        )}
+        {!isMyTurn && view.phase === GamePhase.Active && (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!gameId) return;
+
+              // Prompt for admin token
+              const adminToken = prompt('Enter admin token to force end turn:');
+              if (!adminToken) return;
+
+              try {
+                const res = await fetch(`/api/games/${gameId}/force-end-turn`, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${adminToken}`,
+                    'Content-Type': 'application/json',
+                  },
+                });
+
+                if (res.ok) {
+                  const data = await res.json();
+                  alert(`Turn forced! Now ${data.newPlayer}'s turn.`);
+                } else {
+                  const error = await res.json();
+                  alert(`Failed to force turn: ${error.error}`);
+                }
+              } catch (err) {
+                console.error('Force end turn error:', err);
+                alert('Failed to force turn. Check console for details.');
+              }
+            }}
+          >
+            <button
+              type="submit"
+              className="px-3 py-1 bg-yellow-700 rounded hover:bg-yellow-600 text-black font-bold text-xs"
+              title="Force end of opponent's turn (for debugging)"
+            >
+              Force End Turn
+            </button>
+          </form>
         )}
       </div>
     </div>

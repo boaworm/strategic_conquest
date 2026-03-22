@@ -9,6 +9,7 @@ import {
   applyAction,
   getPlayerView,
   type AIDifficulty,
+  UNIT_STATS,
 } from '@sc/shared';
 import { generateTokens, type GameTokens } from './tokenAuth.js';
 import { spawnAIPlayer } from './aiPlayer.js';
@@ -246,5 +247,49 @@ export class GameManager {
     this.tokenIndex.delete(session.tokens.p2Token);
     this.games.delete(id);
     return true;
+  }
+
+  /**
+   * Force end the current player's turn and switch to the next player.
+   * Also resets moves and attack status for the new player's units.
+   */
+  forceEndTurn(session: GameSession): { previousPlayer: PlayerId; newPlayer: PlayerId; turn: number } {
+    const currentTurn = session.state.currentPlayer;
+    const nextPlayer = currentTurn === 'player1' ? 'player2' : 'player1';
+
+    // Switch turn
+    session.state.currentPlayer = nextPlayer;
+    session.state.turn++;
+
+    // Reset moves and attack status for the new player's units
+    for (const unit of session.state.units) {
+      if (unit.owner === nextPlayer) {
+        const stats = UNIT_STATS[unit.type];
+        unit.movesLeft = stats.movesPerTurn;
+        unit.hasAttacked = false;
+      }
+    }
+
+    // Emit state update to all connected players
+    if (session.io) {
+      const view1 = this.getPlayerView(session, 'player1');
+      const view2 = this.getPlayerView(session, 'player2');
+
+      session.sockets.get('player1')?.forEach((socketId) => {
+        session.io?.to(socketId).emit('stateUpdate', view1);
+      });
+      session.sockets.get('player2')?.forEach((socketId) => {
+        session.io?.to(socketId).emit('stateUpdate', view2);
+      });
+
+      // Emit turn change notification
+      session.io.to(session.id).emit('turnChanged', {
+        previousPlayer: currentTurn,
+        newPlayer: nextPlayer,
+        turn: session.state.turn,
+      });
+    }
+
+    return { previousPlayer: currentTurn, newPlayer: nextPlayer, turn: session.state.turn };
   }
 }

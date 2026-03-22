@@ -169,6 +169,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     socket.on('stateUpdate', (view: PlayerView) => {
       const pid = view.myUnits.length > 0 ? view.myUnits[0].owner : get().playerId;
+
+      // Center camera on enemy attacks/movements when it's not our turn
+      const lastView = get().view;
+      if (view.currentPlayer !== pid && lastView) {
+        // Check enemy units for movement (enemy attacks are detected in GameCanvas via combat animation)
+        for (const u of view.visibleEnemyUnits) {
+          const lastUnit = lastView.visibleEnemyUnits.find((lu) => lu.id === u.id);
+          if (lastUnit && (u.x !== lastUnit.x || u.y !== lastUnit.y)) {
+            // Enemy unit moved - center camera on new position
+            const { setCamera } = get();
+            setCamera(u.x, u.y);
+            break;
+          }
+        }
+      }
+
       set({ view, playerId: pid, gamePaused: false });
 
       // Auto-select next moveable unit when current one is done

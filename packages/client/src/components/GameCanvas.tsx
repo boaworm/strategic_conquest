@@ -1071,7 +1071,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       ctx.fill();
       ctx.restore();
     }
-  }, [view, cachedAllUnits, cityByPos, selectedUnitId, playerId, combatAnimRef]);
+  }, [view, cachedAllUnits, cityByPos, selectedUnitId, selectedCityId, playerId, combatAnimRef]);
 
   /** Throttled draw call for input events */
   const requestRedraw = useCallback(() => {
@@ -1188,6 +1188,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   // ── Kick off clash / bomber blast when actionResult arrives with combat ───
   useEffect(() => {
     if (!lastActionResult) return;
+    const isMyTurn = view.currentPlayer === playerId;
 
     // City capture → trumpet fanfare
     if (lastActionResult.cityCaptured) {
@@ -1202,6 +1203,15 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     if (!lastActionResult.combat) return;
     const pending = pendingCombatRef.current;
     if (!pending) return;
+
+    // Center camera on enemy attacks
+    if (!isMyTurn) {
+      const { setCamera } = useGameStore.getState();
+      // Center on the combat location
+      setCamera(pending.toX, pending.toY);
+      // Also play sound for enemy attacks
+      playAttackSound(pending.type);
+    }
 
     // Cancel any in-progress move animation when combat starts
     moveAnimRef.current = null;
@@ -1219,7 +1229,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       };
       pendingCombatRef.current = null;
       forceRender((n) => n + 1);
-      playAttackSound(pending.type);
+      if (isMyTurn) playAttackSound(pending.type);
       return;
     }
 
@@ -1238,8 +1248,10 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     };
     pendingCombatRef.current = null;
 
-    // Play attack sound
-    playAttackSound(pending.type);
+    // Play attack sound for player attacks
+    if (isMyTurn) {
+      playAttackSound(pending.type);
+    }
 
     // Spawn flame indicators for hits
     const combat = lastActionResult.combat;

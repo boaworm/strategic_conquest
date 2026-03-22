@@ -34,69 +34,108 @@ export class BasicAgent implements Agent {
   }
 
   act(obs: AgentObservation): AgentAction {
-    console.log(`[AI] --- Turn ${obs.turn}, My units: ${obs.myUnits.length}, Cities: ${obs.myCities.length} ---`);
     // 1. Move all units that still have moves
     for (const unit of obs.myUnits) {
       if (unit.sleeping || unit.movesLeft <= 0 || unit.carriedBy !== null) {
-        console.log(`[AI] Unit ${unit.id}: Skipping (sleeping=${unit.sleeping}, movesLeft=${unit.movesLeft}, carriedBy=${unit.carriedBy})`);
         continue;
       }
 
-      console.log(`[AI] Unit ${unit.id}: ${unit.type}, ${unit.movesLeft} moves left, at (${unit.x},${unit.y})`);
-
       const action = this.decideUnitAction(obs, unit);
       if (action) {
-        console.log(`[AI] Unit ${unit.id}: Action ${action.type}`);
-        if (action.type === 'MOVE' && action.to) {
-          console.log(`[AI] Unit ${unit.id}: Moving to (${action.to.x},${action.to.y})`);
-        }
         return action;
       }
-      console.log(`[AI] Unit ${unit.id}: No valid move`);
     }
 
-    console.log(`[AI] Done checking all units, moving to production phase`);
     // 2. Set production for any idle city (only after all units have moved)
     for (const city of obs.myCities) {
-      console.log(`[AI] City ${city.id}: producing=${city.producing}, turnsLeft=${city.productionTurnsLeft}`);
       if (city.producing === null) {
         const unitType = this.chooseProduction(obs, city);
-        console.log(`[AI] City ${city.id}: Setting production to ${unitType}`);
         return { type: 'SET_PRODUCTION', cityId: city.id, unitType };
       }
     }
 
-    console.log(`[AI] No units to move, no cities idle - Ending turn`);
     // 3. End turn
-    console.log(`[AI] Returning END_TURN`);
     return { type: 'END_TURN' };
   }
 
-  private chooseProduction(obs: AgentObservation, _city: CityView): UnitType {
-    const armyCount = obs.myUnits.filter((u) => u.type === UnitType.Infantry).length;
-    const cityCount = obs.myCities.length;
+  private chooseProduction(obs: AgentObservation, city: CityView): UnitType {
+    const stats = UNIT_STATS;
+    const myLandUnits = obs.myUnits.filter((u) => UNIT_STATS[u.type].domain === UnitDomain.Land);
+    const mySeaUnits = obs.myUnits.filter((u) => UNIT_STATS[u.type].domain === UnitDomain.Sea);
+    const enemyCities = obs.visibleEnemyCities;
+    const myCities = obs.myCities;
 
-    // Early game: build armies to expand
-    if (armyCount < cityCount * 2 + 3) {
-      return UnitType.Infantry;
+    const infantryCount = myLandUnits.filter((u) => u.type === UnitType.Infantry).length;
+    const tankCount = myLandUnits.filter((u) => u.type === UnitType.Tank).length;
+    const transportCount = mySeaUnits.filter((u) => u.type === UnitType.Transport).length;
+    const destroyerCount = mySeaUnits.filter((u) => u.type === UnitType.Destroyer).length;
+    const carrierCount = mySeaUnits.filter((u) => u.type === UnitType.Carrier).length;
+    const battleshipCount = mySeaUnits.filter((u) => u.type === UnitType.Battleship).length;
+
+    const enemyCoastalCities = enemyCities.filter((c) => c.coastal);
+    const coastalCity = myCities.some((c) => c.coastal);
+
+    // 1. Naval production logic (if we have coastal cities)
+    if (coastalCity) {
+      // Count enemy sea units
+      const enemySeaUnits = obs.visibleEnemyUnits.filter(
+        (u) => UNIT_STATS[u.type].domain === UnitDomain.Sea,
+      );
+      const enemyTransportCount = enemySeaUnits.filter((u) => u.type === UnitType.Transport).length;
+      const enemyDestroyerCount = enemySeaUnits.filter((u) => u.type === UnitType.Destroyer).length;
+      const enemySubmarineCount = enemySeaUnits.filter((u) => u.type === UnitType.Submarine).length;
+
+      // Build transports first if we have land units but no way to move them across ocean
+      if (enemyCoastalCities.length > 0 && transportCount === 0 && infantryCount + tankCount >= 2) {
+        return UnitType.Transport;
+      }
+
+      // Build destroyers if enemy has submarines or naval units
+      if (enemySubmarineCount > 0 && destroyerCount === 0) {
+        return UnitType.Destroyer;
+      }
+      if (enemySeaUnits.length > 0 && destroyerCount < 2) {
+        return UnitType.Destroyer;
+      }
+
+      // Build carriers if we have fighters and no carriers
+      const fighterCount = obs.myUnits.filter((u) => u.type === UnitType.Fighter).length;
+      if (fighterCount > 0 && carrierCount === 0) {
+        return UnitType.Carrier;
+      }
+
+      // Build battleships for heavy naval support
+      if (battleshipCount < 1 && destroyerCount >= 2) {
+        return UnitType.Battleship;
+      }
     }
 
-    // Mix in naval units when we have enough armies
-    const hasCoastalNeed = obs.visibleEnemyCities.some(
-      (c) => this.requiresNavalApproach(obs, c),
-    );
-    if (hasCoastalNeed) {
-      const transportCount = obs.myUnits.filter(
-        (u) => u.type === UnitType.Transport,
-      ).length;
-      if (transportCount < 2) return UnitType.Transport;
-      const destroyerCount = obs.myUnits.filter(
-        (u) => u.type === UnitType.Destroyer,
-      ).length;
-      if (destroyerCount < 1) return UnitType.Destroyer;
+    // 2. Land production logic
+    // If we have transports and are in expansion mode, build tanks for offensive power
+    if (transportCount > 0 && tankCount < infantryCount) {
+      return UnitType.Tank;
     }
 
-    // Default to infantry
+    // If we're defending (enemy is very close) or need more bodies, build infantry
+    const nearestEnemy = this.nearestCity(enemyCities, city);
+    if (nearestEnemy) {
+      const dist = this.wrappedDist(nearestEnemy, city);
+      if (dist <= 2) {
+        // Very close enemy - build infantry for defense (cheap, good defense)
+        return UnitType.Infantry;
+      }
+    }
+
+    // If enemy has tanks, build some tanks for counter
+    const enemyTankCount = obs.visibleEnemyUnits.filter((u) => u.type === UnitType.Tank).length;
+    if (enemyTankCount > 0 && tankCount < enemyTankCount) {
+      return UnitType.Tank;
+    }
+
+    // Default mix: favor infantry for economy, some tanks for offense
+    if (tankCount < infantryCount / 2) {
+      return UnitType.Tank;
+    }
     return UnitType.Infantry;
   }
 
