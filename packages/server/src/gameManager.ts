@@ -144,14 +144,27 @@ export class GameManager {
       session.disconnectTimers.delete(playerId);
     }
 
-    // Check if game should start (both joined + phase is lobby)
-    if (
-      session.state.phase === GamePhase.Lobby &&
-      session.joinedPlayers.has('player1') &&
-      session.joinedPlayers.has('player2') &&
-      session.sockets.get('player1')!.size > 0 &&
-      session.sockets.get('player2')!.size > 0
-    ) {
+    // Check if game should start
+    // For AI vs AI: both must be connected
+    // For PvE: player1 must be connected, player2 is AI (always connected)
+    // For PvP: both must be connected
+    const player1Connected = session.joinedPlayers.has('player1') && session.sockets.get('player1')!.size > 0;
+    const player2Connected = session.joinedPlayers.has('player2') && session.sockets.get('player2')!.size > 0;
+
+    let shouldStart = false;
+    if (session.isAiVsAi) {
+      // Both AI players must be connected
+      shouldStart = player1Connected && player2Connected;
+    } else if (session.isPvE) {
+      // PvE: player1 (human) must connect; player2 (AI) is always connected
+      // If player1 has joined and player2 is connected, start the game
+      shouldStart = session.joinedPlayers.has('player1') && player2Connected;
+    } else {
+      // PvP: both players must be connected
+      shouldStart = player1Connected && player2Connected;
+    }
+
+    if (shouldStart && session.state.phase === GamePhase.Lobby) {
       session.state.phase = GamePhase.Active;
       return true;
     }

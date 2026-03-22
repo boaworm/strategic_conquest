@@ -14,7 +14,9 @@ export async function spawnAIPlayer(
   aiName: 'adam' | 'basic',
 ): Promise<Socket> {
   const token = playerId === 'player1' ? session.tokens.p1Token : session.tokens.p2Token;
-  const socketPath = `${process.env.SERVER_URL || 'http://localhost:4000'}/socket.io/`;
+  const serverUrl = process.env.SERVER_URL || 'http://localhost:4000';
+  // socket.io uses the default namespace "/" - the "/socket.io/" is just the transport path
+  const socketPath = serverUrl;
 
   // Create the appropriate AI agent
   let agent: Agent;
@@ -29,14 +31,26 @@ export async function spawnAIPlayer(
     mapHeight: session.state.mapHeight,
   });
 
-  // Connect the socket
+  // Connect the socket and wait for connection
   const socket = io(socketPath, {
     auth: { token },
     transports: ['websocket', 'polling'],
   });
 
-  socket.on('connect', () => {
-    console.log(`[AI Player] ${playerId} connected as ${aiName}`);
+  // Wait for connection
+  await new Promise<void>((resolve, reject) => {
+    socket.on('connect', () => {
+      console.log(`[AI Player] ${playerId} connected as ${aiName}`);
+      resolve();
+    });
+    socket.on('connect_error', (err) => {
+      console.error(`[AI Player] ${playerId} connection error:`, err);
+      reject(err);
+    });
+    socket.on('error', (err) => {
+      console.error(`[AI Player] ${playerId} error:`, err);
+      reject(err);
+    });
   });
 
   socket.on('gameStart', (view: any) => {

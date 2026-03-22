@@ -26,7 +26,7 @@ export function MainMenu() {
   const [createdGame, setCreatedGame] = useState<CreateGameResponse | null>(null);
   const [localError, setLocalError] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
-  const [worldSize, setWorldSize] = useState(2); // default: Medium
+  const [mainWorldSize, setMainWorldSize] = useState(2); // default: Medium
   const [aiPlayer, setAiPlayer] = useState('adam'); // default: Adam
 
   const error = localError || storeError;
@@ -41,7 +41,7 @@ export function MainMenu() {
   async function handleCreate() {
     try {
       setLocalError('');
-      const size = WORLD_SIZES[worldSize];
+      const size = WORLD_SIZES[mainWorldSize];
       const result = await createGame(size.width, size.height, 'pvp');
       setCreatedGame(result);
       setMode('create');
@@ -53,13 +53,15 @@ export function MainMenu() {
   async function handleCreateAI() {
     try {
       setLocalError('');
-      const size = WORLD_SIZES[worldSize];
+      const size = WORLD_SIZES[mainWorldSize];
       // Map AI player name to type and pass to server
       const aiType = 'ai' as const;
       const result = await createGame(size.width, size.height, 'pve', 'human', aiType, undefined, aiPlayer as 'adam' | 'basic');
-      setCreatedGame(result);
-      setMode('create');
-    } catch {
+      // Automatically join as player 1 (AI joins automatically via server)
+      console.log('Created AI game, joining as player 1...');
+      joinGame(result.p1Token);
+    } catch (e) {
+      console.error('Failed to create AI game:', e);
       setLocalError('Failed to create game');
     }
   }
@@ -153,26 +155,27 @@ export function MainMenu() {
     return (
       <div className="max-w-lg mx-auto mt-20 bg-gray-800 text-white rounded-lg p-6 space-y-6">
         <h2 className="text-xl font-bold">Play vs AI</h2>
-        <p className="text-gray-300 text-sm">Select an AI opponent</p>
+        <p className="text-gray-300 text-sm">Select your AI opponent</p>
         {error && <p className="text-red-400">{error}</p>}
 
         <div className="text-left space-y-2">
-          <label className="text-sm text-gray-300 block">World Size</label>
+          <label className="text-sm text-gray-300 block">World Size (selected)</label>
           <div className="flex gap-2 justify-center flex-wrap">
             {WORLD_SIZES.map((s, i) => (
               <button
                 key={s.label}
-                className={`px-3 py-1.5 rounded text-sm ${i === worldSize
+                className={`px-3 py-1.5 rounded text-sm ${i === mainWorldSize
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   }`}
-                onClick={() => setWorldSize(i)}
+                onClick={() => setMainWorldSize(i)}
               >
                 {s.label}
                 <span className="block text-xs text-gray-400">{s.width}×{s.height}</span>
               </button>
             ))}
           </div>
+          <p className="text-xs text-gray-400 mt-1">Map: {WORLD_SIZES[mainWorldSize].width}×{WORLD_SIZES[mainWorldSize].height}</p>
         </div>
 
         <div className="text-left space-y-2">
@@ -224,17 +227,18 @@ export function MainMenu() {
             {WORLD_SIZES.map((s, i) => (
               <button
                 key={s.label}
-                className={`px-3 py-1.5 rounded text-sm ${i === worldSize
+                className={`px-3 py-1.5 rounded text-sm ${i === mainWorldSize
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   }`}
-                onClick={() => setWorldSize(i)}
+                onClick={() => setMainWorldSize(i)}
               >
                 {s.label}
                 <span className="block text-xs text-gray-400">{s.width}×{s.height}</span>
               </button>
             ))}
           </div>
+          <p className="text-xs text-gray-400 mt-1">Selected: {WORLD_SIZES[mainWorldSize].width}×{WORLD_SIZES[mainWorldSize].height}</p>
         </div>
         <button
           className="px-6 py-3 bg-blue-700 rounded-lg text-lg hover:bg-blue-600"
@@ -244,7 +248,9 @@ export function MainMenu() {
         </button>
         <button
           className="px-6 py-3 bg-purple-700 rounded-lg text-lg hover:bg-purple-600"
-          onClick={() => setMode('ai-select')}
+          onClick={() => {
+            setMode('ai-select');
+          }}
         >
           Play vs AI
         </button>
