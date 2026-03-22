@@ -3,6 +3,7 @@ import {
   type GameAction,
   type PlayerId,
   type PlayerView,
+  type PlayerType,
   GamePhase,
   createGameState,
   applyAction,
@@ -17,6 +18,8 @@ export interface GameSession {
   state: GameState;
   /** Set of socket ids per player */
   sockets: Map<PlayerId, Set<string>>;
+  /** Player types: 'human' or 'ai' */
+  playerTypes: Map<PlayerId, PlayerType>;
   /** Disconnect timer per player */
   disconnectTimers: Map<PlayerId, ReturnType<typeof setTimeout>>;
   /** Track which players have joined at least once */
@@ -25,6 +28,8 @@ export interface GameSession {
   difficulty?: AIDifficulty;
   /** Is this a PvE game? */
   isPvE: boolean;
+  /** Is this an AI vs AI game? */
+  isAiVsAi: boolean;
   createdAt: number;
 }
 
@@ -43,6 +48,8 @@ export class GameManager {
     mapHeight = 40,
     isPvE = false,
     difficulty: AIDifficulty = 'medium',
+    p1Type: 'human' | 'ai' = 'human',
+    p2Type: 'human' | 'ai' = 'human',
   ): GameSession {
     const id = crypto.randomUUID();
     const tokens = generateTokens();
@@ -50,6 +57,8 @@ export class GameManager {
     const state = createGameState({ width: mapWidth, height: mapHeight });
     // Game starts in lobby phase until both players connect
     state.phase = GamePhase.Lobby;
+
+    const isAiVsAi = p1Type === 'ai' && p2Type === 'ai';
 
     const session: GameSession = {
       id,
@@ -59,10 +68,15 @@ export class GameManager {
         ['player1', new Set()],
         ['player2', new Set()],
       ]),
+      playerTypes: new Map([
+        ['player1', p1Type],
+        ['player2', p2Type],
+      ]),
       disconnectTimers: new Map(),
       joinedPlayers: new Set(),
       difficulty: isPvE ? difficulty : undefined,
       isPvE,
+      isAiVsAi,
       createdAt: Date.now(),
     };
 
@@ -70,6 +84,11 @@ export class GameManager {
     this.tokenIndex.set(tokens.adminToken, { gameId: id, role: 'admin' });
     this.tokenIndex.set(tokens.p1Token, { gameId: id, role: 'player1' });
     this.tokenIndex.set(tokens.p2Token, { gameId: id, role: 'player2' });
+
+    // For AI vs AI, start immediately (both players are AI and will connect)
+    if (isAiVsAi) {
+      session.state.phase = GamePhase.Active;
+    }
 
     return session;
   }
@@ -168,8 +187,8 @@ export class GameManager {
     return this.games.get(id);
   }
 
-  listGames(): { id: string; phase: string; turn: number; playersConnected: number }[] {
-    const result: { id: string; phase: string; turn: number; playersConnected: number }[] = [];
+  listGames(): { id: string; phase: string; turn: number; playersConnected: number; mode: string }[] {
+    const result: { id: string; phase: string; turn: number; playersConnected: number; mode: string }[] = [];
     for (const [, session] of this.games) {
       result.push({
         id: session.id,
@@ -178,6 +197,7 @@ export class GameManager {
         playersConnected:
           (session.sockets.get('player1')!.size > 0 ? 1 : 0) +
           (session.sockets.get('player2')!.size > 0 ? 1 : 0),
+        mode: session.isAiVsAi ? 'ai_vs_ai' : session.isPvE ? 'pve' : 'pvp',
       });
     }
     return result;

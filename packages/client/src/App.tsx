@@ -34,7 +34,7 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen bg-gray-950 flex flex-col"
+      className="h-screen bg-gray-950 flex flex-col overflow-hidden"
       onKeyDown={(e) => {
         if (e.key === 'Escape' && cityDialogId) {
           setCityDialogId(null);
@@ -44,8 +44,8 @@ export default function App() {
     >
       <HUD />
       <div className="flex-1 flex overflow-hidden">
-        {/* Map */}
-        <div className="flex-1 overflow-auto p-2">
+        {/* Map area */}
+        <div className="flex-1 overflow-hidden relative">
           <GameCanvas
             view={view}
             onCityClick={(city) => setCityDialogId(city.id)}

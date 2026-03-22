@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
 import {
   type PlayerView,
   type UnitView,
@@ -13,7 +13,7 @@ import {
   wrapX,
   wrappedDistX,
 } from '@sc/shared';
-import { useGameStore, MIN_TILE_SIZE, MAX_TILE_SIZE } from '../store/gameStore';
+import { useGameStore, DEFAULT_TILE_SIZE } from '../store/gameStore';
 import { playAttackSound, playCityCaptureFanfare, playCrashSound } from '../sounds';
 
 // ── Classic colour palette ───────────────────────────────────
@@ -554,12 +554,9 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   const selectedUnitId = useGameStore((s) => s.selectedUnitId);
   const selectUnit = useGameStore((s) => s.selectUnit);
   const playerId = useGameStore((s) => s.playerId);
-  const tileSize = useGameStore((s) => s.tileSize);
-  const cameraX = useGameStore((s) => s.cameraX);
-  const cameraY = useGameStore((s) => s.cameraY);
+  // We don't subscribe to camera/zoom state here to avoid high-frequency re-renders during panning.
+  // Instead, we read them directly from the store in the draw/event handlers.
   const setCamera = useGameStore((s) => s.setCamera);
-  const zoomIn = useGameStore((s) => s.zoomIn);
-  const zoomOut = useGameStore((s) => s.zoomOut);
   const setTileSize = useGameStore((s) => s.setTileSize);
 
   const lastActionResult = useGameStore((s) => s.lastActionResult);
@@ -623,6 +620,20 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   const moveAnimRef = useRef<MoveAnim | null>(null);
   const MOVE_STEP_DURATION = 333; // ms per tile
 
+  // ── Pre-calculations ──────────────────────────────────────
+  const redrawRequestedRef = useRef<number | null>(null);
+
+  const cityByPos = useMemo(() => {
+    const map = new Map<string, CityView>();
+    const allCities = [...view.myCities, ...view.visibleEnemyCities];
+    for (const c of allCities) map.set(`${c.x},${c.y}`, c);
+    return map;
+  }, [view]);
+
+  // We can't useMemo for unitsByPos easily because of the animation dependencies,
+  // but we can pre-calculate the base unit set to avoid per-frame spreads.
+  const cachedAllUnits = useMemo(() => [...view.myUnits, ...view.visibleEnemyUnits], [view]);
+
   // Duration constants (ms)
   const CLASH_DURATION = 500;
   const FLASH_DURATION = 200;
@@ -634,6 +645,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     (screenX: number, screenY: number): { tx: number; ty: number } | null => {
       const canvas = canvasRef.current;
       if (!canvas) return null;
+      const { cameraX, cameraY, tileSize } = useGameStore.getState();
       const rect = canvas.getBoundingClientRect();
       const pixelX = screenX - rect.left;
       const pixelY = screenY - rect.top;
@@ -657,7 +669,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       if (ty < 0 || ty >= mapH) return null;
       return { tx, ty };
     },
-    [cameraX, cameraY, tileSize, mapW, mapH],
+    [mapW, mapH],
   );
 
   // ── Draw ───────────────────────────────────────────────────
@@ -667,15 +679,10 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth;
-    const cssH = canvas.clientHeight;
-    canvas.width = cssW * dpr;
-    canvas.height = cssH * dpr;
-    ctx.scale(dpr, dpr);
+    const { cameraX, cameraY, tileSize } = useGameStore.getState();
 
-    const canvasW = cssW;
-    const canvasH = cssH;
+    const canvasW = canvas.width / (window.devicePixelRatio || 1);
+    const canvasH = canvas.height / (window.devicePixelRatio || 1);
 
     // Camera centre in pixels
     const camPx = cameraX * tileSize;
@@ -685,11 +692,15 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     const originX = camPx - canvasW / 2;
     const originY = camPy - canvasH / 2;
 
-    // Range of tiles visible
-    const startTileX = Math.floor(originX / tileSize);
-    const endTileX = Math.ceil((originX + canvasW) / tileSize);
-    const startTileY = Math.max(0, Math.floor(originY / tileSize));
-    const endTileY = Math.min(mapH - 1, Math.ceil((originY + canvasH) / tileSize));
+    // Range of tiles visible (with guards against invalid tile sizes)
+    const effectiveTileSize = Math.max(1, tileSize);
+    const startTileX = Math.floor(originX / effectiveTileSize);
+    const endTileX = Math.ceil((originX + canvasW) / effectiveTileSize);
+    const startTileY = Math.max(0, Math.floor(originY / effectiveTileSize));
+    const endTileY = Math.min(mapH - 1, Math.ceil((originY + canvasH) / effectiveTileSize));
+
+    // Security check: prevent infinite or massive loops if something goes wrong
+    if (endTileX - startTileX > 2000 || endTileY - startTileY > 2000) return;
 
     // Clear
     ctx.fillStyle = COL_FOG;
@@ -741,24 +752,21 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     // ── Build lookup sets for quick coordinate testing ──
     const anim = combatAnimRef.current;
     const unitsByPos = new Map<string, UnitView[]>();
-    const allUnits = [...view.myUnits, ...view.visibleEnemyUnits];
-    for (const u of allUnits) {
+    for (const u of cachedAllUnits) {
       if (u.carriedBy) continue;
       // During animation, skip the attacker from the normal position list
-      // (we'll draw it separately with an offset)
       if (anim && anim.phase !== 'done' && u.id === anim.attackerUnitId) continue;
-      // During move animation, skip the unit (we'll draw it at interpolated position)
+      // During move animation, skip the unit
       const mAnim = moveAnimRef.current;
       if (mAnim && u.id === mAnim.unitId) continue;
       const key = `${u.x},${u.y}`;
-      const arr = unitsByPos.get(key);
-      if (arr) arr.push(u);
-      else unitsByPos.set(key, [u]);
+      let arr = unitsByPos.get(key);
+      if (!arr) {
+        arr = [];
+        unitsByPos.set(key, arr);
+      }
+      arr.push(u);
     }
-
-    const cityByPos = new Map<string, CityView>();
-    const allCities = [...view.myCities, ...view.visibleEnemyCities];
-    for (const c of allCities) cityByPos.set(`${c.x},${c.y}`, c);
 
     // ── Cities & Units (draw on every wrapped copy visible) ──
     for (let wy = startTileY; wy <= endTileY; wy++) {
@@ -1063,7 +1071,23 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       ctx.fill();
       ctx.restore();
     }
-  }, [view, tileSize, cameraX, cameraY, mapW, mapH, selectedUnitId, playerId, combatAnimRef]);
+  }, [view, cachedAllUnits, cityByPos, selectedUnitId, playerId, combatAnimRef]);
+
+  /** Throttled draw call for input events */
+  const requestRedraw = useCallback(() => {
+    if (redrawRequestedRef.current !== null) return;
+    redrawRequestedRef.current = requestAnimationFrame(() => {
+      redrawRequestedRef.current = null;
+      draw();
+    });
+  }, [draw]);
+
+  /** Cleanup any pending redraw on unmount */
+  useEffect(() => {
+    return () => {
+      if (redrawRequestedRef.current !== null) cancelAnimationFrame(redrawRequestedRef.current);
+    };
+  }, []);
 
   // ── Combat animation loop ──────────────────────────────────
   useEffect(() => {
@@ -1240,144 +1264,86 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const observer = new ResizeObserver(() => draw());
+
+    const observer = new ResizeObserver(() => {
+      const dpr = window.devicePixelRatio || 1;
+      const cssW = canvas.clientWidth;
+      const cssH = canvas.clientHeight;
+      canvas.width = cssW * dpr;
+      canvas.height = cssH * dpr;
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.scale(dpr, dpr);
+
+      // Lock to 15 tiles vertically
+      const newTileSize = cssH / 15;
+      setTileSize(newTileSize);
+
+      requestRedraw();
+    });
+
     observer.observe(canvas);
     return () => observer.disconnect();
   }, [draw]);
 
-  // ── Mouse handlers ─────────────────────────────────────────
+  // ── Mouse handlers (native for blocking gestures) ───────────
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-  function handleWheel(e: React.WheelEvent) {
-    e.preventDefault();
-    if (e.deltaY < 0) zoomIn();
-    else zoomOut();
-  }
+    const onNativeMouseDown = (e: MouseEvent) => {
+      if (e.button === 2) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragRef.current = { dragging: false, lastX: e.clientX, lastY: e.clientY };
+      }
+    };
 
-  function handleMouseDown(e: React.MouseEvent) {
-    // Right-click starts panning
-    if (e.button === 2) {
+    const onNativeMouseMove = (e: MouseEvent) => {
+      if (!(e.buttons & 2)) return;
+
+      // Stop Vivaldi/browser from seeing this as a gesture
       e.preventDefault();
-      dragRef.current = { dragging: false, lastX: e.clientX, lastY: e.clientY };
-    }
-  }
+      e.stopPropagation();
 
-  function handleMouseMove(e: React.MouseEvent) {
-    const d = dragRef.current;
-    // Pan with right mouse button held
-    if (!(e.buttons & 2)) return;
+      const d = dragRef.current;
+      const dx = e.clientX - d.lastX;
+      const dy = e.clientY - d.lastY;
 
-    const dx = e.clientX - d.lastX;
-    const dy = e.clientY - d.lastY;
-
-    if (!d.dragging && Math.abs(dx) + Math.abs(dy) > 4) {
-      d.dragging = true;
-    }
-
-    if (d.dragging) {
-      setCamera(cameraX - dx / tileSize, cameraY - dy / tileSize);
-      d.lastX = e.clientX;
-      d.lastY = e.clientY;
-    }
-  }
-
-  /**
-   * Compute a greedy straight-line path from (fx,fy) to (goalX,goalY),
-   * returning up to `maxSteps` waypoints. Each step picks the adjacent tile
-   * closest to the goal, preferring straight movement.
-   */
-  function computePath(
-    fx: number, fy: number,
-    goalX: number, goalY: number,
-    maxSteps: number,
-    domain: UnitDomain,
-  ): Coord[] {
-    const path: Coord[] = [];
-    let cx = fx, cy = fy;
-    for (let i = 0; i < maxSteps; i++) {
-      if (cx === goalX && cy === goalY) break;
-      // Determine ideal step direction using wrapped X
-      const rawDx = goalX - cx;
-      const halfW = Math.floor(mapW / 2);
-      let sdx = rawDx;
-      if (rawDx > halfW) sdx = rawDx - mapW;
-      else if (rawDx < -halfW) sdx = rawDx + mapW;
-      const sdy = goalY - cy;
-      const stepX = sdx === 0 ? 0 : sdx > 0 ? 1 : -1;
-      const stepY = sdy === 0 ? 0 : sdy > 0 ? 1 : -1;
-
-      // Try diagonal first, then cardinal alternatives
-      const candidates: Coord[] = [];
-      if (stepX !== 0 && stepY !== 0) candidates.push({ x: cx + stepX, y: cy + stepY });
-      if (stepX !== 0) candidates.push({ x: cx + stepX, y: cy });
-      if (stepY !== 0) candidates.push({ x: cx, y: cy + stepY });
-      // Remaining diagonals as fallback
-      for (const dx of [-1, 0, 1]) {
-        for (const dy of [-1, 0, 1]) {
-          if (dx === 0 && dy === 0) continue;
-          const c = { x: cx + dx, y: cy + dy };
-          if (!candidates.some((p) => p.x === c.x && p.y === c.y)) candidates.push(c);
-        }
+      if (!d.dragging && Math.abs(dx) + Math.abs(dy) > 4) {
+        d.dragging = true;
       }
 
-      let moved = false;
-      for (const c of candidates) {
-        const nx = wrapX(c.x, mapW);
-        const ny = c.y;
-        if (ny < 0 || ny >= mapH) continue;
-        // Ice cap rows are impassable
-        if (ny === 0 || ny === mapH - 1) continue;
-        const terrain = view.tiles[ny]?.[nx]?.terrain;
-        if (terrain === undefined) continue;
-
-        // Basic domain check (same as server canMoveTo)
-        if (domain === UnitDomain.Land && terrain === Terrain.Ocean) continue;
-        if (domain === UnitDomain.Sea && terrain === Terrain.Land) {
-          // Sea units can enter cities
-          const hasCity = [...view.myCities, ...view.visibleEnemyCities].some(
-            (ci) => ci.x === nx && ci.y === ny,
-          );
-          if (!hasCity) continue;
-        }
-
-        // Stop path if there's a visible enemy on this tile (let normal click handle combat)
-        const enemyHere = view.visibleEnemyUnits.some(
-          (u) => u.x === nx && u.y === ny && !u.carriedBy,
-        );
-        if (enemyHere) {
-          // Include this tile as the final step (for combat)
-          path.push({ x: nx, y: ny });
-          moved = true;
-          break;
-        }
-
-        path.push({ x: nx, y: ny });
-        cx = nx;
-        cy = ny;
-        moved = true;
-        break;
+      if (d.dragging) {
+        const { cameraX, cameraY, tileSize } = useGameStore.getState();
+        setCamera(cameraX - dx / tileSize, cameraY - dy / tileSize);
+        d.lastX = e.clientX;
+        d.lastY = e.clientY;
+        requestRedraw();
       }
-      if (!moved) break;
-      // If we added an enemy tile, stop the path
-      if (path.length > 0) {
-        const last = path[path.length - 1];
-        const enemyOnLast = view.visibleEnemyUnits.some(
-          (u) => u.x === last.x && u.y === last.y && !u.carriedBy,
-        );
-        if (enemyOnLast) break;
+    };
+
+    const onNativeMouseUp = (e: MouseEvent) => {
+      if (e.button === 2) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragRef.current.dragging = false;
       }
-    }
-    return path;
-  }
+    };
+
+    // Passive: false is missing here because we removed the wheel listener
+    canvas.addEventListener('mousedown', onNativeMouseDown);
+    canvas.addEventListener('mousemove', onNativeMouseMove);
+    canvas.addEventListener('mouseup', onNativeMouseUp);
+
+    return () => {
+      canvas.removeEventListener('mousedown', onNativeMouseDown);
+      canvas.removeEventListener('mousemove', onNativeMouseMove);
+      canvas.removeEventListener('mouseup', onNativeMouseUp);
+    };
+  }, [setCamera, requestRedraw]);
 
   function handleMouseUp(e: React.MouseEvent) {
-    // Right-click release: end pan (or open context menu suppression)
-    if (e.button === 2) {
-      const d = dragRef.current;
-      d.dragging = false;
-      return;
-    }
-
-    // Only handle left-click
+    // Only handle left-click in React land for UI logic
     if (e.button !== 0) return;
 
     const pos = screenToTile(e.clientX, e.clientY);
@@ -1406,11 +1372,8 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
 
       // Find current selection in cycle
       const currentIdx = selectedUnitId ? cycleIds.indexOf(selectedUnitId) : -1;
-      // Also check if we currently have the city dialog open for this tile
-      const isCitySelected = selectedUnitId === null && onCityClick && myCity;
 
       if (currentIdx >= 0) {
-        // Advance to next in cycle
         const nextIdx = (currentIdx + 1) % cycleIds.length;
         const next = cycleIds[nextIdx];
         if (next === 'city' && myCity && onCityClick) {
@@ -1420,7 +1383,6 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
           selectUnit(next as string);
         }
       } else {
-        // Nothing here is selected — select the first
         const first = cycleIds[0];
         if (first === 'city' && myCity && onCityClick) {
           selectUnit(null);
@@ -1436,7 +1398,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     if (selectedUnitId) {
       const unit = view.myUnits.find((u) => u.id === selectedUnitId);
       if (unit) {
-        // For carried units, distance is relative to the transport's position
+        const { tileSize } = useGameStore.getState();
         const unitX = unit.carriedBy
           ? (view.myUnits.find((u) => u.id === unit.carriedBy)?.x ?? unit.x)
           : unit.x;
@@ -1444,21 +1406,17 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
           ? (view.myUnits.find((u) => u.id === unit.carriedBy)?.y ?? unit.y)
           : unit.y;
 
-        // Clicking on own tile — do nothing for move
         const dx = wrappedDistX(tx, unitX, mapW);
         const dy = Math.abs(ty - unitY);
         if (dx === 0 && dy === 0) return;
 
-        // Carried unit → unload to adjacent tile
         if (unit.carriedBy && dx <= 1 && dy <= 1) {
           sendAction({ type: 'UNLOAD', unitId: selectedUnitId, to: { x: tx, y: ty } });
           return;
         }
 
         if (unit.movesLeft > 0 && !unit.carriedBy) {
-          // Adjacent tile
           if (dx <= 1 && dy <= 1) {
-            // Check if there's an enemy on the target → set up combat animation
             const enemyOnTarget = view.visibleEnemyUnits.find(
               (e) => e.x === tx && e.y === ty && !e.carriedBy,
             );
@@ -1477,19 +1435,16 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
             return;
           }
 
-          // Non-adjacent: compute path and animate movement
           const domain = UNIT_STATS[unit.type].domain;
           const path = computePath(unit.x, unit.y, tx, ty, unit.movesLeft, domain);
           if (path.length > 0) {
             const lastStep = path[path.length - 1];
-            // Only act if path actually reaches the target (or an enemy along the way)
             const reachedTarget = lastStep.x === tx && lastStep.y === ty;
             const enemyOnLast = view.visibleEnemyUnits.find(
               (e) => e.x === lastStep.x && e.y === lastStep.y && !e.carriedBy,
             );
-            if (!reachedTarget && !enemyOnLast) return; // too far — ignore click
+            if (!reachedTarget && !enemyOnLast) return;
 
-            // Set up combat animation if the last step has an enemy
             if (enemyOnLast) {
               const stepBefore = path.length > 1 ? path[path.length - 2] : { x: unit.x, y: unit.y };
               pendingCombatRef.current = {
@@ -1503,7 +1458,6 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
               };
             }
 
-            // Start move animation — actions are sent by the animation loop
             moveAnimRef.current = {
               unitId: unit.id,
               unitType: unit.type,
@@ -1512,7 +1466,6 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
               startTime: performance.now(),
               sentCount: 0,
             };
-            // Send the first step immediately
             sendAction({ type: 'MOVE', unitId: selectedUnitId, to: path[0] });
             moveAnimRef.current.sentCount = 1;
             forceRender((n) => n + 1);
@@ -1523,13 +1476,90 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     }
   }
 
+  /**
+   * Compute a greedy straight-line path from (fx,fy) to (goalX,goalY),
+   * returning up to `maxSteps` waypoints. Each step picks the adjacent tile
+   * closest to the goal, preferring straight movement.
+   */
+  function computePath(
+    fx: number, fy: number,
+    goalX: number, goalY: number,
+    maxSteps: number,
+    domain: UnitDomain,
+  ): Coord[] {
+    const path: Coord[] = [];
+    let cx = fx, cy = fy;
+    for (let i = 0; i < maxSteps; i++) {
+      if (cx === goalX && cy === goalY) break;
+      const rawDx = goalX - cx;
+      const halfW = Math.floor(mapW / 2);
+      let sdx = rawDx;
+      if (rawDx > halfW) sdx = rawDx - mapW;
+      else if (rawDx < -halfW) sdx = rawDx + mapW;
+      const sdy = goalY - cy;
+      const stepX = sdx === 0 ? 0 : sdx > 0 ? 1 : -1;
+      const stepY = sdy === 0 ? 0 : sdy > 0 ? 1 : -1;
+
+      const candidates: Coord[] = [];
+      if (stepX !== 0 && stepY !== 0) candidates.push({ x: cx + stepX, y: cy + stepY });
+      if (stepX !== 0) candidates.push({ x: cx + stepX, y: cy });
+      if (stepY !== 0) candidates.push({ x: cx, y: cy + stepY });
+      for (const dx of [-1, 0, 1]) {
+        for (const dy of [-1, 0, 1]) {
+          if (dx === 0 && dy === 0) continue;
+          const c = { x: cx + dx, y: cy + dy };
+          if (!candidates.some((p) => p.x === c.x && p.y === c.y)) candidates.push(c);
+        }
+      }
+
+      let moved = false;
+      for (const c of candidates) {
+        const nx = wrapX(c.x, mapW);
+        const ny = c.y;
+        if (ny < 0 || ny >= mapH) continue;
+        if (ny === 0 || ny === mapH - 1) continue;
+        const terrain = view.tiles[ny]?.[nx]?.terrain;
+        if (terrain === undefined) continue;
+
+        if (domain === UnitDomain.Land && terrain === Terrain.Ocean) continue;
+        if (domain === UnitDomain.Sea && terrain === Terrain.Land) {
+          const hasCity = [...view.myCities, ...view.visibleEnemyCities].some(
+            (ci) => ci.x === nx && ci.y === ny,
+          );
+          if (!hasCity) continue;
+        }
+
+        const enemyHere = view.visibleEnemyUnits.some(
+          (u) => u.x === nx && u.y === ny && !u.carriedBy,
+        );
+        if (enemyHere) {
+          path.push({ x: nx, y: ny });
+          moved = true;
+          break;
+        }
+
+        path.push({ x: nx, y: ny });
+        cx = nx;
+        cy = ny;
+        moved = true;
+        break;
+      }
+      if (!moved) break;
+      if (path.length > 0) {
+        const last = path[path.length - 1];
+        const enemyOnLast = view.visibleEnemyUnits.some(
+          (u) => u.x === last.x && u.y === last.y && !u.carriedBy,
+        );
+        if (enemyOnLast) break;
+      }
+    }
+    return path;
+  }
+
   return (
     <canvas
       ref={canvasRef}
       tabIndex={0}
-      onWheel={handleWheel}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onContextMenu={(e) => e.preventDefault()}
       onKeyDown={(e) => {
@@ -1538,7 +1568,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
           sendAction({ type: 'SKIP', unitId: selectedUnitId });
         }
       }}
-      className="w-full h-full block cursor-grab active:cursor-grabbing outline-none"
+      className="w-full h-full block cursor-grab active:cursor-grabbing outline-none touch-none"
       style={{ imageRendering: 'pixelated' }}
     />
   );

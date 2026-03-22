@@ -25,6 +25,11 @@ export function wrappedDistX(x1: number, x2: number, mapWidth: number): number {
 
 export type PlayerId = 'player1' | 'player2';
 
+/**
+ * Player type indicator - helps distinguish human vs AI players
+ */
+export type PlayerType = 'human' | 'ai';
+
 // ── Terrain ──────────────────────────────────────────────────
 
 export enum Terrain {
@@ -361,11 +366,20 @@ export interface ClientToServerEvents {
 
 export type AIDifficulty = 'easy' | 'medium' | 'hard';
 
+/**
+ * AI Player selection - either a built-in AI by difficulty or a trained agent
+ */
+export type AIPlayer = AIDifficulty | 'basic' | 'evolved' | string;
+
 export interface CreateGameRequest {
   mapWidth?: number;  // default 60
   mapHeight?: number; // default 40
-  mode?: 'pvp' | 'pve'; // default 'pvp'
-  difficulty?: AIDifficulty; // default 'medium'
+  mode?: 'pvp' | 'pve' | 'ai_vs_ai'; // default 'pvp'
+  p1Type?: 'human' | 'ai'; // default 'human'
+  p2Type?: 'human' | 'ai'; // default 'human'
+  difficulty?: AIDifficulty; // default 'medium' - used for AI players
+  p1AI?: AIPlayer; // specific AI for player 1 (overrides difficulty)
+  p2AI?: AIPlayer; // specific AI for player 2 (overrides difficulty)
 }
 
 export interface CreateGameResponse {
@@ -373,8 +387,12 @@ export interface CreateGameResponse {
   adminToken: string;
   p1Token: string;
   p2Token: string;
-  mode: 'pvp' | 'pve';
+  mode: 'pvp' | 'pve' | 'ai_vs_ai';
+  p1Type: 'human' | 'ai';
+  p2Type: 'human' | 'ai';
   difficulty?: AIDifficulty;
+  p1AI?: AIPlayer;
+  p2AI?: AIPlayer;
 }
 
 export interface GameInfo {

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { GameManager } from '../gameManager.js';
-import type { AIDifficulty } from '@sc/shared';
+import type { AIDifficulty, GameAction } from '@sc/shared';
+import { GameState, GamePhase } from '@sc/shared';
 
 /**
  * Training API for AI agents
@@ -25,11 +26,6 @@ export interface TrainingGameInfo {
   mapWidth: number;
   mapHeight: number;
   difficulty: AIDifficulty;
-}
-
-export interface AgentAction {
-  type: string;
-  [key: string]: unknown;
 }
 
 export interface AgentObservation {
@@ -129,7 +125,7 @@ export function createTrainingRoutes(manager: GameManager): Router {
 
     // Agent plays as player2
     const playerId = 'player2' as const;
-    const action = req.body as AgentAction;
+    const action = req.body as GameAction;
 
     const result = manager.processAction(session, playerId, action);
 
@@ -142,19 +138,20 @@ export function createTrainingRoutes(manager: GameManager): Router {
    * This is the main API for reinforcement learning.
    */
   router.post('/training/games/:gameId/step', (req, res) => {
-    const session = manager.getGame(req.params.gameId);
-    if (!session) {
+    const sessionRaw = manager.getGame(req.params.gameId);
+    if (!sessionRaw) {
       res.status(404).json({ error: 'Game not found' });
       return;
     }
+    const session = sessionRaw; // Type assertion
 
-    if (session.state.phase !== 'active') {
+    if (session.state.phase !== GamePhase.Active) {
       res.status(400).json({ error: 'Game is not active' });
       return;
     }
 
     const playerId = 'player2' as const;
-    const action = req.body as AgentAction;
+    const action = req.body as GameAction;
 
     // Get state before action for comparison
     const stateBefore = session.state;
@@ -176,7 +173,7 @@ export function createTrainingRoutes(manager: GameManager): Router {
     const reward = calculateReward(stateBefore, session.state, playerId);
 
     // Check if game is over
-    const done = session.state.phase === 'finished';
+    const done = session.state.phase === (GamePhase as any).Finished;
 
     res.json({
       success: true,
@@ -205,27 +202,27 @@ export function createTrainingRoutes(manager: GameManager): Router {
    * Based on: city count, unit count, combat results
    */
   function calculateReward(
-    stateBefore: any,
-    stateAfter: any,
+    stateBefore: GameState,
+    stateAfter: GameState,
     playerId: string,
   ): number {
     let reward = 0;
 
     // City differential
     const citiesBefore = stateBefore.cities.filter(
-      (c: any) => c.owner === playerId,
+      (c) => c.owner === playerId,
     ).length;
     const citiesAfter = stateAfter.cities.filter(
-      (c: any) => c.owner === playerId,
+      (c) => c.owner === playerId,
     ).length;
     reward += (citiesAfter - citiesBefore) * 10; // +10 for each new city
 
     // Unit differential (but penalize excessive growth to encourage efficiency)
     const unitsBefore = stateBefore.units.filter(
-      (u: any) => u.owner === playerId,
+      (u) => u.owner === playerId,
     ).length;
     const unitsAfter = stateAfter.units.filter(
-      (u: any) => u.owner === playerId,
+      (u) => u.owner === playerId,
     ).length;
     const unitChange = unitsAfter - unitsBefore;
     reward += unitChange * 2; // +2 for each new unit

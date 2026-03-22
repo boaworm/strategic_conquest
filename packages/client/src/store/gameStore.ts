@@ -56,14 +56,9 @@ interface GameStore {
   viewportInitialized: boolean;
   setTileSize: (size: number) => void;
   setCamera: (x: number, y: number) => void;
-  zoomIn: () => void;
-  zoomOut: () => void;
 }
 
-export const MIN_TILE_SIZE = 8;
-export const MAX_TILE_SIZE = 64;
-export const DEFAULT_TILE_SIZE = 24;
-const ZOOM_STEP = 4;
+export const DEFAULT_TILE_SIZE = 32;
 
 export const useGameStore = create<GameStore>((set, get) => ({
   connected: false,
@@ -253,20 +248,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   setTileSize: (size: number) => {
-    set({ tileSize: Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, size)) });
+    set({ tileSize: size });
   },
 
   setCamera: (x: number, y: number) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     set({ cameraX: x, cameraY: y });
-  },
-
-  zoomIn: () => {
-    const cur = get().tileSize;
-    set({ tileSize: Math.min(MAX_TILE_SIZE, cur + ZOOM_STEP) });
-  },
-
-  zoomOut: () => {
-    const cur = get().tileSize;
-    set({ tileSize: Math.max(MIN_TILE_SIZE, cur - ZOOM_STEP) });
   },
 }));

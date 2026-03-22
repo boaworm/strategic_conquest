@@ -134,7 +134,7 @@ io.on('connection', (socket) => {
   const gameId = (socket as any).gameId as string;
   const playerId = (socket as any).playerId as PlayerId;
 
-  const session = manager.getGame(gameId);
+  const session: import('./gameManager.js').GameSession = manager.getGame(gameId)!;
   if (!session) {
     socket.emit('error', { message: 'Game not found' });
     socket.disconnect();
@@ -147,8 +147,10 @@ io.on('connection', (socket) => {
   // Register socket
   const shouldStart = manager.addSocket(session, playerId, socket.id);
 
-  // Notify others that a player joined
-  socket.to(gameId).emit('playerJoined', { playerId });
+  // Notify others that a player joined (skip for AI vs AI games)
+  if (!session.isAiVsAi) {
+    socket.to(gameId).emit('playerJoined', { playerId });
+  }
 
   if (shouldStart) {
     // Game transitions from Lobby to Active — send initial state to both players
@@ -159,7 +161,9 @@ io.on('connection', (socket) => {
         io.to(sid).emit('gameStart', view);
       }
     }
-  } else if (session.state.phase === GamePhase.Active) {
+  }
+
+  if (session.state.phase === GamePhase.Active) {
     // Game already active (reconnect or second tab) — send current state
     const view = manager.getPlayerView(session, playerId);
     socket.emit('stateUpdate', view);
