@@ -151,20 +151,21 @@ Long-term Rewards:
 
 ## Implementation Plan
 
-### Phase 1: Foundation
-1. Create state encoder/decoder utilities
-2. Implement basic Runner with mock experts
-3. Test with simple heuristics
+### Phase 1: V1 Training Infrastructure (Headless Bridge)
+1. **State Tensor Converter**: Implement a TS function to convert `PlayerView` into the `15 × H × W` Float32Array CNN grid.
+2. **Headless Simulator**: Create a Node.js script that runs the pure TS engine locally (no sockets, no UI) vs the `BasicAgent`.
+3. **IPC Bridge (Unix Domain Sockets)**: Connect the fast TS simulator to Python using Unix Domain Sockets (UDS) to pass tensor buffers and receive actions. (UDS is native, zero-network-overhead, and requires no external libraries).
+4. **PyTorch Skeleton**: Write a minimal Python/PyTorch CNN to receive states and return valid random actions to benchmark Games-Per-Second.
 
-### Phase 2: Expert Models
-1. Implement CityProductionExpert
-2. Implement UnitMovementExpert
-3. Implement CombatTargetExpert
+### Phase 2: Imitation Learning (Bootstrapping)
+1. Run 50,000 headless games of `BasicAgent` vs `BasicAgent`.
+2. Save exact `(State, Action)` pairs to disk.
+3. Pre-train the MoE experts using Supervised Learning to mimic `BasicAgent` (~90% accuracy).
 
-### Phase 3: Training Infrastructure
-1. Set up data collection pipeline
-2. Implement training loop
-3. Add logging/monitoring
+### Phase 3: Expert Models (RL)
+1. Implement Experience Replay Buffer to track `(State, Action, Reward)`.
+2. Transition the pre-trained agent to play against the `BasicAgent` in an RL loop.
+3. Add logging/monitoring.
 
 ### Phase 4: Advanced Features
 1. Add TransportLoad/Unload experts
