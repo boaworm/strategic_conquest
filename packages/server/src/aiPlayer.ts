@@ -59,6 +59,10 @@ export async function spawnAIPlayer(
    * silently freezing and blocking the game indefinitely.
    */
   socket.on('actionRejected', (data: { reason: string }) => {
+    if (data.reason === 'Game is not active') {
+      // Game has ended — stop trying to act
+      return;
+    }
     console.error(`${TAG} ${playerId} action rejected: ${data.reason} — sending END_TURN to unblock`);
     socket.emit('action', { type: 'END_TURN' });
   });

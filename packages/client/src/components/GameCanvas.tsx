@@ -14,7 +14,7 @@ import {
   wrappedDistX,
 } from '@sc/shared';
 import { useGameStore, DEFAULT_TILE_SIZE } from '../store/gameStore';
-import { playAttackSound, playCityCaptureFanfare, playCrashSound, playArmorCrashSound } from '../sounds';
+import { playAttackSound, playCityCaptureFanfare, playCrashSound, playArmorCrashSound, playMoveSound } from '../sounds';
 
 // ── Classic colour palette ───────────────────────────────────
 
@@ -55,6 +55,96 @@ function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: numb
   }
   ctx.closePath();
   ctx.fill();
+}
+
+/**
+ * BFS from a unit's position to find all tiles it can legally reach with its
+ * remaining moves. Uses only client-visible tile data (terrain, visibility).
+ *
+ * - Land units: land tiles only
+ * - Sea units:  ocean tiles + own coastal cities
+ * - Air units:  any tile, but must retain enough fuel to reach a landing spot
+ * - Air units without fuel (fighters): any tile within movesLeft steps
+ */
+function computeReachableTiles(
+  unit: UnitView,
+  view: PlayerView,
+  mapW: number,
+  mapH: number,
+): Set<string> {
+  const stats = UNIT_STATS[unit.type];
+  const reachable = new Set<string>();
+  // visited maps key → best movesLeft when the tile was reached (prune revisits)
+  const visited = new Map<string, number>();
+  visited.set(`${unit.x},${unit.y}`, unit.movesLeft);
+
+  // Precompute landing spots for fuel-constrained air units
+  const hasFuel = stats.domain === UnitDomain.Air && unit.fuel !== undefined;
+  const landingSpots: Array<{ x: number; y: number }> = [];
+  if (hasFuel) {
+    for (const c of view.myCities) landingSpots.push({ x: c.x, y: c.y });
+    for (const u of view.myUnits) {
+      if (u.type === UnitType.Carrier && u.cargo.length < UNIT_STATS[UnitType.Carrier].cargoCapacity) {
+        landingSpots.push({ x: u.x, y: u.y });
+      }
+    }
+  }
+
+  function distToLanding(x: number, y: number): number {
+    let min = Infinity;
+    for (const s of landingSpots) {
+      min = Math.min(min, Math.max(wrappedDistX(x, s.x, mapW), Math.abs(y - s.y)));
+    }
+    return min;
+  }
+
+  const dirs: Array<[number, number]> = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1,  0],          [1,  0],
+    [-1,  1], [0,  1], [1,  1],
+  ];
+
+  // [x, y, movesRemaining, fuelRemaining]
+  const queue: Array<[number, number, number, number]> = [
+    [unit.x, unit.y, unit.movesLeft, unit.fuel ?? Infinity],
+  ];
+
+  while (queue.length > 0) {
+    const [cx, cy, moves, fuel] = queue.shift()!;
+    if (moves <= 0) continue;
+
+    for (const [dx, dy] of dirs) {
+      const nx = wrapX(cx + dx, mapW);
+      const ny = cy + dy;
+
+      if (ny <= 0 || ny >= mapH - 1) continue; // ice caps are impassable
+
+      const tile = view.tiles[ny]?.[nx];
+      if (!tile || tile.visibility === TileVisibility.Hidden) continue;
+
+      // Terrain / domain constraints
+      if (stats.domain === UnitDomain.Land && tile.terrain === Terrain.Ocean) continue;
+      if (stats.domain === UnitDomain.Sea && tile.terrain === Terrain.Land) {
+        if (!view.myCities.some((c) => c.x === nx && c.y === ny)) continue;
+      }
+
+      // Fuel constraint for bombers (and any other air unit with limited fuel)
+      const newFuel = fuel - 1; // Infinity - 1 = Infinity, so unconstrained units are fine
+      if (newFuel < 0) continue;
+      if (hasFuel && distToLanding(nx, ny) > newFuel) continue;
+
+      const newMoves = moves - 1;
+      const key = `${nx},${ny}`;
+      const best = visited.get(key) ?? -1;
+      if (newMoves <= best) continue; // already reached with equal or more moves remaining
+
+      visited.set(key, newMoves);
+      reachable.add(key);
+      if (newMoves > 0) queue.push([nx, ny, newMoves, newFuel]);
+    }
+  }
+
+  return reachable;
 }
 
 /** Draw classic unit shapes programmatically. */
@@ -177,133 +267,152 @@ function drawUnitShape(
       break;
     }
     case UnitType.Transport: {
-      // Classic side-profile transport ship: hull, bridge at far stern, smokestack, cargo holds
-      const hw = r * 0.95;
-      const hullTop = cy - r * 0.1;
-      const waterline = cy + r * 0.2;
-      const hullBottom = cy + r * 0.55;
-      // Hull
+      // Container ship: tall boxy hull (high freeboard), bridge tower at stern, cargo containers on deck
+      const hw = r * 0.93;
+      const deckY = cy - r * 0.2;   // HIGH deck — tall sides distinguish it from the sleek destroyer
+      const wl = cy + r * 0.1;
+      const keel = cy + r * 0.52;
+      // Hull — boxy rectangle with only slight bow taper
       ctx.beginPath();
-      ctx.moveTo(cx - hw, hullTop);
-      ctx.lineTo(cx + hw * 0.6, hullTop);
-      ctx.lineTo(cx + hw, waterline);
-      ctx.lineTo(cx + hw * 0.85, hullBottom);
-      ctx.lineTo(cx - hw * 0.8, hullBottom);
-      ctx.lineTo(cx - hw, waterline);
+      ctx.moveTo(cx - hw, deckY);
+      ctx.lineTo(cx + hw * 0.68, deckY);
+      ctx.lineTo(cx + hw, wl);
+      ctx.lineTo(cx + hw * 0.88, keel);
+      ctx.lineTo(cx - hw, keel);
       ctx.closePath();
       ctx.fill();
       // Waterline stripe
       ctx.strokeStyle = '#000';
-      ctx.globalAlpha = 0.3;
-      ctx.lineWidth = Math.max(1, size / 14);
+      ctx.globalAlpha = 0.25;
+      ctx.lineWidth = Math.max(1, size / 16);
       ctx.beginPath();
-      ctx.moveTo(cx - hw, waterline);
-      ctx.lineTo(cx + hw, waterline);
+      ctx.moveTo(cx - hw, wl);
+      ctx.lineTo(cx + hw, wl);
       ctx.stroke();
       ctx.globalAlpha = 1;
-      // Bridge at far stern
       ctx.fillStyle = '#000';
-      ctx.globalAlpha = 0.35;
-      const bridgeW = hw * 0.3;
-      const bridgeH = r * 0.45;
-      ctx.fillRect(cx - hw + hw * 0.05, hullTop - bridgeH, bridgeW, bridgeH);
-      // Smokestack on bridge
-      const stackW = hw * 0.1;
-      const stackH = r * 0.3;
-      ctx.fillRect(cx - hw + hw * 0.12, hullTop - bridgeH - stackH, stackW, stackH);
-      // Cargo hold hatches (three along deck)
-      ctx.globalAlpha = 0.25;
-      const hatchW = hw * 0.2;
-      const hatchH = r * 0.13;
-      ctx.fillRect(cx - hw * 0.2, hullTop - hatchH * 0.8, hatchW, hatchH);
-      ctx.fillRect(cx + hw * 0.1, hullTop - hatchH * 0.8, hatchW, hatchH);
-      ctx.fillRect(cx + hw * 0.38, hullTop - hatchH * 0.8, hatchW * 0.8, hatchH);
+      // Bridge tower at far stern — tall, prominent
+      ctx.globalAlpha = 0.4;
+      const brW = hw * 0.22;
+      const brH = r * 0.72;
+      ctx.fillRect(cx - hw + hw * 0.03, deckY - brH, brW, brH);
+      // Funnel on top of bridge
+      ctx.globalAlpha = 0.48;
+      ctx.fillRect(cx - hw + hw * 0.1, deckY - brH - r * 0.26, hw * 0.07, r * 0.26);
+      // Three cargo containers along deck — clearly rectangular blocks of different heights
+      ctx.globalAlpha = 0.32;
+      ctx.fillRect(cx + hw * 0.32, deckY - r * 0.38, hw * 0.22, r * 0.38);   // bow-side, tallest
+      ctx.fillRect(cx + hw * 0.04, deckY - r * 0.3,  hw * 0.2,  r * 0.3);   // middle
+      ctx.fillRect(cx - hw * 0.2,  deckY - r * 0.22, hw * 0.18, r * 0.22);  // near bridge, shortest
       ctx.globalAlpha = 1;
       ctx.fillStyle = color;
       break;
     }
     case UnitType.Destroyer: {
-      // Side-profile destroyer: sleek fast warship, single gun turret fore
-      const dhw = r * 0.9;
-      const dhullTop = cy - r * 0.05;
-      const dwl = cy + r * 0.2;
-      const dkeel = cy + r * 0.45;
-      // Hull
+      // Fast warship: very low sleek hull, sharp bow, angled bridge, radar mast, fore & aft guns
+      const hw = r * 0.93;
+      const deckY = cy + r * 0.04;  // LOW deck — nearly flush with waterline
+      const wl = cy + r * 0.2;
+      const keel = cy + r * 0.42;
+      // Hull — narrow, knife-like; sharp bow, slight stern step
       ctx.beginPath();
-      ctx.moveTo(cx - dhw, dhullTop);                   // stern
-      ctx.lineTo(cx + dhw * 0.65, dhullTop);            // deck
-      ctx.lineTo(cx + dhw, dwl);                        // bow point
-      ctx.lineTo(cx + dhw * 0.8, dkeel);                // bow under
-      ctx.lineTo(cx - dhw * 0.75, dkeel);               // keel
-      ctx.lineTo(cx - dhw, dwl);                        // stern under
+      ctx.moveTo(cx - hw, deckY + r * 0.06);   // stern top (slight step)
+      ctx.lineTo(cx - hw, wl);                  // stern
+      ctx.lineTo(cx - hw * 0.8, keel);
+      ctx.lineTo(cx + hw * 0.72, keel);
+      ctx.lineTo(cx + hw, wl - r * 0.04);       // sharp bow tip, above waterline
+      ctx.lineTo(cx + hw * 0.58, deckY);
+      ctx.lineTo(cx - hw * 0.9, deckY);
       ctx.closePath();
       ctx.fill();
       // Waterline
       ctx.strokeStyle = '#000';
       ctx.globalAlpha = 0.3;
-      ctx.lineWidth = Math.max(1, size / 16);
+      ctx.lineWidth = Math.max(1, size / 18);
       ctx.beginPath();
-      ctx.moveTo(cx - dhw, dwl);
-      ctx.lineTo(cx + dhw, dwl);
+      ctx.moveTo(cx - hw, wl);
+      ctx.lineTo(cx + hw, wl);
       ctx.stroke();
       ctx.globalAlpha = 1;
-      // Bridge (small block aft of center)
       ctx.fillStyle = '#000';
-      ctx.globalAlpha = 0.35;
-      ctx.fillRect(cx - dhw * 0.3, dhullTop - r * 0.35, dhw * 0.35, r * 0.35);
-      // Mast
-      ctx.fillRect(cx - dhw * 0.12, dhullTop - r * 0.6, dhw * 0.06, r * 0.25);
-      // Fore gun turret
-      ctx.globalAlpha = 0.4;
+      // Angled bridge (leans forward — fast-ship silhouette)
+      ctx.globalAlpha = 0.38;
       ctx.beginPath();
-      ctx.arc(cx + dhw * 0.3, dhullTop - r * 0.05, r * 0.1, 0, 2 * Math.PI);
+      ctx.moveTo(cx - hw * 0.16, deckY);
+      ctx.lineTo(cx - hw * 0.16, deckY - r * 0.42);
+      ctx.lineTo(cx + hw * 0.07,  deckY - r * 0.28);
+      ctx.lineTo(cx + hw * 0.07,  deckY);
+      ctx.closePath();
       ctx.fill();
-      // Gun barrel
-      ctx.fillRect(cx + dhw * 0.3, dhullTop - r * 0.08, dhw * 0.3, r * 0.06);
+      // Tall mast with radar crossbar
+      ctx.globalAlpha = 0.44;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = Math.max(1, size / 22);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.06, deckY - r * 0.42);
+      ctx.lineTo(cx - hw * 0.06, deckY - r * 0.74);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.16, deckY - r * 0.64);
+      ctx.lineTo(cx + hw * 0.04, deckY - r * 0.64);
+      ctx.stroke();
+      // Fore gun turret + barrel
+      ctx.globalAlpha = 0.42;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(cx + hw * 0.28, deckY - r * 0.05, r * 0.1, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillRect(cx + hw * 0.38, deckY - r * 0.09, hw * 0.3, r * 0.05);
+      // Aft gun turret + barrel (behind bridge, pointing stern)
+      ctx.globalAlpha = 0.38;
+      ctx.beginPath();
+      ctx.arc(cx - hw * 0.5, deckY - r * 0.04, r * 0.08, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillRect(cx - hw * 0.78, deckY - r * 0.07, hw * 0.27, r * 0.05);
       ctx.globalAlpha = 1;
       ctx.fillStyle = color;
       break;
     }
     case UnitType.Submarine: {
-      // Side-profile submarine: cigar hull with conning tower (sail)
-      const shw = r * 0.9;
-      const shullMid = cy + r * 0.15;
-      const shullH = r * 0.28;
-      // Hull (elongated ellipse)
+      // Submarine: smooth cigar hull sitting low (mostly submerged), large conning tower, stern planes
+      const hw = r * 0.9;
+      const mid = cy + r * 0.22;  // hull centre sits below waterline
+      const hullH = r * 0.28;
+      // Hull — smooth ellipse (cigar shape)
       ctx.beginPath();
-      ctx.moveTo(cx + shw, shullMid);                           // bow tip
-      ctx.quadraticCurveTo(cx + shw * 0.3, shullMid - shullH, cx - shw * 0.7, shullMid - shullH * 0.8);
-      ctx.lineTo(cx - shw, shullMid);                           // stern
-      ctx.lineTo(cx - shw * 0.7, shullMid + shullH * 0.8);
-      ctx.quadraticCurveTo(cx + shw * 0.3, shullMid + shullH, cx + shw, shullMid);
-      ctx.closePath();
+      ctx.ellipse(cx, mid, hw, hullH, 0, 0, 2 * Math.PI);
       ctx.fill();
-      // Conning tower (sail)
+      // Conning tower / sail — tall trapezoid rising above hull
       ctx.fillStyle = '#000';
-      ctx.globalAlpha = 0.35;
-      const sailW = shw * 0.25;
-      const sailH = r * 0.4;
+      ctx.globalAlpha = 0.38;
+      const sailBaseY = mid - hullH * 0.72;
+      const sailH = r * 0.52;
       ctx.beginPath();
-      ctx.moveTo(cx - sailW * 0.3, shullMid - shullH * 0.7);
-      ctx.lineTo(cx - sailW * 0.1, shullMid - shullH * 0.7 - sailH);
-      ctx.lineTo(cx + sailW, shullMid - shullH * 0.7 - sailH * 0.7);
-      ctx.lineTo(cx + sailW, shullMid - shullH * 0.7);
+      ctx.moveTo(cx - hw * 0.17, sailBaseY);
+      ctx.lineTo(cx - hw * 0.11, sailBaseY - sailH);
+      ctx.lineTo(cx + hw * 0.13, sailBaseY - sailH);
+      ctx.lineTo(cx + hw * 0.19, sailBaseY);
       ctx.closePath();
       ctx.fill();
-      // Periscope (thin line up from sail)
-      ctx.fillRect(cx + sailW * 0.3, shullMid - shullH * 0.7 - sailH - r * 0.15, sailW * 0.1, r * 0.15);
-      // Stern planes (small fins at back)
-      ctx.globalAlpha = 0.3;
+      // Periscope + scope head
+      ctx.globalAlpha = 0.42;
+      ctx.fillRect(cx + hw * 0.02, sailBaseY - sailH - r * 0.22, hw * 0.05, r * 0.22);
+      ctx.fillRect(cx + hw * 0.02, sailBaseY - sailH - r * 0.22, hw * 0.1, r * 0.03);
+      // Stern diving planes — prominent X-fins make the stern unmistakeable
+      ctx.globalAlpha = 0.34;
+      const px = cx - hw * 0.78;
       ctx.beginPath();
-      ctx.moveTo(cx - shw, shullMid);
-      ctx.lineTo(cx - shw * 0.85, shullMid - shullH * 1.1);
-      ctx.lineTo(cx - shw * 0.7, shullMid);
+      ctx.moveTo(px + hw * 0.06, mid);
+      ctx.lineTo(px - hw * 0.08, mid - hullH * 1.55);
+      ctx.lineTo(px - hw * 0.02, mid - hullH * 1.55);
+      ctx.lineTo(px + hw * 0.1, mid - hullH * 0.18);
       ctx.closePath();
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(cx - shw, shullMid);
-      ctx.lineTo(cx - shw * 0.85, shullMid + shullH * 1.1);
-      ctx.lineTo(cx - shw * 0.7, shullMid);
+      ctx.moveTo(px + hw * 0.06, mid);
+      ctx.lineTo(px - hw * 0.08, mid + hullH * 1.55);
+      ctx.lineTo(px - hw * 0.02, mid + hullH * 1.55);
+      ctx.lineTo(px + hw * 0.1, mid + hullH * 0.18);
       ctx.closePath();
       ctx.fill();
       ctx.globalAlpha = 1;
@@ -311,106 +420,151 @@ function drawUnitShape(
       break;
     }
     case UnitType.Carrier: {
-      // Side-profile aircraft carrier: very flat deck, shallow hull, small island
-      const chw = r * 0.95;
-      const cDeck = cy + r * 0.05;
-      const cwl = cy + r * 0.25;
-      const ckeel = cy + r * 0.45;
-      // Hull (very shallow)
+      // Aircraft carrier: extremely flat wide deck, angled flight-deck stripe, island aft, 2 planes on deck
+      const hw = r * 0.96;
+      const deckY = cy - r * 0.06;
+      const wl = cy + r * 0.18;
+      const keel = cy + r * 0.42;
+      // Hull — very flat and wide
       ctx.beginPath();
-      ctx.moveTo(cx - chw, cDeck);
-      ctx.lineTo(cx + chw * 0.8, cDeck);
-      ctx.lineTo(cx + chw, cDeck + r * 0.05);
-      ctx.lineTo(cx + chw * 0.9, ckeel);
-      ctx.lineTo(cx - chw * 0.85, ckeel);
-      ctx.lineTo(cx - chw, cwl);
+      ctx.moveTo(cx - hw, deckY);
+      ctx.lineTo(cx + hw * 0.84, deckY);
+      ctx.lineTo(cx + hw, deckY + r * 0.08);
+      ctx.lineTo(cx + hw * 0.92, keel);
+      ctx.lineTo(cx - hw * 0.88, keel);
+      ctx.lineTo(cx - hw, wl);
       ctx.closePath();
       ctx.fill();
-      // Flight deck line
+      // Waterline
       ctx.strokeStyle = '#000';
       ctx.globalAlpha = 0.2;
       ctx.lineWidth = Math.max(1, size / 14);
       ctx.beginPath();
-      ctx.moveTo(cx - chw, cDeck);
-      ctx.lineTo(cx + chw * 0.8, cDeck);
+      ctx.moveTo(cx - hw, wl);
+      ctx.lineTo(cx + hw, wl);
       ctx.stroke();
       ctx.globalAlpha = 1;
-      // Small island superstructure
       ctx.fillStyle = '#000';
-      ctx.globalAlpha = 0.4;
-      const islandW = chw * 0.15;
-      const islandH = r * 0.35;
-      ctx.fillRect(cx - chw * 0.1, cDeck - islandH, islandW, islandH);
-      // Mast on island
-      ctx.fillRect(cx - chw * 0.04, cDeck - islandH - r * 0.18, islandW * 0.2, r * 0.18);
-      // Deck marking lines
-      ctx.globalAlpha = 0.15;
+      // Angled flight-deck stripe (the defining visual of a carrier)
+      ctx.globalAlpha = 0.2;
       ctx.strokeStyle = '#fff';
-      ctx.lineWidth = Math.max(1, size / 18);
+      ctx.lineWidth = Math.max(2, size / 9);
       ctx.beginPath();
-      ctx.moveTo(cx + chw * 0.65, cDeck - r * 0.01);
-      ctx.lineTo(cx - chw * 0.6, cDeck - r * 0.01);
+      ctx.moveTo(cx - hw * 0.55, deckY + r * 0.02);
+      ctx.lineTo(cx + hw * 0.35, deckY + r * 0.02);
       ctx.stroke();
+      // Island superstructure — aft starboard, tiered
+      ctx.globalAlpha = 0.44;
+      ctx.fillStyle = '#000';
+      const isW = hw * 0.17;
+      const isH = r * 0.46;
+      ctx.fillRect(cx - hw * 0.06, deckY - isH, isW, isH);
+      ctx.globalAlpha = 0.5;
+      ctx.fillRect(cx - hw * 0.04, deckY - isH - r * 0.14, isW * 0.68, r * 0.14);
+      // Mast + radar arm
+      ctx.globalAlpha = 0.44;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = Math.max(1, size / 22);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.01, deckY - isH - r * 0.14);
+      ctx.lineTo(cx - hw * 0.01, deckY - isH - r * 0.35);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.1, deckY - isH - r * 0.28);
+      ctx.lineTo(cx + hw * 0.06, deckY - isH - r * 0.28);
+      ctx.stroke();
+      // Two tiny plane silhouettes on deck
+      ctx.globalAlpha = 0.24;
+      ctx.fillStyle = '#000';
+      const pr = r * 0.1;
+      for (const px of [cx + hw * 0.52, cx + hw * 0.16]) {
+        const py = deckY - r * 0.04;
+        ctx.beginPath();
+        ctx.moveTo(px, py - pr);
+        ctx.lineTo(px + pr * 0.85, py + pr * 0.28);
+        ctx.lineTo(px + pr * 0.18, py + pr * 0.08);
+        ctx.lineTo(px + pr * 0.14, py + pr);
+        ctx.lineTo(px - pr * 0.14, py + pr);
+        ctx.lineTo(px - pr * 0.18, py + pr * 0.08);
+        ctx.lineTo(px - pr * 0.85, py + pr * 0.28);
+        ctx.closePath();
+        ctx.fill();
+      }
       ctx.globalAlpha = 1;
       ctx.fillStyle = color;
       break;
     }
     case UnitType.Battleship: {
-      // Side-profile battleship: heavy hull, large superstructure, two turrets
-      const bhw = r * 0.95;
-      const bhullTop = cy - r * 0.05;
-      const bwl = cy + r * 0.22;
-      const bkeel = cy + r * 0.55;
-      // Hull
+      // Battleship: wide deep hull, massive superstructure, three twin-barrel gun turrets, twin funnels
+      const hw = r * 0.95;
+      const deckY = cy - r * 0.08;
+      const wl = cy + r * 0.22;
+      const keel = cy + r * 0.6;   // DEEP keel — heaviest ship on the water
+      // Hull — wide and deep
       ctx.beginPath();
-      ctx.moveTo(cx - bhw, bhullTop);
-      ctx.lineTo(cx + bhw * 0.6, bhullTop);
-      ctx.lineTo(cx + bhw, bwl);
-      ctx.lineTo(cx + bhw * 0.85, bkeel);
-      ctx.lineTo(cx - bhw * 0.8, bkeel);
-      ctx.lineTo(cx - bhw, bwl);
+      ctx.moveTo(cx - hw, deckY);
+      ctx.lineTo(cx + hw * 0.58, deckY);
+      ctx.lineTo(cx + hw, wl);
+      ctx.lineTo(cx + hw * 0.86, keel);
+      ctx.lineTo(cx - hw * 0.82, keel);
+      ctx.lineTo(cx - hw, wl);
       ctx.closePath();
       ctx.fill();
       // Waterline
       ctx.strokeStyle = '#000';
       ctx.globalAlpha = 0.25;
-      ctx.lineWidth = Math.max(1, size / 14);
+      ctx.lineWidth = Math.max(1, size / 13);
       ctx.beginPath();
-      ctx.moveTo(cx - bhw, bwl);
-      ctx.lineTo(cx + bhw, bwl);
+      ctx.moveTo(cx - hw, wl);
+      ctx.lineTo(cx + hw, wl);
       ctx.stroke();
       ctx.globalAlpha = 1;
-      // Large superstructure (wide, tall central block)
       ctx.fillStyle = '#000';
-      ctx.globalAlpha = 0.35;
-      const btowerW = bhw * 0.4;
-      const btowerH = r * 0.5;
-      ctx.fillRect(cx - btowerW * 0.5, bhullTop - btowerH, btowerW, btowerH);
-      // Upper bridge (smaller block on top of superstructure)
-      const ubW = btowerW * 0.6;
-      const ubH = r * 0.25;
-      ctx.fillRect(cx - ubW * 0.5, bhullTop - btowerH - ubH, ubW, ubH);
+      // Central superstructure — tall, wide, tiered
+      ctx.globalAlpha = 0.38;
+      const sW = hw * 0.36;
+      const sH = r * 0.58;
+      ctx.fillRect(cx - sW * 0.58, deckY - sH, sW, sH);
+      ctx.globalAlpha = 0.44;
+      const uW = sW * 0.62;
+      const uH = r * 0.3;
+      ctx.fillRect(cx - uW * 0.5, deckY - sH - uH, uW, uH);
+      ctx.globalAlpha = 0.48;
+      ctx.fillRect(cx - uW * 0.32, deckY - sH - uH - r * 0.15, uW * 0.55, r * 0.15);
       // Mast
-      ctx.fillRect(cx - ubW * 0.08, bhullTop - btowerH - ubH - r * 0.2, ubW * 0.12, r * 0.2);
-      // Smokestack (behind superstructure)
-      ctx.fillRect(cx - bhw * 0.35, bhullTop - r * 0.4, bhw * 0.15, r * 0.4);
-      // Second smokestack
-      ctx.fillRect(cx - bhw * 0.48, bhullTop - r * 0.32, bhw * 0.1, r * 0.32);
-      // Fore turret
-      ctx.globalAlpha = 0.4;
+      ctx.globalAlpha = 0.46;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = Math.max(1, size / 20);
       ctx.beginPath();
-      ctx.arc(cx + bhw * 0.3, bhullTop - r * 0.05, r * 0.13, 0, 2 * Math.PI);
-      ctx.fill();
-      // Fore gun barrels
-      ctx.fillRect(cx + bhw * 0.3, bhullTop - r * 0.1, bhw * 0.35, r * 0.04);
-      ctx.fillRect(cx + bhw * 0.3, bhullTop - r * 0.02, bhw * 0.35, r * 0.04);
-      // Aft turret
+      ctx.moveTo(cx - uW * 0.04, deckY - sH - uH - r * 0.15);
+      ctx.lineTo(cx - uW * 0.04, deckY - sH - uH - r * 0.42);
+      ctx.stroke();
+      // Twin funnels behind superstructure
+      ctx.globalAlpha = 0.42;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(cx - sW * 0.54, deckY - r * 0.42, hw * 0.1,  r * 0.42);
+      ctx.fillRect(cx - sW * 0.4,  deckY - r * 0.34, hw * 0.08, r * 0.34);
+      // Fore turret 1 (closest to bow) — twin barrels
+      ctx.globalAlpha = 0.44;
       ctx.beginPath();
-      ctx.arc(cx - bhw * 0.6, bhullTop - r * 0.05, r * 0.12, 0, 2 * Math.PI);
+      ctx.arc(cx + hw * 0.38, deckY - r * 0.05, r * 0.13, 0, 2 * Math.PI);
       ctx.fill();
-      // Aft gun barrels
-      ctx.fillRect(cx - bhw * 0.9, bhullTop - r * 0.08, bhw * 0.3, r * 0.03);
-      ctx.fillRect(cx - bhw * 0.9, bhullTop - r * 0.01, bhw * 0.3, r * 0.03);
+      ctx.fillRect(cx + hw * 0.51, deckY - r * 0.1,  hw * 0.32, r * 0.04);
+      ctx.fillRect(cx + hw * 0.51, deckY - r * 0.02, hw * 0.32, r * 0.04);
+      // Fore turret 2 (behind turret 1) — twin barrels
+      ctx.globalAlpha = 0.42;
+      ctx.beginPath();
+      ctx.arc(cx + hw * 0.14, deckY - r * 0.05, r * 0.12, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillRect(cx + hw * 0.26, deckY - r * 0.09, hw * 0.27, r * 0.04);
+      ctx.fillRect(cx + hw * 0.26, deckY - r * 0.01, hw * 0.27, r * 0.04);
+      // Aft turret — twin barrels pointing stern
+      ctx.globalAlpha = 0.42;
+      ctx.beginPath();
+      ctx.arc(cx - hw * 0.65, deckY - r * 0.05, r * 0.12, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillRect(cx - hw * 0.95, deckY - r * 0.09, hw * 0.29, r * 0.04);
+      ctx.fillRect(cx - hw * 0.95, deckY - r * 0.01, hw * 0.29, r * 0.04);
       ctx.globalAlpha = 1;
       ctx.fillStyle = color;
       break;
@@ -580,6 +734,10 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   }
   const moveAnimRef = useRef<MoveAnim | null>(null);
   const MOVE_STEP_DURATION = 333; // ms per tile
+
+  // "Your turn" banner: stores the timestamp when the current player's turn began
+  const yourTurnStartRef = useRef<number | null>(null);
+  const prevPlayerRef = useRef<string | null>(null);
 
   // ── Pre-calculations ──────────────────────────────────────
   const redrawRequestedRef = useRef<number | null>(null);
@@ -833,6 +991,53 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       }
     }
 
+    // ── Movement range overlay ────────────────────────────────
+    // Show all reachable tiles for the selected own unit (only on our turn, only if moves remain)
+    if (selectedUnitId && view.currentPlayer === playerId) {
+      const selUnit = view.myUnits.find((u) => u.id === selectedUnitId);
+      if (selUnit && selUnit.movesLeft > 0 && !selUnit.carriedBy) {
+        const reachable = computeReachableTiles(selUnit, view, mapW, mapH);
+        if (reachable.size > 0) {
+          ctx.save();
+          ctx.strokeStyle = '#ff4444';
+          ctx.lineWidth = Math.max(1, tileSize / 14);
+          ctx.lineJoin = 'round';
+          ctx.beginPath();
+
+          for (let wy = startTileY; wy <= endTileY; wy++) {
+            for (let wx = startTileX; wx <= endTileX; wx++) {
+              const tx = wrapX(wx, mapW);
+              if (!reachable.has(`${tx},${wy}`)) continue;
+
+              const spx = wx * tileSize - originX;
+              const spy = wy * tileSize - originY;
+
+              // Draw each edge that borders a non-reachable tile
+              if (!reachable.has(`${wrapX(tx - 1, mapW)},${wy}`)) {
+                ctx.moveTo(spx, spy);
+                ctx.lineTo(spx, spy + tileSize);
+              }
+              if (!reachable.has(`${wrapX(tx + 1, mapW)},${wy}`)) {
+                ctx.moveTo(spx + tileSize, spy);
+                ctx.lineTo(spx + tileSize, spy + tileSize);
+              }
+              if (!reachable.has(`${tx},${wy - 1}`)) {
+                ctx.moveTo(spx, spy);
+                ctx.lineTo(spx + tileSize, spy);
+              }
+              if (!reachable.has(`${tx},${wy + 1}`)) {
+                ctx.moveTo(spx, spy + tileSize);
+                ctx.lineTo(spx + tileSize, spy + tileSize);
+              }
+            }
+          }
+
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+
     // ── Selection highlight (drawn after all tiles so it's always on top) ──
     if (selectedUnitId) {
       const selUnit = [...view.myUnits, ...view.visibleEnemyUnits].find((u) => u.id === selectedUnitId);
@@ -1032,6 +1237,31 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       ctx.fill();
       ctx.restore();
     }
+
+    // ── "Your turn" banner ────────────────────────────────────
+    const ytStart = yourTurnStartRef.current;
+    if (ytStart !== null) {
+      const elapsed = performance.now() - ytStart;
+      const alpha = Math.max(0, 1 - elapsed / 2000);
+      if (alpha > 0) {
+        ctx.save();
+        const fontSize = Math.round(Math.min(canvasW, canvasH) * 0.11);
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // Subtle dark shadow for legibility
+        ctx.globalAlpha = alpha * 0.35;
+        ctx.fillStyle = '#000';
+        ctx.fillText('Your turn', canvasW / 2 + 3, canvasH * 0.25 + 3);
+        // Main text
+        ctx.globalAlpha = alpha * 0.7;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('Your turn', canvasW / 2, canvasH * 0.25);
+        ctx.restore();
+      } else {
+        yourTurnStartRef.current = null;
+      }
+    }
   }, [view, cachedAllUnits, cityByPos, selectedUnitId, selectedCityId, playerId, combatAnimRef]);
 
   /** Throttled draw call for input events */
@@ -1049,6 +1279,17 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       if (redrawRequestedRef.current !== null) cancelAnimationFrame(redrawRequestedRef.current);
     };
   }, []);
+
+  // ── "Your turn" banner — fire when the turn switches to this player ──────
+  // Must be defined BEFORE the animLoop useEffect so yourTurnStartRef is set
+  // before the loop's first needsFrame check in the same React commit.
+  useEffect(() => {
+    const prev = prevPlayerRef.current;
+    prevPlayerRef.current = view.currentPlayer;
+    if (prev !== null && prev !== view.currentPlayer && view.currentPlayer === playerId) {
+      yourTurnStartRef.current = performance.now();
+    }
+  }, [view.currentPlayer, playerId]);
 
   // ── Combat animation loop ──────────────────────────────────
   useEffect(() => {
@@ -1110,6 +1351,11 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         flameHitsRef.current = activeFlames;
       }
       if (activeFlames.length > 0) needsFrame = true;
+
+      // "Your turn" banner fade
+      if (yourTurnStartRef.current !== null && fnow - yourTurnStartRef.current < 2000) {
+        needsFrame = true;
+      }
 
       // Progress move animation: send MOVE actions as each step completes
       const mAnim = moveAnimRef.current;
@@ -1407,6 +1653,8 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
                 toX: tx,
                 toY: ty,
               };
+            } else {
+              playMoveSound(unit.type);
             }
             sendAction({ type: 'MOVE', unitId: selectedUnitId, to: { x: tx, y: ty } });
             return;
@@ -1420,7 +1668,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
             const enemyOnLast = view.visibleEnemyUnits.find(
               (e) => e.x === lastStep.x && e.y === lastStep.y && !e.carriedBy,
             );
-            if (!reachedTarget && !enemyOnLast) return;
+            // Allow partial moves: if target is out of range, consume all moves toward it
 
             if (enemyOnLast) {
               const stepBefore = path.length > 1 ? path[path.length - 2] : { x: unit.x, y: unit.y };
@@ -1435,6 +1683,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
               };
             }
 
+            playMoveSound(unit.type);
             moveAnimRef.current = {
               unitId: unit.id,
               unitType: unit.type,
@@ -1454,9 +1703,9 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   }
 
   /**
-   * Compute a greedy straight-line path from (fx,fy) to (goalX,goalY),
-   * returning up to `maxSteps` waypoints. Each step picks the adjacent tile
-   * closest to the goal, preferring straight movement.
+   * BFS from (fx,fy) to (goalX,goalY), respecting domain terrain rules.
+   * Returns up to `maxSteps` waypoints along the shortest path.
+   * Handles cylindrical X-wrapping. Returns [] if no path exists.
    */
   function computePath(
     fx: number, fy: number,
@@ -1464,73 +1713,74 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     maxSteps: number,
     domain: UnitDomain,
   ): Coord[] {
-    const path: Coord[] = [];
-    let cx = fx, cy = fy;
-    for (let i = 0; i < maxSteps; i++) {
-      if (cx === goalX && cy === goalY) break;
-      const rawDx = goalX - cx;
-      const halfW = Math.floor(mapW / 2);
-      let sdx = rawDx;
-      if (rawDx > halfW) sdx = rawDx - mapW;
-      else if (rawDx < -halfW) sdx = rawDx + mapW;
-      const sdy = goalY - cy;
-      const stepX = sdx === 0 ? 0 : sdx > 0 ? 1 : -1;
-      const stepY = sdy === 0 ? 0 : sdy > 0 ? 1 : -1;
+    const goalKey = `${goalX},${goalY}`;
+    const startKey = `${fx},${fy}`;
 
-      const candidates: Coord[] = [];
-      if (stepX !== 0 && stepY !== 0) candidates.push({ x: cx + stepX, y: cy + stepY });
-      if (stepX !== 0) candidates.push({ x: cx + stepX, y: cy });
-      if (stepY !== 0) candidates.push({ x: cx, y: cy + stepY });
-      for (const dx of [-1, 0, 1]) {
-        for (const dy of [-1, 0, 1]) {
-          if (dx === 0 && dy === 0) continue;
-          const c = { x: cx + dx, y: cy + dy };
-          if (!candidates.some((p) => p.x === c.x && p.y === c.y)) candidates.push(c);
-        }
+    // BFS — find shortest path ignoring move-count limit so we can route around obstacles
+    const parent = new Map<string, string | null>();
+    parent.set(startKey, null);
+    const queue: Coord[] = [{ x: fx, y: fy }];
+
+    const canEnter = (nx: number, ny: number): boolean => {
+      if (ny < 0 || ny >= mapH) return false;
+      if (ny === 0 || ny === mapH - 1) return false;
+      const terrain = view.tiles[ny]?.[nx]?.terrain;
+      if (terrain === undefined) return false;
+      if (domain === UnitDomain.Land && terrain === Terrain.Ocean) return false;
+      if (domain === UnitDomain.Sea && terrain === Terrain.Land) {
+        const hasCity = [...view.myCities, ...view.visibleEnemyCities].some(
+          (ci) => ci.x === nx && ci.y === ny,
+        );
+        if (!hasCity) return false;
       }
+      return true;
+    };
 
-      let moved = false;
-      for (const c of candidates) {
-        const nx = wrapX(c.x, mapW);
-        const ny = c.y;
-        if (ny < 0 || ny >= mapH) continue;
-        if (ny === 0 || ny === mapH - 1) continue;
-        const terrain = view.tiles[ny]?.[nx]?.terrain;
-        if (terrain === undefined) continue;
-
-        if (domain === UnitDomain.Land && terrain === Terrain.Ocean) continue;
-        if (domain === UnitDomain.Sea && terrain === Terrain.Land) {
-          const hasCity = [...view.myCities, ...view.visibleEnemyCities].some(
-            (ci) => ci.x === nx && ci.y === ny,
-          );
-          if (!hasCity) continue;
-        }
-
+    let found = false;
+    outer: while (queue.length > 0) {
+      const cur = queue.shift()!;
+      for (const [ddx, ddy] of [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]] as [number,number][]) {
+        const nx = wrapX(cur.x + ddx, mapW);
+        const ny = cur.y + ddy;
+        const key = `${nx},${ny}`;
+        if (parent.has(key)) continue;
+        if (!canEnter(nx, ny)) continue;
+        parent.set(key, `${cur.x},${cur.y}`);
+        if (key === goalKey) { found = true; break outer; }
+        // Don't expand through enemy-occupied tiles (can attack but not pass through)
         const enemyHere = view.visibleEnemyUnits.some(
           (u) => u.x === nx && u.y === ny && !u.carriedBy,
         );
-        if (enemyHere) {
-          path.push({ x: nx, y: ny });
-          moved = true;
-          break;
-        }
-
-        path.push({ x: nx, y: ny });
-        cx = nx;
-        cy = ny;
-        moved = true;
-        break;
-      }
-      if (!moved) break;
-      if (path.length > 0) {
-        const last = path[path.length - 1];
-        const enemyOnLast = view.visibleEnemyUnits.some(
-          (u) => u.x === last.x && u.y === last.y && !u.carriedBy,
-        );
-        if (enemyOnLast) break;
+        // Sea units must not route through neutral or enemy cities (can move TO them, not through)
+        const isNonOwnCity = domain === UnitDomain.Sea &&
+          view.tiles[ny]?.[nx]?.terrain === Terrain.Land &&
+          !view.myCities.some((c) => c.x === nx && c.y === ny);
+        if (!enemyHere && !isNonOwnCity) queue.push({ x: nx, y: ny });
       }
     }
-    return path;
+
+    if (!found) return [];
+
+    // Reconstruct full path from goal back to start
+    const fullPath: Coord[] = [];
+    let cur: string | null | undefined = goalKey;
+    while (cur && cur !== startKey) {
+      const [px, py] = cur.split(',').map(Number);
+      fullPath.push({ x: px, y: py });
+      cur = parent.get(cur);
+    }
+    fullPath.reverse();
+
+    // Return only the first maxSteps steps, stopping early on enemy tile
+    const result: Coord[] = [];
+    for (const step of fullPath) {
+      result.push(step);
+      const enemyHere = view.visibleEnemyUnits.some(
+        (u) => u.x === step.x && u.y === step.y && !u.carriedBy,
+      );
+      if (enemyHere || result.length >= maxSteps) break;
+    }
+    return result;
   }
 
   return (

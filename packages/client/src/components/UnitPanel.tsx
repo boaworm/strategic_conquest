@@ -7,6 +7,7 @@ export function UnitPanel() {
   const selectedUnitId = useGameStore((s) => s.selectedUnitId);
   const sendAction = useGameStore((s) => s.sendAction);
   const selectUnit = useGameStore((s) => s.selectUnit);
+  const setCamera = useGameStore((s) => s.setCamera);
 
   // Context menu state
   const [ctxMenu, setCtxMenu] = useState<{ unitId: string; x: number; y: number } | null>(null);
@@ -121,7 +122,7 @@ export function UnitPanel() {
                 className={`w-full text-left text-xs py-1 rounded flex items-center gap-1 hover:bg-gray-700 ${
                   u.id === selectedUnitId ? 'bg-gray-600' : 'bg-gray-900'
                 } ${carried ? 'pl-5 pr-2' : 'px-2'}`}
-                onClick={() => selectUnit(u.id)}
+                onClick={() => { selectUnit(u.id); setCamera(u.x, u.y); }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setCtxMenu({ unitId: u.id, x: e.clientX, y: e.clientY });
