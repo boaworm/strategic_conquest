@@ -40,8 +40,7 @@ export enum Terrain {
 // ── Unit types ───────────────────────────────────────────────
 
 export enum UnitType {
-  Infantry = 'infantry',
-  Tank = 'tank',
+  Army = 'army',
   Fighter = 'fighter',
   Bomber = 'bomber',
   Transport = 'transport',
@@ -75,22 +74,10 @@ export interface UnitStats {
 }
 
 export const UNIT_STATS: Record<UnitType, UnitStats> = {
-  [UnitType.Infantry]: {
-    type: UnitType.Infantry,
+  [UnitType.Army]: {
+    type: UnitType.Army,
     domain: UnitDomain.Land,
     movesPerTurn: 1,
-    vision: 1,
-    maxHealth: 1,
-    buildTime: 3,
-    attack: 1,
-    defense: 2,
-    cargoCapacity: 0,
-    canCarry: [],
-  },
-  [UnitType.Tank]: {
-    type: UnitType.Tank,
-    domain: UnitDomain.Land,
-    movesPerTurn: 2,
     vision: 1,
     maxHealth: 1,
     buildTime: 5,
@@ -134,7 +121,7 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
     attack: 0,
     defense: 1,
     cargoCapacity: 6,
-    canCarry: [UnitType.Infantry, UnitType.Tank],
+    canCarry: [UnitType.Army],
   },
   [UnitType.Destroyer]: {
     type: UnitType.Destroyer,
@@ -331,7 +318,10 @@ export interface ActionResult {
   /** Center of bomber explosion */
   bomberBlastCenter?: Coord;
   /** Number of fighters that crashed (ran out of fuel / not on city or carrier) */
+  /** Number of fighters that crashed (ran out of fuel / not on city or carrier) */
   fightersCrashed?: number;
+  /** True if the unit tried to capture a city and was destroyed */
+  cityCaptureFailed?: boolean;
 }
 
 export interface CombatResult {

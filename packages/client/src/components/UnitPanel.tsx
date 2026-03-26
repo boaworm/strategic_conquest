@@ -83,7 +83,7 @@ export function UnitPanel() {
         {(() => {
           // Unit type display order
           const typeOrder: Record<string, number> = {
-            infantry: 0, tank: 1,
+            army: 0,
             transport: 2,
             destroyer: 3, submarine: 4, carrier: 5, battleship: 6,
             fighter: 7, bomber: 8,

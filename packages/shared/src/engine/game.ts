@@ -239,11 +239,11 @@ function handleMove(
         }
 
         // Check for city capture (armies only)
-        const cityCaptured = tryCaptureCity(state, unit, playerId);
+        const captureResult = tryCaptureCity(state, unit, playerId);
         unit.movesLeft--;
         unit.hasAttacked = true;
         checkWinCondition(state);
-        return { success: true, combat, cityCaptured: cityCaptured ?? undefined };
+        return { success: true, combat, cityCaptured: captureResult.captured ?? undefined, cityCaptureFailed: captureResult.failed };
       }
       // Attacker survived but defenders remain — stay put
       unit.movesLeft--;
@@ -320,8 +320,8 @@ function handleMove(
   }
 
   // Check for city capture
-  const cityCaptured = tryCaptureCity(state, unit, playerId);
-  return { success: true, cityCaptured: cityCaptured ?? undefined };
+  const captureResult = tryCaptureCity(state, unit, playerId);
+  return { success: true, cityCaptured: captureResult.captured ?? undefined, cityCaptureFailed: captureResult.failed };
 }
 
 function handleSkip(
@@ -366,19 +366,32 @@ function handleDisband(
 
 function tryCaptureCity(
   state: GameState,
-  unit: { type: string; x: number; y: number; owner: string },
+  unit: import('../types.js').Unit,
   playerId: PlayerId,
-): string | null {
-  if (unit.type !== 'infantry' && unit.type !== 'tank') return null;
+): { captured: string | null; failed?: boolean } {
+  if (unit.type !== 'army' as string) return { captured: null };
   const city = state.cities.find((c) => c.x === unit.x && c.y === unit.y);
-  if (!city) return null;
-  if (city.owner === playerId) return null;
+  if (!city) return { captured: null };
+  if (city.owner === playerId) return { captured: null };
 
+  const isNeutral = city.owner === null;
+  const winChance = isNeutral ? 0.7 : 0.5;
+
+  if (Math.random() >= winChance) {
+    // City defense succeeds (attack fails). Army is destroyed.
+    unit.health = 0;
+    removeDestroyedUnits(state);
+    return { captured: null, failed: true };
+  }
+
+  // Attack succeeds. Army is consumed to capture the city.
   city.owner = playerId;
   city.producing = null;
   city.productionTurnsLeft = 0;
   city.productionProgress = 0;
-  return city.id;
+  unit.health = 0;
+  removeDestroyedUnits(state);
+  return { captured: city.id };
 }
 
 /**
@@ -518,9 +531,9 @@ function handleUnload(
   transport.cargo = transport.cargo.filter((id) => id !== unit.id);
 
   // Check for city capture
-  const cityCaptured = tryCaptureCity(state, unit, playerId);
+  const captureResult = tryCaptureCity(state, unit, playerId);
   checkWinCondition(state);
-  return { success: true, cityCaptured: cityCaptured ?? undefined };
+  return { success: true, cityCaptured: captureResult.captured ?? undefined, cityCaptureFailed: captureResult.failed };
 }
 
 function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {

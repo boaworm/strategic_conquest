@@ -27,13 +27,81 @@ export class BasicAgent implements Agent {
   private mapWidth!: number;
   private mapHeight!: number;
 
+  private landmassMap = new Map<string, number>(); // coordKey -> landmassId
+  private landmassStatus = new Map<number, { fullyExplored: boolean; fullyClaimed: boolean }>();
+  private lastTurnAssessed = -1;
+
   init(config: AgentConfig): void {
     this.playerId = config.playerId;
     this.mapWidth = config.mapWidth;
     this.mapHeight = config.mapHeight;
   }
 
+  private coordKey(x: number, y: number): string {
+    return `${x},${y}`;
+  }
+
+  private assessLandmasses(obs: AgentObservation) {
+    if (this.lastTurnAssessed === obs.turn) return;
+    this.lastTurnAssessed = obs.turn;
+
+    this.landmassMap.clear();
+    this.landmassStatus.clear();
+
+    let nextLandmassId = 1;
+
+    const landStarters = [
+      ...obs.myCities,
+      ...obs.myUnits.filter((u) => UNIT_STATS[u.type].domain === UnitDomain.Land && u.carriedBy === null),
+    ];
+
+    for (const starter of landStarters) {
+      if (this.landmassMap.has(this.coordKey(starter.x, starter.y))) continue;
+
+      const tile = obs.tiles[starter.y]?.[starter.x];
+      if (!tile || tile.terrain !== Terrain.Land) continue;
+
+      const id = nextLandmassId++;
+      let fullyExplored = true;
+      let fullyClaimed = true;
+
+      const queue: Coord[] = [{ x: starter.x, y: starter.y }];
+      this.landmassMap.set(this.coordKey(starter.x, starter.y), id);
+
+      let head = 0;
+      while (head < queue.length) {
+        const curr = queue[head++];
+
+        const hasEnemyCity = obs.visibleEnemyCities.some((c) => c.x === curr.x && c.y === curr.y);
+        if (hasEnemyCity) fullyClaimed = false;
+
+        const adj = this.getAdjacentTiles(curr.x, curr.y);
+        for (const a of adj) {
+          if (a.y < 0 || a.y >= this.mapHeight) continue;
+          if (a.y === 0 || a.y === this.mapHeight - 1) continue;
+
+          const aTile = obs.tiles[a.y]?.[a.x];
+          if (!aTile) continue;
+
+          if (aTile.visibility === TileVisibility.Hidden) {
+            fullyExplored = false;
+          } else if (aTile.terrain === Terrain.Land) {
+            const key = this.coordKey(a.x, a.y);
+            if (!this.landmassMap.has(key)) {
+              this.landmassMap.set(key, id);
+              queue.push(a);
+            }
+          }
+        }
+      }
+
+      this.landmassStatus.set(id, { fullyExplored, fullyClaimed });
+    }
+  }
+
   act(obs: AgentObservation): AgentAction {
+    this.assessLandmasses(obs);
+
     // ── Phase 1: Handle all units ──────────────────────────────
     // For each unit that still has moves, decide what to do.
     // If the unit is sleeping, wake it so it can act next cycle.
@@ -81,8 +149,7 @@ export class BasicAgent implements Agent {
     const enemyCities = obs.visibleEnemyCities;
     const myCities = obs.myCities;
 
-    const infantryCount = myLandUnits.filter((u) => u.type === UnitType.Infantry).length;
-    const tankCount = myLandUnits.filter((u) => u.type === UnitType.Tank).length;
+    const armyCount = myLandUnits.filter((u) => u.type === UnitType.Army).length;
     const transportCount = mySeaUnits.filter((u) => u.type === UnitType.Transport).length;
     const destroyerCount = mySeaUnits.filter((u) => u.type === UnitType.Destroyer).length;
     const carrierCount = mySeaUnits.filter((u) => u.type === UnitType.Carrier).length;
@@ -91,8 +158,18 @@ export class BasicAgent implements Agent {
     const enemyCoastalCities = enemyCities.filter((c) => c.coastal);
     const coastalCity = myCities.some((c) => c.coastal);
 
+    const lmId = this.landmassMap.get(this.coordKey(city.x, city.y));
+    const status = lmId ? this.landmassStatus.get(lmId) : null;
+    const isFullyClaimed = status ? (status.fullyClaimed && status.fullyExplored) : false;
+
     // 1. Naval production logic (if we have coastal cities)
     if (coastalCity) {
+      if (isFullyClaimed && city.coastal) {
+        // Expand and explore the oceans when our island is secured
+        if (destroyerCount < 1) return UnitType.Destroyer;
+        if (transportCount * 3 <= armyCount) return UnitType.Transport;
+      }
+
       // Count enemy sea units
       const enemySeaUnits = obs.visibleEnemyUnits.filter(
         (u) => UNIT_STATS[u.type].domain === UnitDomain.Sea,
@@ -102,7 +179,7 @@ export class BasicAgent implements Agent {
       const enemySubmarineCount = enemySeaUnits.filter((u) => u.type === UnitType.Submarine).length;
 
       // Build transports first if we have land units but no way to move them across ocean
-      if (enemyCoastalCities.length > 0 && transportCount === 0 && infantryCount + tankCount >= 2) {
+      if (enemyCoastalCities.length > 0 && transportCount === 0 && armyCount >= 2) {
         return UnitType.Transport;
       }
 
@@ -127,32 +204,8 @@ export class BasicAgent implements Agent {
     }
 
     // 2. Land production logic
-    // If we have transports and are in expansion mode, build tanks for offensive power
-    if (transportCount > 0 && tankCount < infantryCount) {
-      return UnitType.Tank;
-    }
-
-    // If we're defending (enemy is very close) or need more bodies, build infantry
-    const nearestEnemy = this.nearestCity(enemyCities, city);
-    if (nearestEnemy) {
-      const dist = this.wrappedDist(nearestEnemy, city);
-      if (dist <= 2) {
-        // Very close enemy - build infantry for defense (cheap, good defense)
-        return UnitType.Infantry;
-      }
-    }
-
-    // If enemy has tanks, build some tanks for counter
-    const enemyTankCount = obs.visibleEnemyUnits.filter((u) => u.type === UnitType.Tank).length;
-    if (enemyTankCount > 0 && tankCount < enemyTankCount) {
-      return UnitType.Tank;
-    }
-
-    // Default mix: favor infantry for economy, some tanks for offense
-    if (tankCount < infantryCount / 2) {
-      return UnitType.Tank;
-    }
-    return UnitType.Infantry;
+    // Now that Infantry and Tank are merged into Army, we always build Army on land.
+    return UnitType.Army;
   }
 
   private requiresNavalApproach(obs: AgentObservation, target: CityView): boolean {
@@ -186,15 +239,49 @@ export class BasicAgent implements Agent {
   }
 
   private decideLandUnit(obs: AgentObservation, unit: UnitView): AgentAction | null {
+    const lmId = this.landmassMap.get(this.coordKey(unit.x, unit.y));
+    const status = lmId ? this.landmassStatus.get(lmId) : null;
+    const isFullyClaimed = status ? (status.fullyClaimed && status.fullyExplored) : false;
+
     // Priority 1: Move toward nearest neutral city to capture
     const neutralCities = obs.visibleEnemyCities.filter((c) => c.owner === null);
     const enemyCities = obs.visibleEnemyCities.filter((c) => c.owner !== null);
 
+    // Only target cities on the same landmass
+    const validTargets = [...neutralCities, ...enemyCities].filter((c) => {
+      const cLmId = this.landmassMap.get(this.coordKey(c.x, c.y));
+      return cLmId === lmId;
+    });
+
     // Prefer closer neutral cities
-    const target = this.nearestCity([...neutralCities, ...enemyCities], unit);
+    const target = this.nearestCity(validTargets, unit);
 
     if (target) {
       return this.moveToward(obs, unit, target);
+    }
+
+    if (isFullyClaimed) {
+      // Look for transports to board
+      const transport = obs.myUnits.find(
+        (u) => u.type === UnitType.Transport && u.cargo.length < UNIT_STATS[UnitType.Transport].cargoCapacity,
+      );
+      if (transport) {
+        if (wrappedDistX(unit.x, transport.x, this.mapWidth) <= 1 && Math.abs(unit.y - transport.y) <= 1) {
+          return { type: 'LOAD', unitId: unit.id, transportId: transport.id };
+        }
+        return this.moveToward(obs, unit, transport);
+      }
+
+      // No transport? Move to coast and wait
+      const coastalCities = obs.myCities.filter((c) => c.coastal);
+      const cityTarget = this.nearestCity(coastalCities, unit);
+      if (cityTarget) {
+        if (unit.x === cityTarget.x && unit.y === cityTarget.y) {
+          return { type: 'SKIP', unitId: unit.id };
+        }
+        return this.moveToward(obs, unit, cityTarget);
+      }
+      return { type: 'SKIP', unitId: unit.id };
     }
 
     // Explore: move toward unexplored area
@@ -218,19 +305,33 @@ export class BasicAgent implements Agent {
           }
           return this.moveToward(obs, unit, coastalTarget);
         }
+        // Loaded transport but no visible targets -> explore to find targets!
+        return this.moveTowardExploration(obs, unit);
       }
       // Look for armies to load (same tile or adjacent)
       const armyToLoad = obs.myUnits.find(
         (u) =>
-          u.type === UnitType.Infantry &&
+          u.type === UnitType.Army &&
           u.carriedBy === null &&
           unit.cargo.length < stats.cargoCapacity &&
           u.movesLeft > 0 &&
-          wrappedDistX(u.x, unit.x, obs.tiles[0].length) <= 1 &&
+          wrappedDistX(u.x, unit.x, this.mapWidth) <= 1 &&
           Math.abs(u.y - unit.y) <= 1,
       );
       if (armyToLoad) {
         return { type: 'LOAD', unitId: armyToLoad.id, transportId: unit.id };
+      }
+
+      // Empty transport: move to nearest coastal city and wait
+      if (unit.cargo.length === 0) {
+        const coastalCities = obs.myCities.filter((c) => c.coastal);
+        const cityTarget = this.nearestCity(coastalCities, unit);
+        if (cityTarget) {
+          if (unit.x === cityTarget.x && unit.y === cityTarget.y) {
+            return { type: 'SKIP', unitId: unit.id };
+          }
+          return this.moveToward(obs, unit, cityTarget);
+        }
       }
     }
 
@@ -386,7 +487,7 @@ export class BasicAgent implements Agent {
     }
 
     // No valid moves - sleep or skip instead of returning null
-    return { type: 'SLEEP', unitId: unit.id };
+    return { type: 'SKIP', unitId: unit.id };
   }
 
   private getAdjacentTiles(x: number, y: number): Coord[] {

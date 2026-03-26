@@ -151,13 +151,20 @@ export function generateMap(opts: MapOptions): {
     return `${c.x},${c.y}`;
   }
 
-  // Player 1 start: left quarter of map
-  const p1Candidates = landTiles.filter((t) => t.x < width / 4);
-  // Player 2 start: right quarter of map
-  const p2Candidates = landTiles.filter((t) => t.x > (width * 3) / 4);
+  // Player 1 start: random land tile (already shuffled)
+  const p1Start = landTiles[0];
 
-  const p1Start = p1Candidates[0] ?? landTiles[0];
-  const p2Start = p2Candidates[0] ?? landTiles[landTiles.length - 1];
+  // Player 2 start: maximize distance from Player 1 (cylindrical wrapping distances)
+  let p2Start = landTiles[landTiles.length - 1];
+  let maxDist = -1;
+  for (let i = 1; i < landTiles.length; i++) {
+    const cand = landTiles[i];
+    const dist = wrappedDistX(p1Start.x, cand.x, width) + Math.abs(p1Start.y - cand.y);
+    if (dist > maxDist) {
+      maxDist = dist;
+      p2Start = cand;
+    }
+  }
 
   // Player starting cities
   cities.push({
@@ -165,7 +172,7 @@ export function generateMap(opts: MapOptions): {
     x: p1Start.x,
     y: p1Start.y,
     owner: 'player1',
-    producing: UnitType.Infantry,
+    producing: UnitType.Army,
     productionTurnsLeft: 3,
     productionProgress: 0,
   });
@@ -176,7 +183,7 @@ export function generateMap(opts: MapOptions): {
     x: p2Start.x,
     y: p2Start.y,
     owner: 'player2',
-    producing: UnitType.Infantry,
+    producing: UnitType.Army,
     productionTurnsLeft: 3,
     productionProgress: 0,
   });
@@ -216,7 +223,7 @@ export function generateMap(opts: MapOptions): {
   const units: Unit[] = [
     {
       id: genId('unit'),
-      type: UnitType.Infantry,
+      type: UnitType.Army,
       owner: 'player1' as PlayerId,
       x: p1Start.x,
       y: p1Start.y,
@@ -229,7 +236,7 @@ export function generateMap(opts: MapOptions): {
     },
     {
       id: genId('unit'),
-      type: UnitType.Infantry,
+      type: UnitType.Army,
       owner: 'player2' as PlayerId,
       x: p2Start.x,
       y: p2Start.y,

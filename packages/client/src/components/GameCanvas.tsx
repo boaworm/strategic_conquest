@@ -14,7 +14,7 @@ import {
   wrappedDistX,
 } from '@sc/shared';
 import { useGameStore, DEFAULT_TILE_SIZE } from '../store/gameStore';
-import { playAttackSound, playCityCaptureFanfare, playCrashSound } from '../sounds';
+import { playAttackSound, playCityCaptureFanfare, playCrashSound, playArmorCrashSound } from '../sounds';
 
 // ── Classic colour palette ───────────────────────────────────
 
@@ -74,46 +74,7 @@ function drawUnitShape(
   ctx.globalAlpha = 1;
 
   switch (type) {
-    case UnitType.Infantry: {
-      // Stick-figure soldier with rifle
-      const lw = Math.max(1.5, size / 10);
-      ctx.lineWidth = lw;
-      ctx.lineCap = 'round';
-      const headR = r * 0.18;
-      const headY = cy - r * 0.55;
-      const shoulderY = headY + headR + r * 0.08;
-      const hipY = cy + r * 0.15;
-      const footY = cy + r * 0.7;
-      // Head
-      ctx.beginPath();
-      ctx.arc(cx, headY, headR, 0, 2 * Math.PI);
-      ctx.fill();
-      // Spine (neck to hip)
-      ctx.beginPath();
-      ctx.moveTo(cx, shoulderY);
-      ctx.lineTo(cx, hipY);
-      ctx.stroke();
-      // Arms (angled outward from shoulders)
-      ctx.beginPath();
-      ctx.moveTo(cx - r * 0.4, shoulderY + r * 0.3);
-      ctx.lineTo(cx, shoulderY);
-      ctx.lineTo(cx + r * 0.35, shoulderY + r * 0.35);
-      ctx.stroke();
-      // Legs (V shape from hip)
-      ctx.beginPath();
-      ctx.moveTo(cx - r * 0.3, footY);
-      ctx.lineTo(cx, hipY);
-      ctx.lineTo(cx + r * 0.3, footY);
-      ctx.stroke();
-      // Rifle (from right hand going up past head)
-      ctx.lineWidth = lw * 0.8;
-      ctx.beginPath();
-      ctx.moveTo(cx + r * 0.35, shoulderY + r * 0.35);
-      ctx.lineTo(cx + r * 0.15, headY - headR * 0.5);
-      ctx.stroke();
-      break;
-    }
-    case UnitType.Tank: {
+    case UnitType.Army: {
       // Side-profile tank: tracks on bottom, hull, turret + barrel on top
       const hw = r * 0.9;
       const hh = r * 0.35;
@@ -1190,9 +1151,13 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     if (!lastActionResult) return;
     const isMyTurn = view.currentPlayer === playerId;
 
-    // City capture → trumpet fanfare
     if (lastActionResult.cityCaptured) {
       playCityCaptureFanfare();
+    }
+    
+    // City capture failed → armor crash
+    if (lastActionResult.cityCaptureFailed) {
+      playArmorCrashSound();
     }
 
     // Fighter crash sound

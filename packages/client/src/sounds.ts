@@ -250,6 +250,48 @@ export function playCityCaptureFanfare(): void {
   }
 }
 
+export function playArmorCrashSound(): void {
+  const ctx = getCtx();
+  const t0 = ctx.currentTime;
+  const duration = 1.2;
+
+  // Heavy metal crunch + explosion
+  const bufSize = Math.floor(ctx.sampleRate * duration);
+  const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) d[i] = Math.random() * 2 - 1;
+
+  const noise = ctx.createBufferSource();
+  noise.buffer = buf;
+
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(800, t0);
+  lp.frequency.exponentialRampToValueAtTime(100, t0 + duration);
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.8, t0);
+  gain.gain.exponentialRampToValueAtTime(0.01, t0 + duration);
+
+  // Sub-bass thump
+  const osc = ctx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(80, t0);
+  osc.frequency.exponentialRampToValueAtTime(30, t0 + duration);
+  
+  const oscGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(0.6, t0);
+  oscGain.gain.exponentialRampToValueAtTime(0.01, t0 + duration);
+
+  noise.connect(lp).connect(gain).connect(ctx.destination);
+  osc.connect(oscGain).connect(ctx.destination);
+  
+  noise.start(t0);
+  noise.stop(t0 + duration);
+  osc.start(t0);
+  osc.stop(t0 + duration);
+}
+
 /** Play the appropriate attack sound for a unit type. */
 /** Crash sound — descending whine + impact for stranded fighters (~1.5s) */
 export function playCrashSound(): void {
@@ -299,8 +341,7 @@ export function playAttackSound(unitType: UnitType): void {
     case UnitType.Fighter:
       playFighterAttack();
       break;
-    case UnitType.Infantry:
-    case UnitType.Tank:
+    case UnitType.Army:
       playRifleAttack();
       break;
     case UnitType.Submarine:
