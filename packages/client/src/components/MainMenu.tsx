@@ -47,6 +47,7 @@ const WORLD_SIZES = [
 
 const AI_PLAYERS = [
   { label: 'Basic (Greedy)', value: 'basic', description: 'Aggressive expansion and combat' },
+  { label: 'GunAir (Skeleton)', value: 'gunair', description: 'Random army moves and production — beginner difficulty' },
 ] as const;
 
 export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
@@ -90,7 +91,7 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
       const size = WORLD_SIZES[mainWorldSize];
       // Map AI player name to type and pass to server
       const aiType = 'ai' as const;
-      const result = await createGame(size.width, size.height, 'pve', 'human', aiType, undefined, aiPlayer as 'adam' | 'basic');
+      const result = await createGame(size.width, size.height, 'pve', 'human', aiType, undefined, aiPlayer as 'adam' | 'basic' | 'gunair');
       // Automatically join as player 1 (AI joins automatically via server)
       console.log('Created AI game, joining as player 1...');
       joinGame(result.p1Token);

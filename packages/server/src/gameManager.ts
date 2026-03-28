@@ -58,8 +58,8 @@ export class GameManager {
     difficulty: AIDifficulty = 'medium',
     p1Type: 'human' | 'ai' = 'human',
     p2Type: 'human' | 'ai' = 'human',
-    p1AI: 'adam' | 'basic' = 'basic',
-    p2AI: 'adam' | 'basic' = 'basic',
+    p1AI: 'adam' | 'basic' | 'gunair' = 'basic',
+    p2AI: 'adam' | 'basic' | 'gunair' = 'basic',
   ): Promise<GameSession> {
     const id = crypto.randomUUID();
     const tokens = generateTokens();
