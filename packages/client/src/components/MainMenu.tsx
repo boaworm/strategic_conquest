@@ -49,7 +49,7 @@ const AI_PLAYERS = [
   { label: 'Basic (Greedy)', value: 'basic', description: 'Aggressive expansion and combat' },
 ] as const;
 
-export function MainMenu() {
+export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
   const createGame = useGameStore((s) => s.createGame);
   const joinGame = useGameStore((s) => s.joinGame);
   const storeError = useGameStore((s) => s.error);
@@ -295,6 +295,14 @@ export function MainMenu() {
         >
           Join Existing Game
         </button>
+        {onViewReplay && (
+          <button
+            className="px-6 py-3 bg-gray-600 rounded-lg text-lg hover:bg-gray-500"
+            onClick={onViewReplay}
+          >
+            View Replay
+          </button>
+        )}
       </div>
     </div>
   );

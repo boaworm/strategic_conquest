@@ -14,6 +14,7 @@ import { GamePhase } from '@sc/shared';
 import { GameManager } from './gameManager.js';
 import { createGameRoutes } from './routes/game.js';
 import { createTrainingRoutes } from './routes/training.js';
+import { createReplayRoutes } from './routes/replay.js';
 
 // ── Parse port from CLI args ─────────────────────────────────
 
@@ -91,6 +92,7 @@ manager.io = io;
 
 app.use('/api', createGameRoutes(manager));
 app.use('/api', createTrainingRoutes(manager));
+app.use('/api', createReplayRoutes());
 
 // Health check
 app.get('/health', (_req, res) => {

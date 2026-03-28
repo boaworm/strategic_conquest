@@ -6,3 +6,9 @@ src/**/*.js.map
 src/**/*.d.ts
 src/**/*.d.ts.map
 packages/server/public/assets/
+node.pid
+package-lock.json
+packages/trainer/data/
+packages/trainer/tmp/
+packages/trainer/packages/
+tmp/

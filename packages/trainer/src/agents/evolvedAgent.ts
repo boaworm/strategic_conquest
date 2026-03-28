@@ -57,7 +57,7 @@ export class EvolvedAgent implements Agent {
   private chooseProduction(obs: AgentObservation): UnitType {
     const globalFeatures = this.extractGlobalFeatures(obs);
     const unitTypes = [
-      UnitType.Infantry, UnitType.Fighter, UnitType.Bomber,
+      UnitType.Army, UnitType.Fighter, UnitType.Bomber,
       UnitType.Transport, UnitType.Destroyer, UnitType.Submarine,
       UnitType.Carrier, UnitType.Battleship,
     ];
@@ -68,7 +68,7 @@ export class EvolvedAgent implements Agent {
     ] as const;
 
     let bestScore = -Infinity;
-    let bestType = UnitType.Infantry;
+    let bestType = UnitType.Army;
 
     for (let i = 0; i < unitTypes.length; i++) {
       const featureIdx = FEATURE_NAMES.indexOf(prodFeatureNames[i]);
@@ -81,7 +81,7 @@ export class EvolvedAgent implements Agent {
       const myCities = globalFeatures[cityRatioIdx];
       const enemyCities = globalFeatures[enemyCityIdx];
 
-      if (unitTypes[i] === UnitType.Infantry) {
+      if (unitTypes[i] === UnitType.Army) {
         // Boost army production when we have fewer cities
         score += (enemyCities - myCities) * 0.1;
       }
@@ -217,7 +217,7 @@ export class EvolvedAgent implements Agent {
     features[FEATURE_NAMES.indexOf('enemyUnitCount')] =
       totalUnits > 0 ? obs.visibleEnemyUnits.length / totalUnits : 0.5;
 
-    const myArmies = obs.myUnits.filter((u) => u.type === UnitType.Infantry).length;
+    const myArmies = obs.myUnits.filter((u) => u.type === UnitType.Army).length;
     features[FEATURE_NAMES.indexOf('myArmyRatio')] =
       obs.myUnits.length > 0 ? myArmies / obs.myUnits.length : 0;
 

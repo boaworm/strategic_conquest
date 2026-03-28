@@ -66,16 +66,30 @@ export function generateMap(opts: MapOptions): {
     height,
     seed = Date.now(),
     landRatio = 0.35,
-    cityCount = 15,
   } = opts;
 
   // Add 2 rows for ice caps (north pole at y=0, south pole at y=totalHeight-1)
   const totalHeight = height + 2;
 
-  const MIN_CITY_DIST = 4;       // Minimum Chebyshev distance between cities on the same island
-  const MIN_ISLAND_CITIES = 3;   // Each island must have at least this many cities
-  const MIN_ISLANDS = 3;         // Minimum number of islands
-  const MIN_ISLAND_SIZE = 20;    // Islands smaller than this are removed (too small for 3 cities)
+  // Scale all constraints with map area so small maps (30×10) and large maps (80×30) both work.
+  const mapArea = width * height;
+
+  const MIN_ISLANDS = 3;
+
+  // Small/medium maps need a lower city-distance threshold so cities can fit on compact islands.
+  // Strict constraints only kick in on large maps (area ≥ 1500, e.g. 60×25).
+  const MIN_CITY_DIST = mapArea < 1500 ? 3 : 4;
+
+  // Small/medium maps only require 2 cities per island; large maps require 3.
+  const MIN_ISLAND_CITIES = mapArea < 1500 ? 2 : 3;
+
+  // Island must be large enough to comfortably hold MIN_ISLAND_CITIES cities.
+  // ~2% of map area, minimum 6 tiles.
+  // 30×10→6, 50×20→20, 80×30→48
+  const MIN_ISLAND_SIZE = Math.max(6, Math.floor(mapArea * 0.02));
+
+  // Total cities scales with map size: roughly one per 30 tiles, bounded [8, 30].
+  const cityCount = opts.cityCount ?? Math.min(30, Math.max(8, Math.floor(mapArea / 30)));
 
   type CityConfig = { x: number; y: number; owner: PlayerId | null };
 
