@@ -354,57 +354,54 @@ export class BasicAgent implements Agent {
       }
     }
 
-    // ── BOARD DOCKED TRANSPORT ────────────────────────────────────────────────
-    // Only in Phase 2/3: home island is done, prioritise embarking over local exploration.
-    // In Phase 1 armies should keep colonising the home island, not rush to the dock.
+    // ── BOARD WAITING TRANSPORT ───────────────────────────────────────────────
+    // Phase 2/3: home island is done — board any non-full transport that is
+    // adjacent to a city on a MINE island. Transports sit in water next to land;
+    // they are never ON a city tile, so we check adjacency, not exact position.
     if (this.phase >= 2) {
-    const dockedTransport = obs.myUnits.find(
-      (u) =>
-        u.type === UnitType.Transport &&
-        u.cargo.length < UNIT_STATS[UnitType.Transport].cargoCapacity &&
-        obs.myCities.some((c) => c.x === u.x && c.y === u.y),
-    );
-    if (dockedTransport) {
-      if (
-        wrappedDistX(unit.x, dockedTransport.x, this.mapWidth) <= 1 &&
-        Math.abs(unit.y - dockedTransport.y) <= 1
-      ) {
-        return { type: 'LOAD', unitId: unit.id, transportId: dockedTransport.id };
+      const { mineIndices, islandOf } = this.classifyIslands(obs);
+      const onMine = (x: number, y: number) => { const i = islandOf.get(`${x},${y}`); return i !== undefined && mineIndices.has(i); };
+
+      const waitingTransport = obs.myUnits.find(
+        (u) =>
+          u.type === UnitType.Transport &&
+          u.cargo.length < UNIT_STATS[UnitType.Transport].cargoCapacity &&
+          obs.myCities.some(
+            (c) =>
+              onMine(c.x, c.y) &&
+              wrappedDistX(u.x, c.x, this.mapWidth) <= 1 &&
+              Math.abs(u.y - c.y) <= 1,
+          ),
+      );
+      if (waitingTransport) {
+        if (
+          wrappedDistX(unit.x, waitingTransport.x, this.mapWidth) <= 1 &&
+          Math.abs(unit.y - waitingTransport.y) <= 1
+        ) {
+          return { type: 'LOAD', unitId: unit.id, transportId: waitingTransport.id };
+        }
+        const move = this.moveToward(obs, unit, waitingTransport);
+        if (move) return move;
       }
-      const move = this.moveToward(obs, unit, dockedTransport);
-      if (move) return move;
-      // Docked transport is on another island — fall through to explore locally.
+
+      // No waiting transport — walk to the nearest REACHABLE coastal city on a
+      // mine island. Sort by distance; skip cities on other islands (moveToward null).
+      const coastalCities = obs.myCities
+        .filter((c) => c.coastal && onMine(c.x, c.y))
+        .sort((a, b) => this.wrappedDist(unit, a) - this.wrappedDist(unit, b));
+      for (const coastal of coastalCities) {
+        if (unit.x === coastal.x && unit.y === coastal.y) {
+          return { type: 'SKIP', unitId: unit.id };
+        }
+        const move = this.moveToward(obs, unit, coastal);
+        if (move) return move;
+      }
     }
-    } // end phase >= 2
 
     // ── EXPLORE ────────────────────────────────────────────────────────────────
-    // Always explore — finds neutral cities on the current island before they're
-    // visible, and ensures the army contributes even when no city is yet in sight.
+    // Phase 1: find neutral cities on the home island before they're visible.
     const explorationMove = this.moveTowardExploration(obs, unit);
     if (explorationMove) return explorationMove;
-
-    // ── BOARD FLOATING TRANSPORT ──────────────────────────────────────────────
-    // Only board a transport that already has a good load — a transport with 1-2
-    // armies that picks up one more at sea will sail off half-empty. Prefer waiting
-    // at a coastal city so the transport can fill up properly at the dock.
-    const halfCap = Math.ceil(UNIT_STATS[UnitType.Transport].cargoCapacity / 2);
-    const transport = obs.myUnits.find(
-      (u) =>
-        u.type === UnitType.Transport &&
-        u.cargo.length >= halfCap &&
-        u.cargo.length < UNIT_STATS[UnitType.Transport].cargoCapacity,
-    );
-    if (transport) {
-      if (
-        wrappedDistX(unit.x, transport.x, this.mapWidth) <= 1 &&
-        Math.abs(unit.y - transport.y) <= 1
-      ) {
-        return { type: 'LOAD', unitId: unit.id, transportId: transport.id };
-      }
-      const move = this.moveToward(obs, unit, transport);
-      if (move) return move;
-      // Transport is at sea and unreachable by land — fall through to wait at a coastal city.
-    }
 
     // Wait at the nearest coastal city for a transport to arrive.
     const coastal = this.nearestCity(obs.myCities.filter((c) => c.coastal), unit);
@@ -423,171 +420,89 @@ export class BasicAgent implements Agent {
 
     if (unit.type === UnitType.Transport) {
       const cap = stats.cargoCapacity;
+      const { islandOf, mineIndices, contestedIndices } = this.classifyIslands(obs);
+      const tileIsland = (x: number, y: number) => islandOf.get(`${x},${y}`);
+      const isMine       = (x: number, y: number) => { const i = tileIsland(x, y); return i !== undefined && mineIndices.has(i); };
+      const isContested  = (x: number, y: number) => { const i = tileIsland(x, y); return i !== undefined && contestedIndices.has(i); };
 
-      // Helper used in both the loading and the empty-transport sections.
-      const tCombatDist = Math.min(12, Math.floor(this.mapWidth / 4));
-      const nearEnemyCoord = (coord: Coord) =>
-        obs.visibleEnemyCities.some(
-          (e) => e.owner !== null && this.wrappedDist(coord, e) <= tCombatDist,
+      // ── STEP 1: Load any adjacent army from a MINE island ────────────────────
+      if (unit.cargo.length < cap) {
+        const adjArmy = obs.myUnits.find(
+          (u) =>
+            u.type === UnitType.Army && u.carriedBy === null && u.movesLeft > 0 &&
+            isMine(u.x, u.y) &&
+            wrappedDistX(u.x, unit.x, this.mapWidth) <= 1 && Math.abs(u.y - unit.y) <= 1,
         );
+        if (adjArmy) return { type: 'LOAD', unitId: adjArmy.id, transportId: unit.id };
+      }
 
+      // ── STEP 2: Delivering — navigate to contested island and drop armies ─────
       if (unit.cargo.length > 0) {
-        // ── Top off before departing ────────────────────────────────────────
-        // Don't sail with a half-empty hold. If we're still near a home port
-        // and armies are within boarding range (or close enough to walk over),
-        // keep loading until full or no more armies are coming.
-        if (unit.cargo.length < cap) {
-          // Always load any adjacent home army — no port gate.
-          const moreArmy = obs.myUnits.find(
-            (u) =>
-              u.type === UnitType.Army &&
-              u.carriedBy === null &&
-              u.movesLeft > 0 &&
-              !nearEnemyCoord(u) &&
-              wrappedDistX(u.x, unit.x, this.mapWidth) <= 1 &&
-              Math.abs(u.y - unit.y) <= 1,
-          );
-          if (moreArmy) return { type: 'LOAD', unitId: moreArmy.id, transportId: unit.id };
-          // No adjacent army. Wait only if near a home port and armies are on their way.
-          const nearHomePort = obs.myCities.some(
-            (c) =>
-              !nearEnemyCoord(c) &&
-              wrappedDistX(unit.x, c.x, this.mapWidth) <= 1 &&
-              Math.abs(unit.y - c.y) <= 1,
-          );
-          if (nearHomePort) {
-            const armiesApproaching = obs.myUnits.some(
-              (u) =>
-                u.type === UnitType.Army &&
-                u.carriedBy === null &&
-                !nearEnemyCoord(u) &&
-                this.wrappedDist(u, unit) <= 4,
-            );
-            if (armiesApproaching) return { type: 'SKIP', unitId: unit.id };
-          }
-          // Port is dry or at sea — depart with what we have.
-        }
-
-        // Engine requires cargo unit to have movesLeft > 0 to UNLOAD.
-        // handleLoad sets movesLeft=0, so don't UNLOAD the same turn we loaded.
         const cargoUnit = obs.myUnits.find((u) => u.id === unit.cargo[0]);
         const canUnload = cargoUnit && cargoUnit.movesLeft > 0;
 
-        // Conquerable = free (neutral / undefended) OR any enemy-owned city.
-        const conquerableCities = obs.visibleEnemyCities.filter(
-          (c) =>
-            c.owner === null ||
-            !obs.visibleEnemyUnits.some(
-              (u) => UNIT_STATS[u.type].domain === UnitDomain.Land && u.x === c.x && u.y === c.y,
-            ),
-        );
-        // Also treat any enemy-owned city as worth stopping for (attack mode).
-        const targetableCities = obs.visibleEnemyCities.length > 0
-          ? obs.visibleEnemyCities
-          : [];
-
-        // Unload when adjacent to non-friendly land that is near enemy/neutral territory.
-        // We check from adjLand (not the transport position) so a transport parked at
-        // a home port doesn't accidentally unload onto its own island's land tiles.
-        const adjLand = this.getAdjacentLandToward(obs, unit,
-          this.nearestCity([...conquerableCities, ...targetableCities], unit) ??
-          this.expansionTarget ?? this.attackTarget,
-        );
-        if (canUnload && adjLand) {
-          const onOurLand = obs.myCities.some((c) => c.x === adjLand.x && c.y === adjLand.y);
-          const nearEnemyTerritory = obs.visibleEnemyCities.some(
-            (c) => this.wrappedDist(adjLand, c) <= 20,
+        // Unload when adjacent land is on a CONTESTED island.
+        if (canUnload) {
+          const contestedCities = [...obs.myCities, ...obs.visibleEnemyCities].filter(
+            (c) => isContested(c.x, c.y),
           );
-          if (!onOurLand && nearEnemyTerritory) {
+          const deliveryTarget =
+            this.nearestCity(obs.visibleEnemyCities, unit) ??
+            this.nearestCity(contestedCities, unit) ??
+            this.expansionTarget ??
+            this.attackTarget;
+
+          const adjLand = this.getAdjacentLandToward(obs, unit, deliveryTarget);
+          if (adjLand && isContested(adjLand.x, adjLand.y)) {
             return { type: 'UNLOAD', unitId: unit.cargo[0], to: adjLand };
+          }
+
+          if (deliveryTarget) {
+            const move = this.moveToward(obs, unit, deliveryTarget);
+            if (move) return move;
           }
         }
 
-        // Steer toward the nearest conquerable city; fall back to expansion/attack target.
+        // Cargo aboard but can't unload yet — keep moving or explore.
         const deliveryTarget =
-          this.nearestCity(conquerableCities, unit) ??
+          this.nearestCity(obs.visibleEnemyCities, unit) ??
           this.expansionTarget ??
           this.attackTarget;
         if (deliveryTarget) {
           const move = this.moveToward(obs, unit, deliveryTarget);
           if (move) return move;
         }
-
-        return this.moveTowardExploration(obs, unit);
+        return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
       }
 
-      // ── Empty transport: return to HOME shores and link up with armies ────────
-      // Key problem: after delivering armies, captured enemy cities appear in obs.myCities.
-      // Nearest "coastal city" is now on the enemy island. We must navigate toward
-      // HOME armies instead — armies that are NOT near any enemy-owned city.
-      const nearEnemy = nearEnemyCoord;
-
-      // Load immediately if a home army is already adjacent
-      const adjacentHomeArmy = obs.myUnits.find(
-        (u) =>
-          u.type === UnitType.Army &&
-          u.carriedBy === null &&
-          u.movesLeft > 0 &&
-          unit.cargo.length < cap &&
-          !nearEnemy(u) &&
-          wrappedDistX(u.x, unit.x, this.mapWidth) <= 1 &&
-          Math.abs(u.y - unit.y) <= 1,
+      // ── STEP 3: Empty — return to a MINE island, pick up armies ─────────────
+      const mineArmies = obs.myUnits.filter(
+        (u) => u.type === UnitType.Army && u.carriedBy === null && isMine(u.x, u.y),
       );
-      if (adjacentHomeArmy) return { type: 'LOAD', unitId: adjacentHomeArmy.id, transportId: unit.id };
+      const mineCoastal = obs.myCities.filter((c) => c.coastal && isMine(c.x, c.y));
 
-      // Navigate toward the home coastal city with the most waiting armies.
-      // This prevents transports from fanning out to different soldiers when all
-      // the armies are stacked at one city waiting for a ride.
-      const homeArmies = obs.myUnits.filter(
-        (u) => u.type === UnitType.Army && u.carriedBy === null && !nearEnemy(u),
-      );
-      if (homeArmies.length > 0) {
-        let bestTarget: Coord = homeArmies[0];
-        let bestCount = 0;
-        for (const city of obs.myCities.filter((c) => c.coastal && !nearEnemy(c))) {
-          // Count armies within radius 2 of the city, not just on the exact tile.
-          // Armies one step away from a coastal city are effectively "at the dock"
-          // and should attract transports just as strongly.
-          const count = homeArmies.filter(
-            (u) => wrappedDistX(u.x, city.x, this.mapWidth) <= 2 && Math.abs(u.y - city.y) <= 2,
-          ).length;
-          if (count > bestCount) { bestCount = count; bestTarget = city; }
-        }
-        if (bestCount === 0) {
-          // No armies near any coastal city — navigate to the nearest army directly
-          const nearest = this.nearestUnit(homeArmies, unit);
-          if (nearest) bestTarget = nearest;
-        }
-        const move = this.moveToward(obs, unit, bestTarget);
-        if (move) return move;
+      // Pick the mine coastal city with the most waiting armies within radius 4.
+      let pickupPort: Coord | null = null;
+      let bestCount = -1;
+      for (const city of mineCoastal) {
+        const count = mineArmies.filter(
+          (u) => wrappedDistX(u.x, city.x, this.mapWidth) <= 4 && Math.abs(u.y - city.y) <= 4,
+        ).length;
+        if (count > bestCount) { bestCount = count; pickupPort = city; }
+      }
+      // No armies near coast yet — park at the nearest mine coastal city and wait.
+      if (!pickupPort || bestCount === 0) {
+        pickupPort = this.nearestCity(mineCoastal, unit);
       }
 
-      // No home armies in sight — park at the nearest home coastal city and wait
-      const homeCoastalCities = obs.myCities.filter((c) => c.coastal && !nearEnemy(c));
-      const pickupPort = this.nearestCity(
-        homeCoastalCities.length > 0 ? homeCoastalCities : obs.myCities.filter((c) => c.coastal),
-        unit,
-      );
       if (pickupPort) {
         const portMove = this.moveToward(obs, unit, pickupPort);
         if (portMove) return portMove;
-        // At port — load any adjacent army (army may not yet be inside the city tile)
-        const boardingArmy = obs.myUnits.find(
-          (u) =>
-            u.type === UnitType.Army &&
-            u.carriedBy === null &&
-            u.movesLeft > 0 &&
-            unit.cargo.length < cap &&
-            wrappedDistX(u.x, unit.x, this.mapWidth) <= 1 &&
-            Math.abs(u.y - unit.y) <= 1,
-        );
-        if (boardingArmy) return { type: 'LOAD', unitId: boardingArmy.id, transportId: unit.id };
         return { type: 'SKIP', unitId: unit.id };
       }
 
-      // No friendly coastal ports at all — explore
-      const exploreMove = this.moveTowardExploration(obs, unit);
-      if (exploreMove) return exploreMove;
+      // No mine ports (game just started or all islands contested) — explore.
+      return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
     }
 
     // ── Battleship: coastal bombardment + hunt high-value enemy ships ───────────
@@ -836,10 +751,16 @@ export class BasicAgent implements Agent {
         const tile = obs.tiles[ny]?.[nx];
         const firstStep = cur.first ?? { x: nx, y: ny };
 
+        // Null = never seen: always an exploration target. Return the first step
+        // toward it (which is a known navigable tile, not the null tile itself).
+        if (!tile) {
+          return { type: 'MOVE', unitId: unit.id, to: firstStep };
+        }
+
         if (!canEnterExplore(nx, ny)) continue;
 
-        // Unexplored (null) tiles are the best exploration target; hidden tiles second.
-        if (!tile || tile.visibility === TileVisibility.Hidden) {
+        // Hidden = seen before but outside current vision: worth revisiting.
+        if (tile.visibility === TileVisibility.Hidden) {
           return { type: 'MOVE', unitId: unit.id, to: firstStep };
         }
 
@@ -912,5 +833,93 @@ export class BasicAgent implements Agent {
 
   private wrappedDist(a: Coord, b: Coord): number {
     return wrappedDistX(a.x, b.x, this.mapWidth) + Math.abs(a.y - b.y);
+  }
+
+  /**
+   * Flood-fill obs.tiles to find connected land regions, then classify each:
+   *   MINE       — island where every visible city is owned by us (safe staging area)
+   *   CONTESTED  — island with ≥1 neutral/enemy city, OR land with no visible cities
+   *
+   * Returns:
+   *   islandOf       "x,y" → island index
+   *   mineIndices    set of "mine" island indices
+   *   contestedIndices set of "contested" island indices
+   */
+  private classifyIslands(obs: AgentObservation): {
+    islandOf: Map<string, number>;
+    mineIndices: Set<number>;
+    contestedIndices: Set<number>;
+  } {
+    const tiles = obs.tiles;
+    const h = tiles.length;
+    const w = tiles[0]?.length ?? 0;
+
+    const visited = new Set<string>();
+    const islandOf = new Map<string, number>();
+    let islandCount = 0;
+
+    for (let y = 1; y < h - 1; y++) {          // skip ice cap rows
+      for (let x = 0; x < w; x++) {
+        const key = `${x},${y}`;
+        if (visited.has(key)) continue;
+        if (tiles[y]?.[x]?.terrain !== Terrain.Land) continue;
+
+        const idx = islandCount++;
+        const queue: Coord[] = [{ x, y }];
+        visited.add(key);
+        islandOf.set(key, idx);
+
+        while (queue.length > 0) {
+          const curr = queue.shift()!;
+          for (const [dx, dy] of [
+            [-1, -1], [0, -1], [1, -1],
+            [-1,  0],           [1,  0],
+            [-1,  1], [0,  1], [1,  1],
+          ] as [number, number][]) {
+            const nx = wrapX(curr.x + dx, this.mapWidth);
+            const ny = curr.y + dy;
+            if (ny < 1 || ny >= h - 1) continue;
+            const nkey = `${nx},${ny}`;
+            if (visited.has(nkey)) continue;
+            if (tiles[ny]?.[nx]?.terrain !== Terrain.Land) continue;
+            visited.add(nkey);
+            islandOf.set(nkey, idx);
+            queue.push({ x: nx, y: ny });
+          }
+        }
+      }
+    }
+
+    // Classify each island based on city ownership
+    const myCityIds = new Set(obs.myCities.map((c) => c.id));
+    const allCities = [...obs.myCities, ...obs.visibleEnemyCities];
+
+    // Group cities by island
+    const citiesOnIsland = new Map<number, typeof allCities>();
+    for (const city of allCities) {
+      const idx = islandOf.get(`${city.x},${city.y}`);
+      if (idx === undefined) continue;
+      if (!citiesOnIsland.has(idx)) citiesOnIsland.set(idx, []);
+      citiesOnIsland.get(idx)!.push(city);
+    }
+
+    const mineIndices = new Set<number>();
+    const contestedIndices = new Set<number>();
+
+    for (let i = 0; i < islandCount; i++) {
+      const cities = citiesOnIsland.get(i);
+      if (!cities || cities.length === 0) {
+        // No visible cities → treat as contested so we explore/deliver here
+        contestedIndices.add(i);
+      } else if (cities.every((c) => myCityIds.has(c.id))) {
+        // Every visible city is ours → safe home territory
+        mineIndices.add(i);
+      } else {
+        // At least one neutral or enemy city
+        contestedIndices.add(i);
+      }
+    }
+
+    return { islandOf, mineIndices, contestedIndices };
   }
 }

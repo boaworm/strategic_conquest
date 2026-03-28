@@ -673,6 +673,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   // Instead, we read them directly from the store in the draw/event handlers.
   const setCamera = useGameStore((s) => s.setCamera);
   const setTileSize = useGameStore((s) => s.setTileSize);
+  const setCanvasSize = useGameStore((s) => s.setCanvasSize);
 
   const lastActionResult = useGameStore((s) => s.lastActionResult);
   const lastEnemyCombat = useGameStore((s) => s.lastEnemyCombat);
@@ -769,8 +770,9 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       const rect = canvas.getBoundingClientRect();
       const pixelX = screenX - rect.left;
       const pixelY = screenY - rect.top;
-      const canvasW = canvas.width;
-      const canvasH = canvas.height;
+      const dpr = window.devicePixelRatio || 1;
+      const canvasW = canvas.width / dpr;
+      const canvasH = canvas.height / dpr;
 
       // Camera centre in pixels
       const camPx = cameraX * tileSize;
@@ -1563,16 +1565,19 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.scale(dpr, dpr);
 
-      // Lock to 15 tiles vertically
-      const newTileSize = cssH / 15;
-      setTileSize(newTileSize);
+      setCanvasSize(cssW, cssH);
+
+      // Only set tileSize on first render — after that the user controls zoom
+      if (!useGameStore.getState().viewportInitialized) {
+        setTileSize(cssH / 15);
+      }
 
       requestRedraw();
     });
 
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [draw]);
+  }, [draw, setTileSize, setCanvasSize]);
 
   // ── Mouse handlers (native for blocking gestures) ───────────
   useEffect(() => {
@@ -1619,17 +1624,28 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       }
     };
 
-    // Passive: false is missing here because we removed the wheel listener
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const { tileSize } = useGameStore.getState();
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const newTileSize = Math.max(6, Math.min(64, tileSize * factor));
+      if (newTileSize === tileSize) return;
+      setTileSize(newTileSize);
+      requestRedraw();
+    };
+
     canvas.addEventListener('mousedown', onNativeMouseDown);
     canvas.addEventListener('mousemove', onNativeMouseMove);
     canvas.addEventListener('mouseup', onNativeMouseUp);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
 
     return () => {
       canvas.removeEventListener('mousedown', onNativeMouseDown);
       canvas.removeEventListener('mousemove', onNativeMouseMove);
       canvas.removeEventListener('mouseup', onNativeMouseUp);
+      canvas.removeEventListener('wheel', onWheel);
     };
-  }, [setCamera, requestRedraw]);
+  }, [setCamera, setTileSize, requestRedraw]);
 
   function handleMouseUp(e: React.MouseEvent) {
     // Only handle left-click in React land for UI logic

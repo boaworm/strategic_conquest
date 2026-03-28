@@ -58,9 +58,14 @@ interface GameStore {
   tileSize: number;
   cameraX: number; // center of viewport in tile coords
   cameraY: number;
+  canvasW: number;
+  canvasH: number;
   viewportInitialized: boolean;
   setTileSize: (size: number) => void;
   setCamera: (x: number, y: number) => void;
+  setCanvasSize: (w: number, h: number) => void;
+  /** Move camera to (x, y) only if that tile is not currently visible. */
+  centerIfOffScreen: (x: number, y: number) => void;
 }
 
 export const DEFAULT_TILE_SIZE = 32;
@@ -82,6 +87,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   tileSize: DEFAULT_TILE_SIZE,
   cameraX: 0,
   cameraY: 0,
+  canvasW: 800,
+  canvasH: 600,
   viewportInitialized: false,
 
   createGame: async (
@@ -173,21 +180,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     socket.on('stateUpdate', (view: PlayerView) => {
       const pid = view.myUnits.length > 0 ? view.myUnits[0].owner : get().playerId;
 
-      // Center camera on enemy attacks/movements when it's not our turn
-      const lastView = get().view;
-      if (view.currentPlayer !== pid && lastView) {
-        // Check enemy units for movement (enemy attacks are detected in GameCanvas via combat animation)
-        for (const u of view.visibleEnemyUnits) {
-          const lastUnit = lastView.visibleEnemyUnits.find((lu) => lu.id === u.id);
-          if (lastUnit && (u.x !== lastUnit.x || u.y !== lastUnit.y)) {
-            // Enemy unit moved - center camera on new position
-            const { setCamera } = get();
-            setCamera(u.x, u.y);
-            break;
-          }
-        }
-      }
-
       set({ view, playerId: pid, gamePaused: false });
 
       // Auto-select next moveable unit when current one is done
@@ -200,6 +192,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
             (u) => u.movesLeft > 0 && !u.sleeping && u.carriedBy === null,
           );
           set({ selectedUnitId: next?.id ?? null });
+          if (next) get().centerIfOffScreen(next.x, next.y);
         }
       }
 
@@ -287,5 +280,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setCamera: (x: number, y: number) => {
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     set({ cameraX: x, cameraY: y });
+  },
+
+  setCanvasSize: (w: number, h: number) => {
+    set({ canvasW: w, canvasH: h });
+  },
+
+  centerIfOffScreen: (x: number, y: number) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (!get().viewportInitialized) return;
+    const { cameraX, cameraY, tileSize, canvasW, canvasH } = get();
+    // Shrink by 1 tile on each side so edge tiles still trigger centering
+    const halfW = canvasW / 2 / tileSize - 1;
+    const halfH = canvasH / 2 / tileSize - 1;
+    const visible =
+      x >= cameraX - halfW && x <= cameraX + halfW &&
+      y >= cameraY - halfH && y <= cameraY + halfH;
+    if (!visible) {
+      set({ cameraX: x, cameraY: y });
+    }
   },
 }));
