@@ -140,6 +140,11 @@ export function generateMap(opts: MapOptions): {
       }
     }
 
+    // Remove lakes: ocean tiles not connected to the main ocean (ice cap rows).
+    // Lakes confuse coastal-city detection and make ships appear to have port
+    // access where none actually exists.
+    removeLakes(tiles, width, totalHeight);
+
     // Find all islands and remove those too small to support MIN_ISLAND_CITIES cities.
     // This also removes single-tile islands.
     const allIslands = findIslandTiles(tiles, width, totalHeight);
@@ -305,6 +310,53 @@ export function generateMap(opts: MapOptions): {
   }
 
   throw new Error('Failed to generate a valid map after 200 attempts');
+}
+
+/**
+ * Remove lake tiles: ocean that is not reachable from the polar ice cap rows
+ * (y=0 and y=totalHeight-1). Ships can never reach such enclosed water, so it
+ * is converted to land. Uses the same 8-directional connectivity as ship movement.
+ */
+function removeLakes(tiles: Terrain[][], width: number, height: number): void {
+  const reachable: boolean[][] = Array.from({ length: height }, () =>
+    Array.from({ length: width }, () => false),
+  );
+
+  const dirs = [
+    { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+    { x: -1, y: 0  },                   { x: 1, y: 0  },
+    { x: -1, y: 1  }, { x: 0, y: 1  }, { x: 1, y: 1  },
+  ];
+
+  const queue: Coord[] = [];
+  for (let x = 0; x < width; x++) {
+    for (const y of [0, height - 1]) {
+      if (tiles[y][x] === Terrain.Ocean && !reachable[y][x]) {
+        reachable[y][x] = true;
+        queue.push({ x, y });
+      }
+    }
+  }
+
+  while (queue.length > 0) {
+    const { x, y } = queue.shift()!;
+    for (const d of dirs) {
+      const nx = wrapX(x + d.x, width);
+      const ny = y + d.y;
+      if (ny < 0 || ny >= height || reachable[ny][nx]) continue;
+      if (tiles[ny][nx] !== Terrain.Ocean) continue;
+      reachable[ny][nx] = true;
+      queue.push({ x: nx, y: ny });
+    }
+  }
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (tiles[y][x] === Terrain.Ocean && !reachable[y][x]) {
+        tiles[y][x] = Terrain.Land;
+      }
+    }
+  }
 }
 
 /**

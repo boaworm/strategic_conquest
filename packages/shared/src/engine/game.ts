@@ -178,7 +178,7 @@ function handleMove(
     // If interceptors are present, the bomber fights them instead of bombing.
     // Bomber survives → it has "attacked" and flies back (not destroyed, no bomb dropped).
     // Bomber destroyed → no bomb.
-    // No interceptors → bomb drops, kills random 3–5 enemy units, bomber is destroyed.
+    // No interceptors → bomb drops, kills ALL enemy units in blast area, bomber is destroyed.
     if (unit.type === UnitType.Bomber) {
       const blastRadius = getBomberBlastRadius(state, playerId);
       const affectedTiles = getTilesInRadius(target.x, target.y, blastRadius, state.mapWidth, state.mapHeight);
@@ -225,21 +225,15 @@ function handleMove(
         return { success: true, combat: lastInterceptCombat };
       }
 
-      // No interceptors — drop the bomb; kill random 3–5 enemy units in blast area
+      // No interceptors — drop the bomb; kill ALL enemy units in blast area, bomber is destroyed
       const enemiesInArea = affectedTiles.flatMap((pos) =>
         state.units.filter(
           (u) => u.x === pos.x && u.y === pos.y && u.owner !== playerId &&
                  u.carriedBy === null && u.id !== unit.id,
         ),
       );
-      // Fisher-Yates shuffle then pick up to 3–5
-      const killCount = Math.min(enemiesInArea.length, Math.floor(Math.random() * 3) + 3);
-      for (let i = enemiesInArea.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [enemiesInArea[i], enemiesInArea[j]] = [enemiesInArea[j], enemiesInArea[i]];
-      }
-      for (let i = 0; i < killCount; i++) {
-        enemiesInArea[i].health = 0;
+      for (const enemy of enemiesInArea) {
+        enemy.health = 0;
       }
       unit.health = 0;
       const bombCombat = {
@@ -248,7 +242,7 @@ function handleMove(
         attackerDamage: 1,
         defenderDamage: 0,
         attackerDestroyed: true,
-        defenderDestroyed: killCount > 0,
+        defenderDestroyed: enemiesInArea.length > 0,
       };
       removeDestroyedUnits(state);
       checkWinCondition(state);
@@ -458,7 +452,9 @@ export function isCityCoastal(
       if (dx === 0 && dy === 0) continue;
       const nx = wrapX(city.x + dx, state.mapWidth);
       const ny = city.y + dy;
-      if (ny >= 0 && ny < state.mapHeight && state.tiles[ny][nx] === Terrain.Ocean) {
+      // Exclude ice cap rows — transports cannot enter y=0 or y=mapHeight-1,
+      // so ocean there does not make a city usable as a port.
+      if (ny > 0 && ny < state.mapHeight - 1 && state.tiles[ny][nx] === Terrain.Ocean) {
         return true;
       }
     }

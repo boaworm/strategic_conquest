@@ -41,7 +41,7 @@ function loadMetas(): ReplayMeta[] {
       if (raw.meta) metas.push(raw.meta);
     } catch { /* skip corrupt files */ }
   }
-  return metas.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+  return metas.sort((a, b) => (a.gameNum ?? 0) - (b.gameNum ?? 0));
 }
 
 const metas = loadMetas();
@@ -55,7 +55,8 @@ console.log(`\nAvailable replays (${metas.length}):`);
 metas.forEach((m, i) => {
   const date = m.recordedAt.slice(0, 19).replace('T', ' ');
   const winner = m.winner ?? 'draw';
-  console.log(`  ${i + 1}. [${m.id.slice(0, 8)}] ${date}  turns=${m.turns}  winner=${winner}  p1=${m.p1Cities} p2=${m.p2Cities} neutral=${m.neutralCities}`);
+  const gameLabel = m.gameNum != null ? `game ${m.gameNum}` : m.id.slice(0, 8);
+  console.log(`  ${i + 1}. [${gameLabel}] ${date}  turns=${m.turns}  winner=${winner}  p1=${m.p1Cities} p2=${m.p2Cities} neutral=${m.neutralCities}`);
 });
 
 // ── Interactive pick ──────────────────────────────────────────

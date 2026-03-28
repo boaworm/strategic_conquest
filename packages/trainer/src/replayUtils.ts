@@ -2,6 +2,7 @@ import type { GameState, City, Unit, Terrain } from '@sc/shared';
 
 export interface ReplayMeta {
   id: string;
+  gameNum?: number;
   recordedAt: string;
   turns: number;
   winner: string | null;

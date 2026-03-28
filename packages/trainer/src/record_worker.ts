@@ -99,6 +99,7 @@ for (let g = 0; g < numGames; g++) {
   const id = randomUUID();
   const meta: ReplayMeta = {
     id,
+    gameNum: gameNum + g,
     recordedAt: new Date().toISOString(),
     turns: state.turn,
     winner: state.winner,
