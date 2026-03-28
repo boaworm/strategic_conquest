@@ -10,6 +10,8 @@ export interface AgentObservation {
   visibleEnemyCities: CityView[];
   turn: number;
   myPlayerId: PlayerId;
+  /** How many bombers this player has produced in total (determines blast radius: 0 / 1 / 2). */
+  myBomberBlastRadius: number;
 }
 
 // ── Agent Actions ────────────────────────────────────────────

@@ -221,7 +221,7 @@ export class BasicAgent implements Agent {
     const submarineCount  = obs.myUnits.filter((u) => u.type === UnitType.Submarine).length;
     const wantBombers     = Math.min(10, Math.max(4, cityCount));  // blast radius unlocks at 10 & 20
     const wantFighters    = Math.min(8,  Math.ceil(cityCount * 0.6));
-    const wantBattleships = Math.min(4,  Math.ceil(cityCount / 3));
+    const wantBattleships = Math.min(6,  Math.ceil(cityCount / 2));
     const wantDestroyers  = Math.min(4,  Math.ceil(cityCount / 3));
     const wantSubmarines  = Math.min(3,  Math.ceil(cityCount / 4));
 
@@ -243,7 +243,10 @@ export class BasicAgent implements Agent {
       return UnitType.Transport;
     }
 
-    if (bomberCount  < wantBombers)  return UnitType.Bomber;
+    if (bomberCount < wantBombers) return UnitType.Bomber;
+
+    // Coastal cities rotate between battleships and fighters in combat phase.
+    if (city.coastal && battleshipCount < wantBattleships) return UnitType.Battleship;
     if (fighterCount < wantFighters) return UnitType.Fighter;
 
     if (city.coastal) {
@@ -497,31 +500,42 @@ export class BasicAgent implements Agent {
       return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
     }
 
-    // ── Battleship: coastal bombardment + hunt high-value enemy ships ───────────
-    // Carriers and transports are priority targets; then find the most-defended
-    // enemy city and sit offshore bombarding it; finally hunt any sea unit.
+    // ── Battleship: coastal bombardment takes priority over naval hunting ───────
     if (unit.type === UnitType.Battleship) {
-      for (const prey of [UnitType.Carrier, UnitType.Transport, UnitType.Destroyer] as UnitType[]) {
-        const t = this.nearestEnemy(obs.visibleEnemyUnits.filter((u) => u.type === prey), unit);
-        if (t) { const m = this.moveToward(obs, unit, t); if (m) return m; }
-      }
-      // Coastal bombardment — pick the enemy city with the most land defenders
-      const bestCity = obs.visibleEnemyCities
-        .filter((c) => c.owner !== null)
+      // Role 1 — Coastal bombardment.
+      // Target the enemy coastal city with the most land defenders within reach.
+      // "Within reach" = we know about it (visible or last-known attack target).
+      const bombardTarget = obs.visibleEnemyCities
+        .filter((c) => c.owner !== null && c.coastal)
         .map((c) => ({
           city: c,
           defenders: obs.visibleEnemyUnits.filter(
             (u) => u.x === c.x && u.y === c.y && UNIT_STATS[u.type].domain === UnitDomain.Land,
           ).length,
+          dist: this.wrappedDist(c, unit),
         }))
-        .sort((a, b) => b.defenders - a.defenders)[0];
-      if (bestCity) { const m = this.moveToward(obs, unit, bestCity.city); if (m) return m; }
-      const seaTarget = this.nearestEnemy(
-        obs.visibleEnemyUnits.filter((u) => UNIT_STATS[u.type].domain === UnitDomain.Sea), unit,
-      );
-      if (seaTarget) return this.moveToward(obs, unit, seaTarget);
-      if (this.attackTarget) { const m = this.moveToward(obs, unit, this.attackTarget); if (m) return m; }
-      return this.moveTowardExploration(obs, unit);
+        .filter((e) => e.defenders > 0)
+        .sort((a, b) => a.dist - b.dist)[0];   // nearest defended coastal city
+
+      if (bombardTarget) {
+        const m = this.moveToward(obs, unit, bombardTarget.city);
+        if (m) return m;
+      }
+
+      // Role 2 — Naval hunting: Transport → Destroyer → Carrier → Battleship
+      for (const prey of [UnitType.Transport, UnitType.Destroyer, UnitType.Carrier, UnitType.Battleship] as UnitType[]) {
+        const candidates = obs.visibleEnemyUnits.filter((e) => e.type === prey);
+        const t = this.nearestEnemy(candidates, unit);
+        if (t) {
+          const m = this.moveToward(obs, unit, t);
+          if (m) return m;
+        }
+      }
+
+      // No visible targets — explore toward last known objective or scout ocean
+      const objective = this.attackTarget ?? this.expansionTarget;
+      if (objective) { const m = this.moveToward(obs, unit, objective); if (m) return m; }
+      return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
     }
 
     // ── Destroyer: hunt submarines and transports ────────────────────────────
@@ -552,7 +566,51 @@ export class BasicAgent implements Agent {
       return this.moveTowardExploration(obs, unit);
     }
 
-    // ── Carrier: follow the fleet toward the front; avoid leading attacks ─────
+    // ── Carrier: mobile fighter base — load fighters, patrol, unload to strike ─
+    if (unit.type === UnitType.Carrier) {
+      const cap  = UNIT_STATS[UnitType.Carrier].cargoCapacity;
+      const fMov = UNIT_STATS[UnitType.Fighter].movesPerTurn;
+
+      // Load any adjacent idle fighter when not full.
+      if (unit.cargo.length < cap) {
+        const adjFighter = obs.myUnits.find(
+          (u) =>
+            u.type === UnitType.Fighter && u.carriedBy === null && u.movesLeft > 0 &&
+            wrappedDistX(u.x, unit.x, this.mapWidth) <= 1 && Math.abs(u.y - unit.y) <= 1,
+        );
+        if (adjFighter) return { type: 'LOAD', unitId: adjFighter.id, transportId: unit.id };
+      }
+
+      if (unit.cargo.length > 0) {
+        // If a sub or transport is within fighter strike range, unload one fighter toward it.
+        const strikeTarget = obs.visibleEnemyUnits.find(
+          (e) =>
+            (e.type === UnitType.Submarine || e.type === UnitType.Transport) &&
+            this.wrappedDist(e, unit) <= fMov,
+        );
+        if (strikeTarget) {
+          const launchTile = this.getAdjacentAirTileToward(unit, strikeTarget);
+          if (launchTile) {
+            return { type: 'UNLOAD', unitId: unit.cargo[0], to: launchTile };
+          }
+        }
+
+        // Patrol toward the objective (midpoint between us and the enemy front).
+        const objective = this.attackTarget ?? this.expansionTarget;
+        if (objective) {
+          const m = this.moveToward(obs, unit, objective);
+          if (m) return m;
+        }
+        return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
+      }
+
+      // Empty: return to nearest friendly city to reload fighters.
+      const homeCity = this.nearestCity(obs.myCities, unit);
+      if (homeCity) { const m = this.moveToward(obs, unit, homeCity); if (m) return m; }
+      return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
+    }
+
+    // Generic sea unit fallback
     const target = this.attackTarget ?? this.expansionTarget;
     if (target) { const m = this.moveToward(obs, unit, target); if (m) return m; }
     return this.moveTowardExploration(obs, unit);
@@ -574,50 +632,113 @@ export class BasicAgent implements Agent {
       }
     }
 
-    // ── Bomber: hunt transports, then bomb the densest enemy cluster ─────────
+    // ── Bomber ──────────────────────────────────────────────────────────────
     if (unit.type === UnitType.Bomber) {
-      // Transports are defenceless against air and extremely valuable targets
-      const transport = this.nearestEnemy(
-        obs.visibleEnemyUnits.filter((u) => u.type === UnitType.Transport), unit,
-      );
-      if (transport) return this.moveToward(obs, unit, transport);
+      const bomberMoves = UNIT_STATS[UnitType.Bomber].movesPerTurn;
+      const blastR = obs.myBomberBlastRadius;
 
-      // Find the tile with the most enemy units stacked on it
-      const posCounts = new Map<string, { coord: Coord; count: number }>();
-      for (const u of obs.visibleEnemyUnits) {
-        const k = `${u.x},${u.y}`;
-        const e = posCounts.get(k) ?? { coord: { x: u.x, y: u.y }, count: 0 };
-        e.count++;
-        posCounts.set(k, e);
+      // Return to nearest friendly city if fuel is too low to make a strike
+      if ((unit.fuel ?? bomberMoves) < bomberMoves) {
+        const city = obs.myCities.reduce<CityView | null>((best, c) => {
+          const d = this.wrappedDist(c, unit);
+          return !best || d < this.wrappedDist(best, unit) ? c : best;
+        }, null);
+        if (city) { const m = this.moveToward(obs, unit, city); if (m) return m; }
+        return { type: 'SKIP', unitId: unit.id };
       }
-      const densest = [...posCounts.values()].sort((a, b) => b.count - a.count)[0];
-      if (densest) { const m = this.moveToward(obs, unit, densest.coord); if (m) return m; }
 
-      if (this.attackTarget) { const m = this.moveToward(obs, unit, this.attackTarget); if (m) return m; }
-    }
-
-    // ── Fighter: hunt transports and bombers, then clear air, then support attack ─
-    if (unit.type === UnitType.Fighter) {
-      // Transports and bombers are high-value soft targets
-      for (const prey of [UnitType.Transport, UnitType.Bomber] as UnitType[]) {
-        const t = this.nearestEnemy(obs.visibleEnemyUnits.filter((u) => u.type === prey), unit);
-        if (t) return this.moveToward(obs, unit, t);
-      }
-      // Sweep enemy air units
-      const airTarget = this.nearestEnemy(
-        obs.visibleEnemyUnits.filter((u) => UNIT_STATS[u.type].domain === UnitDomain.Air), unit,
-      );
-      if (airTarget) return this.moveToward(obs, unit, airTarget);
-      // Clear defenders near the attack target
-      if (this.attackTarget) {
-        const nearTargetEnemies = obs.visibleEnemyUnits.filter(
-          (u) => this.wrappedDist(u, this.attackTarget!) <= 3,
-        );
-        const t = this.nearestEnemy(nearTargetEnemies, unit);
-        if (t) return this.moveToward(obs, unit, t);
-        const m = this.moveToward(obs, unit, this.attackTarget);
+      const target = this.findBestBomberTarget(obs, unit, blastR);
+      if (target) {
+        const m = this.moveToward(obs, unit, target);
         if (m) return m;
       }
+
+      // No target visible — stage at the friendly city closest to our attack objective
+      const objective = this.attackTarget ?? this.expansionTarget;
+      if (objective) {
+        const stagingCity = obs.myCities.reduce<CityView | null>((best, c) => {
+          const d = this.wrappedDist(c, objective);
+          return !best || d < this.wrappedDist(best, objective) ? c : best;
+        }, null);
+        if (stagingCity) { const m = this.moveToward(obs, unit, stagingCity); if (m) return m; }
+      }
+    }
+
+    // ── Fighter ──────────────────────────────────────────────────────────────
+    if (unit.type === UnitType.Fighter) {
+      const fMoves = UNIT_STATS[UnitType.Fighter].movesPerTurn;
+
+      // Contested cities: our cities that have enemy units or enemy cities within combat range.
+      const combatR = Math.min(10, Math.floor(this.mapWidth / 5));
+      const contestedOwnCities = obs.myCities.filter((c) =>
+        obs.visibleEnemyUnits.some((e) => this.wrappedDist(e, c) <= combatR) ||
+        obs.visibleEnemyCities.some((e) => e.owner !== null && this.wrappedDist(e, c) <= combatR),
+      );
+
+      // Rule 3: City under immediate threat — enemy land unit within 1 tile of our city.
+      for (const city of obs.myCities) {
+        const threat = obs.visibleEnemyUnits.find(
+          (e) => UNIT_STATS[e.type].domain === UnitDomain.Land && this.wrappedDist(e, city) <= 1,
+        );
+        if (threat && this.wrappedDist(unit, city) <= fMoves) {
+          // Attack the threatening unit directly if we can reach it.
+          const m = this.moveToward(obs, unit, threat);
+          if (m) return m;
+        }
+        if (threat) {
+          // Fly to the city to defend it.
+          const m = this.moveToward(obs, unit, city);
+          if (m) return m;
+        }
+      }
+
+      // Rule 1: Park in a contested city that has no fighter guard yet.
+      // If already stationed at a contested city, guard it and strike from there.
+      const atContested = contestedOwnCities.find((c) => c.x === unit.x && c.y === unit.y);
+      if (atContested) {
+        // Rule 2: Strike valuable targets within range from this city.
+        // Priority: enemy armies threatening any friendly city, then transports, then submarines.
+        for (const city of obs.myCities) {
+          const armyThreat = obs.visibleEnemyUnits.find(
+            (e) => e.type === UnitType.Army && this.wrappedDist(e, city) <= 2 &&
+              this.wrappedDist(e, unit) <= fMoves,
+          );
+          if (armyThreat) { const m = this.moveToward(obs, unit, armyThreat); if (m) return m; }
+        }
+        for (const prey of [UnitType.Transport, UnitType.Submarine, UnitType.Bomber] as UnitType[]) {
+          const t = obs.visibleEnemyUnits.find(
+            (e) => e.type === prey && this.wrappedDist(e, unit) <= fMoves,
+          );
+          if (t) { const m = this.moveToward(obs, unit, t); if (m) return m; }
+        }
+        // No nearby target — hold position.
+        return { type: 'SKIP', unitId: unit.id };
+      }
+
+      // Not yet at a contested city — find one that needs a fighter.
+      const unguarded = contestedOwnCities.find(
+        (c) => !obs.myUnits.some(
+          (u) => u.id !== unit.id && u.type === UnitType.Fighter && u.x === c.x && u.y === c.y,
+        ),
+      );
+      if (unguarded) {
+        const m = this.moveToward(obs, unit, unguarded);
+        if (m) return m;
+      }
+
+      // All contested cities already guarded — board a carrier that needs fighters.
+      const needyCarrier = obs.myUnits.find(
+        (u) => u.type === UnitType.Carrier &&
+          u.cargo.length < UNIT_STATS[UnitType.Carrier].cargoCapacity,
+      );
+      if (needyCarrier) {
+        const m = this.moveToward(obs, unit, needyCarrier);
+        if (m) return m;
+      }
+
+      // Support the nearest contested city.
+      const nearest = this.nearestCity(contestedOwnCities, unit);
+      if (nearest) { const m = this.moveToward(obs, unit, nearest); if (m) return m; }
     }
 
     // Generic fallback: attack nearest visible enemy, or scout
@@ -628,6 +749,57 @@ export class BasicAgent implements Agent {
   }
 
   // ── Helpers ──────────────────────────────────────────────
+
+  /**
+   * Returns the highest-priority bomb target for the given bomber, or null if none found.
+   * Priority:
+   *   1. Enemy city that has enemy units on/near it AND a friendly army within 2 tiles.
+   *   2. Battleship; loaded transport (cargo > 0).
+   *   3. Enemy unit cluster whose total production cost (buildTime) within blastR >= 30.
+   */
+  private findBestBomberTarget(obs: AgentObservation, unit: UnitView, blastR: number): Coord | null {
+    // P1: enemy city defended by enemy units with a friendly army within 2 tiles
+    for (const city of obs.visibleEnemyCities) {
+      if (city.owner === null) continue;
+      const hasDefender = obs.visibleEnemyUnits.some((e) => e.x === city.x && e.y === city.y);
+      if (!hasDefender) continue;
+      const friendlyNear = obs.myUnits.some(
+        (u) => u.type === UnitType.Army && this.wrappedDist(u, city) <= 2,
+      );
+      if (friendlyNear) return { x: city.x, y: city.y };
+    }
+
+    // P2: battleships first, then loaded transports
+    for (const preyType of [UnitType.Battleship, UnitType.Transport] as UnitType[]) {
+      const candidates = obs.visibleEnemyUnits.filter((e) => {
+        if (e.type !== preyType) return false;
+        if (preyType === UnitType.Transport) return (e.cargo?.length ?? 0) > 0;
+        return true;
+      });
+      const t = this.nearestEnemy(candidates, unit);
+      if (t) return { x: t.x, y: t.y };
+    }
+
+    // P3: enemy unit cluster with total production cost >= 30 within blast radius
+    // Evaluate every visible enemy unit as a potential bomb center.
+    let bestCoord: Coord | null = null;
+    let bestCost = 29; // must exceed threshold to qualify
+    for (const center of obs.visibleEnemyUnits) {
+      let cost = 0;
+      for (const e of obs.visibleEnemyUnits) {
+        const dx = wrappedDistX(e.x, center.x, this.mapWidth);
+        const dy = Math.abs(e.y - center.y);
+        if (Math.max(dx, dy) <= blastR) {
+          cost += UNIT_STATS[e.type].buildTime;
+        }
+      }
+      if (cost > bestCost) {
+        bestCost = cost;
+        bestCoord = { x: center.x, y: center.y };
+      }
+    }
+    return bestCoord;
+  }
 
   private findAdjacentEnemy(obs: AgentObservation, unit: UnitView): UnitView | undefined {
     return obs.visibleEnemyUnits.find((e) => {
@@ -776,6 +948,18 @@ export class BasicAgent implements Agent {
   }
 
   /** Returns the adjacent land tile closest to `toward` (or any land tile if toward is null). */
+  private getAdjacentAirTileToward(unit: UnitView, toward: Coord): Coord | null {
+    const adj = this.getAdjacentTiles(unit.x, unit.y);
+    let best: Coord | null = null;
+    let bestDist = Infinity;
+    for (const c of adj) {
+      if (c.y <= 0 || c.y >= this.mapHeight - 1) continue; // no ice caps
+      const d = this.wrappedDist(c, toward);
+      if (d < bestDist) { bestDist = d; best = c; }
+    }
+    return best;
+  }
+
   private getAdjacentLandToward(obs: AgentObservation, unit: UnitView, toward: Coord | null): Coord | null {
     const adj = this.getAdjacentTiles(unit.x, unit.y);
     let best: Coord | null = null;
