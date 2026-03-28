@@ -2,6 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import { UNIT_STATS, UnitType } from '@sc/shared';
 import { useGameStore } from '../store/gameStore';
 
+function bomberLabel(blastRadius: number): string {
+  if (blastRadius >= 2) return 'bomber (mega)';
+  if (blastRadius >= 1) return 'bomber (nuclear)';
+  return 'bomber';
+}
+
 export function UnitPanel() {
   const view = useGameStore((s) => s.view);
   const selectedUnitId = useGameStore((s) => s.selectedUnitId);
@@ -39,7 +45,9 @@ export function UnitPanel() {
       {/* Selected unit detail */}
       {selected && selectedStats && (
         <div className="border-b border-gray-600 pb-2 mb-1">
-          <div className="font-bold text-lg capitalize">{selected.type}</div>
+          <div className="font-bold text-lg capitalize">
+            {selected.type === UnitType.Bomber ? bomberLabel(view.myBomberBlastRadius) : selected.type}
+          </div>
           <div className="text-sm space-y-1">
             <div>HP: {selected.health}/{selectedStats.maxHealth}</div>
             <div>Moves: {selected.movesLeft}/{selectedStats.movesPerTurn}</div>
@@ -133,7 +141,12 @@ export function UnitPanel() {
                     canAct && !carried ? 'bg-green-400' : carried && canAct ? 'bg-blue-400' : 'bg-red-500'
                   }`}
                 />
-                <span className="capitalize truncate">{carried ? `↳ ${u.type}` : u.type}</span>
+                <span className="capitalize truncate">
+                  {(() => {
+                    const label = u.type === UnitType.Bomber ? bomberLabel(view.myBomberBlastRadius) : u.type;
+                    return carried ? `↳ ${label}` : label;
+                  })()}
+                </span>
                 <span className="text-gray-400 ml-auto flex-shrink-0">({u.x},{u.y})</span>
               </button>
             );

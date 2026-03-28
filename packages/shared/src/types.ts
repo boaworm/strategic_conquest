@@ -114,7 +114,7 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
   [UnitType.Transport]: {
     type: UnitType.Transport,
     domain: UnitDomain.Sea,
-    movesPerTurn: 5,
+    movesPerTurn: 4,
     vision: 2,
     maxHealth: 1,
     buildTime: 8,
@@ -138,7 +138,7 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
   [UnitType.Submarine]: {
     type: UnitType.Submarine,
     domain: UnitDomain.Sea,
-    movesPerTurn: 5,
+    movesPerTurn: 4,
     vision: 2,
     maxHealth: 1,
     buildTime: 12,
@@ -162,7 +162,7 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
   [UnitType.Battleship]: {
     type: UnitType.Battleship,
     domain: UnitDomain.Sea,
-    movesPerTurn: 4,
+    movesPerTurn: 5,
     vision: 2,
     maxHealth: 2,
     buildTime: 24,
@@ -291,6 +291,8 @@ export interface PlayerView {
   currentPlayer: PlayerId;
   phase: GamePhase;
   winner: PlayerId | null;
+  /** Blast radius for this player's bombers (0 = single tile, 1 = nuclear, 2 = mega). */
+  myBomberBlastRadius: number;
 }
 
 // ── Actions ──────────────────────────────────────────────────
@@ -335,6 +337,21 @@ export interface CombatResult {
 
 // ── Socket events ────────────────────────────────────────────
 
+/** Sent to the human player in PvE when an enemy unit attacks or captures. */
+export interface EnemyCombatEvent {
+  attackerUnitId: string;
+  attackerType: UnitType;
+  attackerOwner: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  combat: CombatResult | null;
+  cityCaptured: boolean;
+  bomberBlastRadius?: number;
+  bomberBlastCenter?: Coord;
+}
+
 export interface ServerToClientEvents {
   gameStart: (view: PlayerView) => void;
   stateUpdate: (view: PlayerView) => void;
@@ -345,6 +362,8 @@ export interface ServerToClientEvents {
   gamePaused: (data: { reason: string }) => void;
   gameResumed: () => void;
   gameOver: (data: { winner: PlayerId }) => void;
+  /** PvE only: enemy attacked or captured one of the human player's units/cities. */
+  enemyCombat: (data: EnemyCombatEvent) => void;
   error: (data: { message: string }) => void;
 }
 

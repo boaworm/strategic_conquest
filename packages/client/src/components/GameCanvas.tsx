@@ -675,6 +675,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   const setTileSize = useGameStore((s) => s.setTileSize);
 
   const lastActionResult = useGameStore((s) => s.lastActionResult);
+  const lastEnemyCombat = useGameStore((s) => s.lastEnemyCombat);
 
   const mapW = view.tiles[0]?.length ?? 0;
   const mapH = view.tiles.length;
@@ -1478,6 +1479,71 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     // The animation loop will pick it up
   }, [lastActionResult]);
 
+  // ── Enemy combat animation (PvE: AI attacked one of our units/cities) ────
+  useEffect(() => {
+    if (!lastEnemyCombat) return;
+    const {
+      attackerUnitId, attackerType, attackerOwner,
+      fromX, fromY, toX, toY,
+      combat, cityCaptured,
+      bomberBlastRadius, bomberBlastCenter,
+    } = lastEnemyCombat;
+
+    // Center camera on the attack location
+    const { setCamera } = useGameStore.getState();
+    setCamera(toX, toY);
+
+    // City captured without combat (undefended city walk-in)
+    if (cityCaptured && !combat) {
+      playArmorCrashSound();
+      return;
+    }
+
+    // Bomber blast
+    if (bomberBlastRadius !== undefined && bomberBlastCenter) {
+      moveAnimRef.current = null;
+      bomberBlastRef.current = {
+        centerX: bomberBlastCenter.x,
+        centerY: bomberBlastCenter.y,
+        radius: bomberBlastRadius,
+        progress: 0,
+        startTime: performance.now(),
+        phase: 'expanding',
+      };
+      playAttackSound(attackerType);
+      forceRender((n) => n + 1);
+      return;
+    }
+
+    if (!combat) return;
+
+    moveAnimRef.current = null;
+    combatAnimRef.current = {
+      attackerUnitId,
+      attackerType,
+      attackerOwner,
+      fromX,
+      fromY,
+      toX,
+      toY,
+      progress: 0,
+      startTime: performance.now(),
+      result: combat,
+      phase: 'clashing',
+    };
+
+    playAttackSound(attackerType);
+
+    const now = performance.now();
+    if (combat.defenderDamage > 0) {
+      flameHitsRef.current.push({ x: toX, y: toY, startTime: now + CLASH_DURATION + FLASH_DURATION });
+    }
+    if (combat.attackerDamage > 0) {
+      flameHitsRef.current.push({ x: fromX, y: fromY, startTime: now + CLASH_DURATION + FLASH_DURATION });
+    }
+    forceRender((n) => n + 1);
+  }, [lastEnemyCombat]);
+
   // Redraw whenever dependencies change
   useEffect(() => {
     draw();
@@ -1755,7 +1821,11 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         const isNonOwnCity = domain === UnitDomain.Sea &&
           view.tiles[ny]?.[nx]?.terrain === Terrain.Land &&
           !view.myCities.some((c) => c.x === nx && c.y === ny);
-        if (!enemyHere && !isNonOwnCity) queue.push({ x: nx, y: ny });
+        // Air units must not route THROUGH friendly cities (landing stops the unit there);
+        // they may still fly TO a friendly city as the explicit destination.
+        const isAirThroughFriendlyCity = domain === UnitDomain.Air &&
+          view.myCities.some((c) => c.x === nx && c.y === ny);
+        if (!enemyHere && !isNonOwnCity && !isAirThroughFriendlyCity) queue.push({ x: nx, y: ny });
       }
     }
 

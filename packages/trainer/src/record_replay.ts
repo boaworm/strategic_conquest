@@ -1,110 +1,97 @@
 /**
  * Records N BasicAgent vs BasicAgent games and saves each as a replay file.
+ * Runs across WORKERS parallel child processes using a pool — each slot claims
+ * one game at a time so workers stay busy until the exact target is reached.
  *
  * Usage:
  *   npm run record
- *   NUM_GAMES=10 npm run record
- *   NUM_GAMES=20 MAP_WIDTH=50 MAP_HEIGHT=20 npm run record
+ *   NUM_GAMES=50 WORKERS=8 npm run record
+ *   NUM_GAMES=20 MAP_WIDTH=50 MAP_HEIGHT=20 REPLAY_DIR=./tmp npm run record
  */
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
-import { randomUUID } from 'crypto';
-import {
-  createGameState,
-  applyAction,
-  getPlayerView,
-  BasicAgent,
-} from '@sc/shared';
-import type { AgentAction } from '@sc/shared';
-import { snapshotGame, type ReplayMeta } from './replayUtils.js';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 
 const NUM_GAMES  = parseInt(process.env.NUM_GAMES  ?? '5');
+const WORKERS    = parseInt(process.env.WORKERS    ?? String(os.cpus().length));
 const MAP_WIDTH  = parseInt(process.env.MAP_WIDTH  ?? '50');
 const MAP_HEIGHT = parseInt(process.env.MAP_HEIGHT ?? '20');
 const MAX_TURNS  = parseInt(process.env.MAX_TURNS  ?? '500');
 const REPLAY_DIR = process.env.REPLAY_DIR ?? '../../tmp';
 
-const MAX_ACTIONS_PER_TURN = 500;
+// Use compiled JS worker to avoid tsx startup overhead on every child process
+const workerScript = fileURLToPath(new URL('../dist/record_worker.js', import.meta.url));
+const tmpDir = path.join(REPLAY_DIR, '.record-tmp');
 
-fs.mkdirSync(REPLAY_DIR, { recursive: true });
-console.log(`Recording ${NUM_GAMES} game(s) → ${REPLAY_DIR}`);
+function spawnWorker(slotId: number, gameNum: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [workerScript], {
+      env: {
+        ...process.env,
+        WORKER_ID:  String(slotId),
+        GAME_NUM:   String(gameNum),
+        NUM_GAMES:  '1',
+        MAP_WIDTH:  String(MAP_WIDTH),
+        MAP_HEIGHT: String(MAP_HEIGHT),
+        MAX_TURNS:  String(MAX_TURNS),
+        REPLAY_DIR: REPLAY_DIR,
+        TMP_DIR:    tmpDir,
+      },
+      stdio: ['ignore', 'ignore', 'inherit'],
+    });
 
-for (let g = 0; g < NUM_GAMES; g++) {
-  const id = randomUUID();
+    child.on('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Worker slot ${slotId} (game ${gameNum}) exited with code ${code}`));
+    });
 
-  let state;
-  try {
-    state = createGameState({ width: MAP_WIDTH, height: MAP_HEIGHT });
-  } catch {
-    console.log(`  Game ${g + 1}: map generation failed, skipping`);
-    continue;
-  }
-
-  const agents: Record<string, BasicAgent> = {
-    player1: new BasicAgent(),
-    player2: new BasicAgent(),
-  };
-  agents.player1.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
-  agents.player2.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
-
-  const frames: ReturnType<typeof snapshotGame>[] = [snapshotGame(state)];
-  let prevTurn = state.turn;
-  let actionsThisTurn = 0;
-  let prevPlayer = state.currentPlayer;
-
-  while (state.winner === null && state.turn <= MAX_TURNS) {
-    const pid = state.currentPlayer as 'player1' | 'player2';
-    if (pid !== prevPlayer) { actionsThisTurn = 0; prevPlayer = pid; }
-
-    const view = getPlayerView(state, pid);
-    const action: AgentAction = agents[pid].act({ ...view, myPlayerId: pid } as any);
-
-    const res = applyAction(state, action, pid);
-    if (!res.success) {
-      if (state.turn > 20) {
-        console.log(`  [REJECTED] turn=${state.turn} ${pid} → ${JSON.stringify(action)} | reason: ${res.error}`);
-      }
-      applyAction(state, { type: 'END_TURN' }, pid);
-      actionsThisTurn = 0;
-    } else if (action.type === 'END_TURN') {
-      actionsThisTurn = 0;
-    } else {
-      actionsThisTurn++;
-      if (actionsThisTurn >= MAX_ACTIONS_PER_TURN) {
-        applyAction(state, { type: 'END_TURN' }, pid);
-        actionsThisTurn = 0;
-      }
-    }
-
-    if (state.turn !== prevTurn) {
-      frames.push(snapshotGame(state));
-      prevTurn = state.turn;
-    }
-  }
-
-  if (state.winner !== null && frames[frames.length - 1].turn !== state.turn) {
-    frames.push(snapshotGame(state));
-  }
-
-  const p1Cities = state.cities.filter((c) => c.owner === 'player1').length;
-  const p2Cities = state.cities.filter((c) => c.owner === 'player2').length;
-  const neutral  = state.cities.filter((c) => c.owner === null).length;
-
-  const meta: ReplayMeta = {
-    id,
-    recordedAt: new Date().toISOString(),
-    turns: state.turn,
-    winner: state.winner,
-    p1Cities,
-    p2Cities,
-    neutralCities: neutral,
-    mapWidth: state.mapWidth,
-    mapHeight: state.mapHeight,
-    frames: frames.length,
-  };
-
-  fs.writeFileSync(path.join(REPLAY_DIR, `${id}.json`), JSON.stringify({ meta, tiles: state.tiles, frames }));
-  console.log(`  Game ${g + 1}: [${id.slice(0, 8)}] turns=${state.turn} winner=${state.winner ?? 'draw'} p1=${p1Cities} p2=${p2Cities} neutral=${neutral}`);
+    child.on('error', (err) => {
+      reject(new Error(`Worker slot ${slotId} failed to start: ${err.message}`));
+    });
+  });
 }
 
-console.log(`\nDone. Run "npm run replay" to view.`);
+async function main(): Promise<void> {
+  fs.mkdirSync(REPLAY_DIR, { recursive: true });
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  const concurrency = Math.min(WORKERS, NUM_GAMES);
+  console.log(`Recording ${NUM_GAMES} game(s) across ${concurrency} worker(s) → ${REPLAY_DIR}`);
+
+  const t0 = Date.now();
+  let nextGame = 0;      // claimed game count (JS single-thread: no race between awaits)
+  let totalCompleted = 0;
+  let totalSkipped = 0;
+
+  async function runSlot(slotId: number): Promise<void> {
+    while (nextGame < NUM_GAMES) {
+      const gameNum = ++nextGame;  // claim before first await — safe in single-threaded JS event loop
+      await spawnWorker(slotId, gameNum);
+
+      try {
+        const r = JSON.parse(fs.readFileSync(path.join(tmpDir, `result-${slotId}.json`), 'utf-8'));
+        totalCompleted += r.completed;
+        totalSkipped   += r.skipped;
+      } catch { /* worker may have crashed before writing result */ }
+
+      const done = totalCompleted + totalSkipped;
+      const pct  = Math.floor((done / NUM_GAMES) * 100);
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      console.log(`${pct}% (${done}/${NUM_GAMES} games, ${elapsed}s)`);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: concurrency }, (_, i) => runSlot(i)),
+  );
+
+  fs.rmSync(tmpDir, { recursive: true });
+
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+  console.log(`\nDone in ${elapsed}s — ${totalCompleted} replays recorded, ${totalSkipped} skipped`);
+  console.log(`Run "npm run replay" to view.`);
+}
+
+main().catch((err) => { console.error(err); process.exit(1); });

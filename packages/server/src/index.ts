@@ -184,6 +184,42 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // PvE: capture attacker info BEFORE applying action (positions change after).
+    // Used to emit enemyCombat to the human player and pace AI actions.
+    type EnemyCombatCapture = {
+      humanId: PlayerId;
+      attackerUnitId: string;
+      attackerType: import('@sc/shared').UnitType;
+      attackerOwner: string;
+      fromX: number; fromY: number;
+      toX: number; toY: number;
+    };
+    let enemyCombatCapture: EnemyCombatCapture | null = null;
+    if (!session.isAiVsAi && action.type === 'MOVE' && session.playerTypes.get(playerId) === 'ai') {
+      const attackerUnit = session.state.units.find((u) => u.id === action.unitId);
+      const humanId: PlayerId = playerId === 'player1' ? 'player2' : 'player1';
+      if (attackerUnit) {
+        const hasDefender = session.state.units.some(
+          (u) => u.x === action.to.x && u.y === action.to.y && u.owner === humanId,
+        );
+        const hasCity = session.state.cities.some(
+          (c) => c.x === action.to.x && c.y === action.to.y && c.owner === humanId,
+        );
+        if (hasDefender || hasCity) {
+          enemyCombatCapture = {
+            humanId,
+            attackerUnitId: attackerUnit.id,
+            attackerType: attackerUnit.type,
+            attackerOwner: attackerUnit.owner,
+            fromX: attackerUnit.x,
+            fromY: attackerUnit.y,
+            toX: action.to.x,
+            toY: action.to.y,
+          };
+        }
+      }
+    }
+
     const result = manager.processAction(session, playerId, action);
 
     if (!result.success) {
@@ -197,18 +233,50 @@ io.on('connection', (socket) => {
       io.to(sid).emit('actionResult', result);
     }
 
-    // Send updated view to all connected players
+    // Check for game over
+    if (session.state.phase === (GamePhase.Finished as GamePhase) && session.state.winner) {
+      io.to(gameId).emit('gameOver', { winner: session.state.winner });
+    }
+
+    // PvE enemy combat: send human the event + updated view immediately,
+    // delay stateUpdate to AI so it pauses while the human watches the animation.
+    const ANIM_DELAY_MS = 2000;
+    if (
+      enemyCombatCapture &&
+      (result.combat || result.cityCaptured || result.bomberBlastRadius !== undefined)
+    ) {
+      const { humanId, ...combatData } = enemyCombatCapture;
+      const humanView = manager.getPlayerView(session, humanId);
+      const humanSockets = session.sockets.get(humanId)!;
+      for (const sid of humanSockets) {
+        io.to(sid).emit('enemyCombat', {
+          ...combatData,
+          combat: result.combat ?? null,
+          cityCaptured: !!result.cityCaptured,
+          bomberBlastRadius: result.bomberBlastRadius,
+          bomberBlastCenter: result.bomberBlastCenter,
+        });
+        io.to(sid).emit('stateUpdate', humanView);
+      }
+
+      // AI gets its stateUpdate after the animation delay
+      const aiSocketIds = Array.from(actorSockets);
+      const aiView = manager.getPlayerView(session, playerId);
+      setTimeout(() => {
+        for (const sid of aiSocketIds) {
+          io.to(sid).emit('stateUpdate', aiView);
+        }
+      }, ANIM_DELAY_MS);
+      return;
+    }
+
+    // Normal: send updated view to all players
     for (const pid of ['player1', 'player2'] as PlayerId[]) {
       const view = manager.getPlayerView(session, pid);
       const sockets = session.sockets.get(pid)!;
       for (const sid of sockets) {
         io.to(sid).emit('stateUpdate', view);
       }
-    }
-
-    // Check for game over
-    if (session.state.phase === (GamePhase.Finished as GamePhase) && session.state.winner) {
-      io.to(gameId).emit('gameOver', { winner: session.state.winner });
     }
   });
 

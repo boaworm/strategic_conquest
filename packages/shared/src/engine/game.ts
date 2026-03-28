@@ -174,20 +174,38 @@ function handleMove(
     // Pick a random defender from the enemies present
     const defender = enemyUnits[Math.floor(Math.random() * enemyUnits.length)];
 
-    // Bomber: if attacking a city that has defending fighters, fight each interceptor
-    // (bomber uses attack 1, fighter uses its normal defense 4) before dropping the bomb.
-    // If the bomber is shot down, no bomb is dropped. Otherwise it bombs and is destroyed.
+    // Bomber: check for intercepting fighters anywhere in the blast area.
+    // If interceptors are present, the bomber fights them instead of bombing.
+    // Bomber survives → it has "attacked" and flies back (not destroyed, no bomb dropped).
+    // Bomber destroyed → no bomb.
+    // No interceptors → bomb drops, kills random 3–5 enemy units, bomber is destroyed.
     if (unit.type === UnitType.Bomber) {
-      const cityAtTarget = state.cities.find((c) => c.x === target.x && c.y === target.y);
-      const interceptors = enemyUnits.filter((u) => u.type === UnitType.Fighter);
+      const blastRadius = getBomberBlastRadius(state, playerId);
+      const affectedTiles = getTilesInRadius(target.x, target.y, blastRadius, state.mapWidth, state.mapHeight);
 
-      if (cityAtTarget && interceptors.length > 0) {
+      // Gather all enemy fighters in the blast area
+      const interceptors = affectedTiles.flatMap((pos) =>
+        state.units.filter(
+          (u) => u.x === pos.x && u.y === pos.y && u.owner !== playerId &&
+                 u.type === UnitType.Fighter && u.carriedBy === null,
+        ),
+      );
+
+      if (interceptors.length > 0) {
+        let lastInterceptCombat = {
+          attackerId: unit.id,
+          defenderId: interceptors[0].id,
+          attackerDamage: 0,
+          defenderDamage: 0,
+          attackerDestroyed: false,
+          defenderDestroyed: false,
+        };
         for (const fighter of interceptors) {
           const bomberHits = Math.floor(Math.random() * 6) + 1 <= 1; // bomber attack = 1
           const fighterHits = Math.floor(Math.random() * 6) + 1 <= UNIT_STATS[fighter.type].defense;
           if (bomberHits) fighter.health--;
           if (fighterHits) unit.health--;
-          const interceptCombat = {
+          lastInterceptCombat = {
             attackerId: unit.id,
             defenderId: fighter.id,
             attackerDamage: fighterHits ? 1 : 0,
@@ -198,59 +216,43 @@ function handleMove(
           removeDestroyedUnits(state);
           if (unit.health <= 0) {
             checkWinCondition(state);
-            return { success: true, combat: interceptCombat };
+            return { success: true, combat: lastInterceptCombat };
           }
         }
-        // Bomber survived all interceptors — drop the bomb
-        const blastRadius = getBomberBlastRadius(state, playerId);
-        const affectedTiles = getTilesInRadius(target.x, target.y, blastRadius, state.mapWidth, state.mapHeight);
-        for (const pos of affectedTiles) {
-          const unitsOnTile = state.units.filter(
-            (u) => u.x === pos.x && u.y === pos.y && u.carriedBy === null && u.id !== unit.id,
-          );
-          for (const u of unitsOnTile) {
-            if (blastRadius === 0 && u.owner === playerId) continue;
-            u.health = 0;
-          }
-        }
-        unit.health = 0;
-        const bombCombat = {
-          attackerId: unit.id,
-          defenderId: interceptors[interceptors.length - 1].id,
-          attackerDamage: 1,
-          defenderDamage: 0,
-          attackerDestroyed: true,
-          defenderDestroyed: true,
-        };
-        removeDestroyedUnits(state);
-        checkWinCondition(state);
-        return { success: true, combat: bombCombat, bomberBlastRadius: blastRadius, bomberBlastCenter: target };
+        // Bomber survived — intercepted, no bomb; bomber flies back alive
+        unit.movesLeft = 0;
+        unit.hasAttacked = true;
+        return { success: true, combat: lastInterceptCombat };
       }
 
-      // No city or no interceptors — instant bomb as usual
-      const blastRadius = getBomberBlastRadius(state, playerId);
-      const affectedTiles = getTilesInRadius(target.x, target.y, blastRadius, state.mapWidth, state.mapHeight);
-      for (const pos of affectedTiles) {
-        const unitsOnTile = state.units.filter(
-          (u) => u.x === pos.x && u.y === pos.y && u.carriedBy === null && u.id !== unit.id,
-        );
-        for (const u of unitsOnTile) {
-          if (blastRadius === 0 && u.owner === playerId) continue;
-          u.health = 0;
-        }
+      // No interceptors — drop the bomb; kill random 3–5 enemy units in blast area
+      const enemiesInArea = affectedTiles.flatMap((pos) =>
+        state.units.filter(
+          (u) => u.x === pos.x && u.y === pos.y && u.owner !== playerId &&
+                 u.carriedBy === null && u.id !== unit.id,
+        ),
+      );
+      // Fisher-Yates shuffle then pick up to 3–5
+      const killCount = Math.min(enemiesInArea.length, Math.floor(Math.random() * 3) + 3);
+      for (let i = enemiesInArea.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [enemiesInArea[i], enemiesInArea[j]] = [enemiesInArea[j], enemiesInArea[i]];
+      }
+      for (let i = 0; i < killCount; i++) {
+        enemiesInArea[i].health = 0;
       }
       unit.health = 0;
-      const combat = {
+      const bombCombat = {
         attackerId: unit.id,
-        defenderId: defender.id,
+        defenderId: (enemiesInArea[0] ?? defender).id,
         attackerDamage: 1,
         defenderDamage: 0,
         attackerDestroyed: true,
-        defenderDestroyed: true,
+        defenderDestroyed: killCount > 0,
       };
       removeDestroyedUnits(state);
       checkWinCondition(state);
-      return { success: true, combat, bomberBlastRadius: blastRadius, bomberBlastCenter: target };
+      return { success: true, combat: bombCombat, bomberBlastRadius: blastRadius, bomberBlastCenter: target };
     }
 
     // Normal combat with the selected defender
@@ -875,6 +877,7 @@ export function getPlayerView(
     currentPlayer: state.currentPlayer,
     phase: state.phase,
     winner: state.winner,
+    myBomberBlastRadius: getBomberBlastRadius(state, playerId),
   };
 }
 

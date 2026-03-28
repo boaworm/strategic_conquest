@@ -4,6 +4,7 @@ import type {
   PlayerView,
   GameAction,
   ActionResult,
+  EnemyCombatEvent,
   PlayerId,
   CreateGameResponse,
   ServerToClientEvents,
@@ -20,6 +21,7 @@ interface GameStore {
   // Game state (fog-of-war filtered)
   view: PlayerView | null;
   lastActionResult: ActionResult | null;
+  lastEnemyCombat: EnemyCombatEvent | null;
   error: string | null;
   gamePaused: boolean;
 
@@ -70,6 +72,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   playerId: null,
   view: null,
   lastActionResult: null,
+  lastEnemyCombat: null,
   error: null,
   gamePaused: false,
   socket: null,
@@ -224,6 +227,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ error: data.reason });
     });
 
+    socket.on('enemyCombat', (data: EnemyCombatEvent) => {
+      set({ lastEnemyCombat: data });
+    });
+
     socket.on('gamePaused', () => {
       set({ gamePaused: true });
     });
@@ -256,6 +263,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       playerId: null,
       error: null,
       gamePaused: false,
+      lastEnemyCombat: null,
       selectedUnitId: null,
     });
   },
