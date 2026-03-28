@@ -107,15 +107,14 @@ export class BasicAgent implements Agent {
     } else {
       this.expansionTarget = null;
       const enemyCities = obs.visibleEnemyCities.filter((c) => c.owner !== null);
-      // Keep attackTarget stable if still visible (avoid oscillating)
-      if (
-        this.attackTarget &&
-        enemyCities.some((c) => c.x === this.attackTarget!.x && c.y === this.attackTarget!.y)
-      ) {
-        // keep existing
-      } else {
-        this.attackTarget = this.nearestCity(enemyCities, center);
+      if (enemyCities.length > 0) {
+        // We can see enemy cities — update target unless current one is still visible.
+        if (!this.attackTarget || !enemyCities.some((c) => c.x === this.attackTarget!.x && c.y === this.attackTarget!.y)) {
+          this.attackTarget = this.nearestCity(enemyCities, center);
+        }
       }
+      // If no enemy cities visible, keep the last known attackTarget — the transport
+      // may simply be out of view range and should keep heading toward it.
     }
   }
 
@@ -438,40 +437,33 @@ export class BasicAgent implements Agent {
 
       // ── STEP 2: Delivering — navigate to contested island and drop armies ─────
       if (unit.cargo.length > 0) {
+        // Best delivery target: nearest visible enemy city, then any contested city,
+        // then last-known attack/expansion target (persisted across turns even when out of view).
+        const contestedCities = [...obs.myCities, ...obs.visibleEnemyCities].filter(
+          (c) => isContested(c.x, c.y),
+        );
+        const deliveryTarget =
+          this.nearestCity(obs.visibleEnemyCities, unit) ??
+          this.nearestCity(contestedCities, unit) ??
+          this.expansionTarget ??
+          this.attackTarget;
+
+        // Unload if we're next to contested land and cargo armies have moves.
         const cargoUnit = obs.myUnits.find((u) => u.id === unit.cargo[0]);
-        const canUnload = cargoUnit && cargoUnit.movesLeft > 0;
-
-        // Unload when adjacent land is on a CONTESTED island.
-        if (canUnload) {
-          const contestedCities = [...obs.myCities, ...obs.visibleEnemyCities].filter(
-            (c) => isContested(c.x, c.y),
-          );
-          const deliveryTarget =
-            this.nearestCity(obs.visibleEnemyCities, unit) ??
-            this.nearestCity(contestedCities, unit) ??
-            this.expansionTarget ??
-            this.attackTarget;
-
+        if (cargoUnit && cargoUnit.movesLeft > 0) {
           const adjLand = this.getAdjacentLandToward(obs, unit, deliveryTarget);
           if (adjLand && isContested(adjLand.x, adjLand.y)) {
             return { type: 'UNLOAD', unitId: unit.cargo[0], to: adjLand };
           }
-
-          if (deliveryTarget) {
-            const move = this.moveToward(obs, unit, deliveryTarget);
-            if (move) return move;
-          }
         }
 
-        // Cargo aboard but can't unload yet — keep moving or explore.
-        const deliveryTarget =
-          this.nearestCity(obs.visibleEnemyCities, unit) ??
-          this.expansionTarget ??
-          this.attackTarget;
+        // Keep moving toward the delivery target regardless of cargo move state.
         if (deliveryTarget) {
           const move = this.moveToward(obs, unit, deliveryTarget);
           if (move) return move;
         }
+
+        // No known target at all — explore until we find one.
         return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
       }
 
