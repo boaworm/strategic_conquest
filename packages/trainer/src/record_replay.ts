@@ -1,12 +1,14 @@
 /**
- * Records N BasicAgent vs BasicAgent games and saves each as a replay file.
+ * Records N agent-vs-agent games and saves each as a replay file.
  * Runs across WORKERS parallel child processes using a pool — each slot claims
  * one game at a time so workers stay busy until the exact target is reached.
  *
  * Usage:
  *   npm run record
  *   NUM_GAMES=50 WORKERS=8 npm run record
- *   NUM_GAMES=20 MAP_WIDTH=50 MAP_HEIGHT=20 REPLAY_DIR=./tmp npm run record
+ *   NUM_GAMES=20 MAX_TURNS=300 P1_AGENT=basicAgent P2_AGENT=gunAirAgent npm run record
+ *
+ * Agent names (case-insensitive): basicAgent, gunAirAgent, adamAI
  */
 import fs from 'fs';
 import os from 'os';
@@ -20,6 +22,8 @@ const MAP_WIDTH  = parseInt(process.env.MAP_WIDTH  ?? '50');
 const MAP_HEIGHT = parseInt(process.env.MAP_HEIGHT ?? '20');
 const MAX_TURNS  = parseInt(process.env.MAX_TURNS  ?? '500');
 const REPLAY_DIR = process.env.REPLAY_DIR ?? '../../tmp';
+const P1_AGENT   = process.env.P1_AGENT ?? process.env.P1AGENT ?? 'basicAgent';
+const P2_AGENT   = process.env.P2_AGENT ?? process.env.P2AGENT ?? 'basicAgent';
 
 // Use compiled JS worker to avoid tsx startup overhead on every child process
 const workerScript = fileURLToPath(new URL('../dist/record_worker.js', import.meta.url));
@@ -38,6 +42,8 @@ function spawnWorker(slotId: number, gameNum: number): Promise<void> {
         MAX_TURNS:  String(MAX_TURNS),
         REPLAY_DIR: REPLAY_DIR,
         TMP_DIR:    tmpDir,
+        P1_AGENT:   P1_AGENT,
+        P2_AGENT:   P2_AGENT,
       },
       stdio: ['ignore', 'ignore', 'inherit'],
     });
@@ -59,6 +65,7 @@ async function main(): Promise<void> {
 
   const concurrency = Math.min(WORKERS, NUM_GAMES);
   console.log(`Recording ${NUM_GAMES} game(s) across ${concurrency} worker(s) → ${REPLAY_DIR}`);
+  console.log(`  p1=${P1_AGENT}  p2=${P2_AGENT}`);
 
   const t0 = Date.now();
   let nextGame = 0;      // claimed game count (JS single-thread: no race between awaits)

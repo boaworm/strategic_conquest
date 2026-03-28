@@ -74,7 +74,7 @@ Blast radius upgrades automatically as a player produces more Bombers cumulative
 | 10–19           | 1 (3×3 area)    | *bomber (nuclear)* | Hits target + all adjacent tiles         |
 | 20+             | 2 (5×5 area)    | *bomber (mega)*    | Hits target + two rings of adjacent tiles |
 
-If enemy Fighters are anywhere inside the blast area, they intercept the Bomber before it drops its payload. The Bomber survives interception but does not bomb. If no intercept occurs, the bomb kills a random 3–5 enemy units in the blast area.
+If enemy Fighters are anywhere inside the blast area, they intercept the Bomber before it drops its payload. Each Fighter gets one interception roll; if the Bomber survives all of them it flies back without bombing. If no Fighters are present, the bomb drops and kills **all** enemy units in the blast area — the Bomber is destroyed with them.
 
 ---
 
@@ -367,7 +367,7 @@ All trainer commands are run from `packages/trainer/`. The `collect` and `record
 
 ### Game Recording (`npm run record`)
 
-Records complete BasicAgent vs BasicAgent games and saves each as a JSON replay file. Runs across multiple parallel worker processes — defaults to one worker per logical CPU.
+Records agent-vs-agent games and saves each as a JSON replay file. Runs across multiple parallel worker processes — defaults to one worker per logical CPU.
 
 ```bash
 # Record 5 games (default), auto-detect CPU count for workers
@@ -378,6 +378,9 @@ NUM_GAMES=100 WORKERS=8 npm run record
 
 # Custom map size and output location
 NUM_GAMES=50 MAP_WIDTH=60 MAP_HEIGHT=40 REPLAY_DIR=./replays npm run record
+
+# Pit two different agents against each other
+NUM_GAMES=20 MAX_TURNS=300 P1AGENT=basicAgent P2AGENT=gunAirAgent npm run record
 ```
 
 **Environment variables:**
@@ -390,6 +393,18 @@ NUM_GAMES=50 MAP_WIDTH=60 MAP_HEIGHT=40 REPLAY_DIR=./replays npm run record
 | `MAP_HEIGHT`| `20`            | Map height in tiles (playable rows; ice caps add 2 more) |
 | `MAX_TURNS` | `500`           | Maximum turns before declaring a draw                    |
 | `REPLAY_DIR`| `../../tmp`     | Directory to write replay JSON files into                |
+| `P1AGENT`   | `basicAgent`    | Agent for player 1 (see agent names below)               |
+| `P2AGENT`   | `basicAgent`    | Agent for player 2 (see agent names below)               |
+
+**Agent names** (case-insensitive, underscore form `P1_AGENT` also accepted):
+
+| Name          | Class         | Description                                      |
+|---------------|--------------|--------------------------------------------------|
+| `basicAgent`  | `BasicAgent`  | Full-featured greedy agent with expansion, combat, and naval/air logic |
+| `gunAirAgent` | `GunAirAgent` | Skeleton agent — random army moves, random production; easy benchmark  |
+| `adamAI`      | `AdamAI`      | Genetic-algorithm evolved agent                  |
+
+The agent name is stored in each replay's metadata and shown in `npm run replay` listings so matchups are always visible.
 
 Workers are spawned as compiled Node.js processes (`dist/record_worker.js`). Each worker writes its games directly to `REPLAY_DIR` as individual `<uuid>.json` files. Progress is reported as a percentage in the coordinator's stdout.
 

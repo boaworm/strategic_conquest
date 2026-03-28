@@ -56,7 +56,8 @@ metas.forEach((m, i) => {
   const date = m.recordedAt.slice(0, 19).replace('T', ' ');
   const winner = m.winner ?? 'draw';
   const gameLabel = m.gameNum != null ? `game ${m.gameNum}` : m.id.slice(0, 8);
-  console.log(`  ${i + 1}. [${gameLabel}] ${date}  turns=${m.turns}  winner=${winner}  p1=${m.p1Cities} p2=${m.p2Cities} neutral=${m.neutralCities}`);
+  const matchup = m.p1Agent && m.p2Agent ? `  [${m.p1Agent} vs ${m.p2Agent}]` : '';
+  console.log(`  ${i + 1}. [${gameLabel}] ${date}  turns=${m.turns}  winner=${winner}  p1=${m.p1Cities} p2=${m.p2Cities} neutral=${m.neutralCities}${matchup}`);
 });
 
 // ── Interactive pick ──────────────────────────────────────────

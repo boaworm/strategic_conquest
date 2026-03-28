@@ -2,6 +2,9 @@
  * Worker process for parallel replay recording.
  * Config comes from environment variables; progress written to tmp/progress-N.txt.
  * Each completed game is written directly as a JSON file to REPLAY_DIR.
+ *
+ * P1_AGENT / P2_AGENT — agent name for each player (default: basicAgent).
+ * Supported values: basicAgent, gunAirAgent, adamAI
  */
 import fs from 'fs';
 import path from 'path';
@@ -11,8 +14,10 @@ import {
   applyAction,
   getPlayerView,
   BasicAgent,
+  GunAirAgent,
+  AdamAI,
 } from '@sc/shared';
-import type { AgentAction } from '@sc/shared';
+import type { Agent, AgentAction } from '@sc/shared';
 import { snapshotGame, type ReplayMeta } from './replayUtils.js';
 
 const workerId  = parseInt(process.env.WORKER_ID!);
@@ -23,8 +28,25 @@ const mapHeight = parseInt(process.env.MAP_HEIGHT!);
 const maxTurns  = parseInt(process.env.MAX_TURNS!);
 const replayDir = process.env.REPLAY_DIR!;
 const tmpDir    = process.env.TMP_DIR!;
+const p1AgentName = process.env.P1_AGENT ?? process.env.P1AGENT ?? 'basicAgent';
+const p2AgentName = process.env.P2_AGENT ?? process.env.P2AGENT ?? 'basicAgent';
 
 const MAX_ACTIONS_PER_TURN = 500;
+
+function makeAgent(name: string): Agent {
+  switch (name.toLowerCase()) {
+    case 'gunairagent':
+    case 'gunair':
+      return new GunAirAgent();
+    case 'adamai':
+    case 'adam':
+      return new AdamAI();
+    case 'basicagent':
+    case 'basic':
+    default:
+      return new BasicAgent();
+  }
+}
 
 fs.mkdirSync(replayDir, { recursive: true });
 
@@ -34,7 +56,7 @@ function writeProgress(game: number): void {
   fs.writeFileSync(progressFile, String(game));
 }
 
-process.stderr.write(`[W${workerId}] started — ${numGames} games\n`);
+process.stderr.write(`[W${workerId}] started — ${numGames} games (p1=${p1AgentName} p2=${p2AgentName})\n`);
 
 let completed = 0;
 let skipped = 0;
@@ -49,9 +71,9 @@ for (let g = 0; g < numGames; g++) {
     continue;
   }
 
-  const agents: Record<string, BasicAgent> = {
-    player1: new BasicAgent(),
-    player2: new BasicAgent(),
+  const agents: Record<string, Agent> = {
+    player1: makeAgent(p1AgentName),
+    player2: makeAgent(p2AgentName),
   };
   agents.player1.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
   agents.player2.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
@@ -109,6 +131,8 @@ for (let g = 0; g < numGames; g++) {
     mapWidth: state.mapWidth,
     mapHeight: state.mapHeight,
     frames: frames.length,
+    p1Agent: p1AgentName,
+    p2Agent: p2AgentName,
   };
 
   fs.writeFileSync(path.join(replayDir, `${id}.json`), JSON.stringify({ meta, tiles: state.tiles, frames }));

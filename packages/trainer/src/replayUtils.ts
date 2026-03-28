@@ -12,6 +12,8 @@ export interface ReplayMeta {
   mapWidth: number;
   mapHeight: number;
   frames: number;
+  p1Agent?: string;
+  p2Agent?: string;
 }
 
 export interface ReplayFrame {
