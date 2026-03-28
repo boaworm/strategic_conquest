@@ -12,6 +12,8 @@
     "build": "npm run build --workspace=packages/shared && npm run build --workspace=packages/client",
     "start": "npm run build && npx tsx packages/server/src/index.ts",
     "dev": "npm run build && npx tsx watch packages/server/src/index.ts",
-    "test": "npm test --workspaces --if-present"
+    "test": "npm test --workspaces --if-present",
+    "record": "npm run record --workspace=packages/trainer",
+    "replay": "npm run replay --workspace=packages/trainer"
   }
 }

@@ -7,3 +7,4 @@ export { applyAction, getPlayerView, isCityCoastal } from './engine/game.js';
 export { canMoveTo, canDetectSubmarine, getVisibleTiles, getUnitsAt, normalizeCoord, distToNearestFriendlyCity, distToNearestLandingSpot } from './engine/movement.js';
 export { resolveCombat, removeDestroyedUnits } from './engine/combat.js';
 export { advanceProduction, setProduction } from './engine/production.js';
+export { playerViewToTensor, NUM_CHANNELS } from './engine/tensorUtils.js';

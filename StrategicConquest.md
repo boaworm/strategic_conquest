@@ -53,19 +53,28 @@ Eliminate all enemy cities and units. The last player with cities standing wins.
 
 ## Unit Types
 
-| Unit         | Moves/Turn | Vision | Health | Builds In | Domain       | Notes                                      |
-|--------------|-----------|--------|--------|-----------|--------------|--------------------------------------------|
-| Army         | 1         | 1      | 1      | 5 turns   | Land         | Captures cities; can be carried by transport |
-| Fighter      | 8         | 2      | 1      | 10 turns  | Air          | Can land on carrier or city; fuel limited  |
-| Bomber       | 6         | 2      | 2      | 12 turns  | Air          | Long range; high attack; fuel limited      |
-| Transport    | 5         | 1      | 2      | 10 turns  | Sea          | Carries up to 6 armies; unarmed            |
-| Destroyer    | 6         | 2      | 3      | 10 turns  | Sea          | Fast; anti-sub capable                     |
-| Submarine    | 5         | 2      | 2      | 12 turns  | Sea (hidden) | Invisible unless adjacent to destroyer    |
-| Cruiser      | 5         | 3      | 8      | 18 turns  | Sea          | Shore bombardment                          |
-| Carrier      | 5         | 4      | 8      | 20 turns  | Sea          | Carries up to 4 fighters                  |
-| Battleship   | 4         | 3      | 12     | 24 turns  | Sea          | Strongest sea unit; shore bombardment      |
+| Unit       | Moves/Turn | Vision | Health | Builds In | Domain | Notes                                                        |
+|------------|-----------|--------|--------|-----------|--------|--------------------------------------------------------------|
+| Army       | 1         | 1      | 1      | 5 turns   | Land   | Captures cities; can be carried by Transport                 |
+| Fighter    | 10        | 3      | 1      | 12 turns  | Air    | Must land on city or Carrier each turn; intercepts Bombers   |
+| Bomber     | 15        | 3      | 1      | 15 turns  | Air    | Area-of-effect attack; fuel limited (30); see blast radius below |
+| Transport  | 4         | 2      | 1      | 8 turns   | Sea    | Carries up to 6 Armies; unarmed                              |
+| Destroyer  | 6         | 2      | 1      | 12 turns  | Sea    | Fast escort; anti-sub capable                                |
+| Submarine  | 4         | 2      | 1      | 12 turns  | Sea    | Hidden unless adjacent to Destroyer                          |
+| Carrier    | 5         | 2      | 2      | 18 turns  | Sea    | Carries up to 4 Fighters; light attack                       |
+| Battleship | 5         | 2      | 2      | 24 turns  | Sea    | Strongest sea unit; high attack and defence                  |
 
-> Numbers are approximate/classic values — can be tuned during balancing.
+### Bomber Blast Radius
+
+Blast radius upgrades automatically as a player produces more Bombers cumulatively:
+
+| Bombers produced | Blast radius | Label in UI        | Effect                                    |
+|-----------------|-------------|--------------------------------|--------------------------------------------|
+| 0–9             | 0 (single tile) | *bomber*          | Hits target tile only                     |
+| 10–19           | 1 (3×3 area)    | *bomber (nuclear)* | Hits target + all adjacent tiles         |
+| 20+             | 2 (5×5 area)    | *bomber (mega)*    | Hits target + two rings of adjacent tiles |
+
+If enemy Fighters are anywhere inside the blast area, they intercept the Bomber before it drops its payload. The Bomber survives interception but does not bomb. If no intercept occurs, the bomb kills a random 3–5 enemy units in the blast area.
 
 ---
 
@@ -349,6 +358,88 @@ npx trainer --pop 200 --gens 500 --watch
 ### Champion Export
 
 After training, the champion genome is saved as `champion.json`. The `evolvedAgent.ts` module reads this file and implements the `Agent` interface — making it a drop-in replacement for the in-game AI with no further changes.
+
+---
+
+## Trainer Tools
+
+All trainer commands are run from `packages/trainer/`. The `collect` and `record` scripts rebuild `packages/shared` first so worker processes always use fresh compiled code.
+
+### Game Recording (`npm run record`)
+
+Records complete BasicAgent vs BasicAgent games and saves each as a JSON replay file. Runs across multiple parallel worker processes — defaults to one worker per logical CPU.
+
+```bash
+# Record 5 games (default), auto-detect CPU count for workers
+npm run record
+
+# Record 100 games across 8 workers
+NUM_GAMES=100 WORKERS=8 npm run record
+
+# Custom map size and output location
+NUM_GAMES=50 MAP_WIDTH=60 MAP_HEIGHT=40 REPLAY_DIR=./replays npm run record
+```
+
+**Environment variables:**
+
+| Variable    | Default          | Description                                              |
+|-------------|-----------------|----------------------------------------------------------|
+| `NUM_GAMES` | `5`             | Total number of games to record                          |
+| `WORKERS`   | CPU core count  | Number of parallel worker processes                      |
+| `MAP_WIDTH` | `50`            | Map width in tiles                                       |
+| `MAP_HEIGHT`| `20`            | Map height in tiles (playable rows; ice caps add 2 more) |
+| `MAX_TURNS` | `500`           | Maximum turns before declaring a draw                    |
+| `REPLAY_DIR`| `../../tmp`     | Directory to write replay JSON files into                |
+
+Workers are spawned as compiled Node.js processes (`dist/record_worker.js`). Each worker writes its games directly to `REPLAY_DIR` as individual `<uuid>.json` files. Progress is reported as a percentage in the coordinator's stdout.
+
+### Replay Viewer (`npm run replay`)
+
+Interactive terminal picker to browse and play back recorded games.
+
+```bash
+npm run replay
+
+# Point at a specific replay directory
+REPLAY_DIR=./replays npm run replay
+```
+
+Reads all `.json` files from `REPLAY_DIR`, displays a list sorted by date, and lets you step through turns to inspect the game state.
+
+### Imitation Learning Data Collection (`npm run collect`)
+
+Records game states and agent actions for neural network training. Writes a binary tensor file (`states.bin`), action labels (`actions.jsonl`), and metadata (`meta.json`).
+
+```bash
+# Collect 50 000 games across 8 workers into ./data
+NUM_GAMES=50000 WORKERS=8 OUTPUT_DIR=./data npm run collect
+
+# Smaller test run
+NUM_GAMES=1000 WORKERS=4 npm run collect
+```
+
+**Environment variables:**
+
+| Variable              | Default   | Description                                              |
+|-----------------------|----------|----------------------------------------------------------|
+| `NUM_GAMES`           | `1000`   | Total games to simulate                                  |
+| `WORKERS`             | `1`      | Number of parallel worker processes                      |
+| `OUTPUT_DIR`          | `./data` | Output directory for `states.bin`, `actions.jsonl`, `meta.json` |
+| `MAP_WIDTH`           | `50`     | Map width                                                |
+| `MAP_HEIGHT`          | `20`     | Map height                                               |
+| `MAX_TURNS`           | `500`    | Max turns per game                                       |
+| `MAX_SAMPLES_PER_GAME`| `3000`   | Reservoir sample cap per game (Algorithm R)              |
+
+Workers write per-worker binary chunks to a temp directory; the coordinator merges them into the final output files and deletes the temp dir on completion.
+
+### Parallelism Model
+
+Both `record` and `collect` use the same pattern:
+
+1. Coordinator (`record_replay.ts` / `collect_data.ts`) splits `NUM_GAMES` evenly across `WORKERS`
+2. Each worker is a compiled Node.js child process (`dist/record_worker.js` / `dist/collect_worker.js`) — no `tsx` startup overhead
+3. Workers report progress by writing a game count to `tmp/progress-N.txt`; the coordinator polls these files once per second and prints `%` progress
+4. The coordinator waits for all workers via `Promise.all`, then merges/summarises output
 
 ---
 

@@ -20,9 +20,15 @@ export function resolveCombat(
   const aStats = UNIT_STATS[attacker.type];
   const dStats = UNIT_STATS[defender.type];
 
+  // Submarines get power 4 vs Transports
+  let effectiveAttack = aStats.attack;
+  if (attacker.type === UnitType.Submarine && defender.type === UnitType.Transport) {
+    effectiveAttack = 4;
+  }
+
   // Attacker rolls
   const attackerRoll = Math.floor(Math.random() * 6) + 1;
-  const attackerHits = attackerRoll <= aStats.attack;
+  const attackerHits = attackerRoll <= effectiveAttack;
   // Defender rolls (suppressed for submarine attacker or shore bombardment)
   const defenderRoll = Math.floor(Math.random() * 6) + 1;
   const defenderHits =

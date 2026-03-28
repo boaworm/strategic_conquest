@@ -5,6 +5,7 @@ import { UnitPanel } from './components/UnitPanel';
 import { CityDialog } from './components/CityDialog';
 import { HUD } from './components/HUD';
 import { MainMenu } from './components/MainMenu';
+import { ReplayViewer } from './components/ReplayViewer';
 import { GamePhase } from '@sc/shared';
 
 export default function App() {
@@ -12,17 +13,24 @@ export default function App() {
   const connected = useGameStore((s) => s.connected);
   const playerId = useGameStore((s) => s.playerId);
   const [cityDialogId, setCityDialogId] = useState<string | null>(null);
+  const replayParam = new URLSearchParams(window.location.search).get('replay');
+  const [showReplay, setShowReplay] = useState(!!replayParam);
 
   // Derive city from live view so it always reflects server state
   const cityDialog = cityDialogId
     ? view?.myCities.find((c) => c.id === cityDialogId) ?? null
     : null;
 
+  // Replay viewer
+  if (showReplay) {
+    return <ReplayViewer onBack={() => setShowReplay(false)} initialId={replayParam ?? undefined} />;
+  }
+
   // Not connected — show main menu
   if (!connected || !view) {
     return (
       <div className="min-h-screen bg-gray-950">
-        <MainMenu />
+        <MainMenu onViewReplay={() => setShowReplay(true)} />
         {connected && !view && (
           <div className="text-center text-gray-400 mt-8">
             Waiting for opponent to join...

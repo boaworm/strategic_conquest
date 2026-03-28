@@ -100,7 +100,6 @@ function playFighterAttack() {
 /** Rifle fire — rapid burst crackling for 2s */
 function playRifleAttack() {
   const ctx = getCtx();
-  const duration = 2;
   const t0 = ctx.currentTime;
 
   // Crackle bursts
@@ -133,7 +132,6 @@ function playRifleAttack() {
 /** Sonar ping — classic ping with echo for 2s */
 function playSonarAttack() {
   const ctx = getCtx();
-  const duration = 2;
   const t0 = ctx.currentTime;
 
   for (let i = 0; i < 2; i++) {
@@ -250,7 +248,190 @@ export function playCityCaptureFanfare(): void {
   }
 }
 
-/** Play the appropriate attack sound for a unit type. */
+export function playArmorCrashSound(): void {
+  const ctx = getCtx();
+  const t0 = ctx.currentTime;
+  const duration = 1.2;
+
+  // Heavy metal crunch + explosion
+  const bufSize = Math.floor(ctx.sampleRate * duration);
+  const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) d[i] = Math.random() * 2 - 1;
+
+  const noise = ctx.createBufferSource();
+  noise.buffer = buf;
+
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(800, t0);
+  lp.frequency.exponentialRampToValueAtTime(100, t0 + duration);
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.8, t0);
+  gain.gain.exponentialRampToValueAtTime(0.01, t0 + duration);
+
+  // Sub-bass thump
+  const osc = ctx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(80, t0);
+  osc.frequency.exponentialRampToValueAtTime(30, t0 + duration);
+  
+  const oscGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(0.6, t0);
+  oscGain.gain.exponentialRampToValueAtTime(0.01, t0 + duration);
+
+  noise.connect(lp).connect(gain).connect(ctx.destination);
+  osc.connect(oscGain).connect(ctx.destination);
+  
+  noise.start(t0);
+  noise.stop(t0 + duration);
+  osc.start(t0);
+  osc.stop(t0 + duration);
+}
+
+// ── Movement sounds ──────────────────────────────────────────
+
+/** Short march thud — army movement (~0.35s) */
+function playArmyMove() {
+  const ctx = getCtx();
+  const t0 = ctx.currentTime;
+  const dur = 0.35;
+
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(110, t0);
+  osc.frequency.exponentialRampToValueAtTime(40, t0 + dur);
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.25, t0);
+  gain.gain.exponentialRampToValueAtTime(0.01, t0 + dur);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + dur);
+
+  // Boot crunch
+  const bufSize = Math.floor(ctx.sampleRate * 0.08);
+  const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) d[i] = Math.random() * 2 - 1;
+  const noise = ctx.createBufferSource();
+  noise.buffer = buf;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 350;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.12, t0);
+  ng.gain.exponentialRampToValueAtTime(0.01, t0 + 0.08);
+  noise.connect(lp).connect(ng).connect(ctx.destination);
+  noise.start(t0);
+  noise.stop(t0 + 0.08);
+}
+
+/** Short jet whoosh — fighter movement (~0.4s) */
+function playFighterMove() {
+  const ctx = getCtx();
+  const t0 = ctx.currentTime;
+  const dur = 0.4;
+
+  const bufSize = Math.floor(ctx.sampleRate * dur);
+  const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) d[i] = Math.random() * 2 - 1;
+  const noise = ctx.createBufferSource();
+  noise.buffer = buf;
+
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.setValueAtTime(2000, t0);
+  bp.frequency.exponentialRampToValueAtTime(400, t0 + dur);
+  bp.Q.value = 3;
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.01, t0);
+  gain.gain.linearRampToValueAtTime(0.25, t0 + 0.08);
+  gain.gain.exponentialRampToValueAtTime(0.01, t0 + dur);
+
+  noise.connect(bp).connect(gain).connect(ctx.destination);
+  noise.start(t0);
+  noise.stop(t0 + dur);
+}
+
+/** Heavy prop drone — bomber movement (~0.4s) */
+function playBomberMove() {
+  const ctx = getCtx();
+  const t0 = ctx.currentTime;
+  const dur = 0.4;
+
+  const osc = ctx.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(75, t0);
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 250;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.01, t0);
+  gain.gain.linearRampToValueAtTime(0.18, t0 + 0.1);
+  gain.gain.exponentialRampToValueAtTime(0.01, t0 + dur);
+  osc.connect(lp).connect(gain).connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + dur);
+}
+
+/** Water churn — movement sound for all naval units (~0.45s) */
+function playNavalMove() {
+  const ctx = getCtx();
+  const t0 = ctx.currentTime;
+  const dur = 0.45;
+
+  const bufSize = Math.floor(ctx.sampleRate * dur);
+  const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) d[i] = Math.random() * 2 - 1;
+  const noise = ctx.createBufferSource();
+  noise.buffer = buf;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(700, t0);
+  lp.frequency.exponentialRampToValueAtTime(180, t0 + dur);
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.01, t0);
+  gain.gain.linearRampToValueAtTime(0.18, t0 + 0.12);
+  gain.gain.exponentialRampToValueAtTime(0.01, t0 + dur);
+  noise.connect(lp).connect(gain).connect(ctx.destination);
+  noise.start(t0);
+  noise.stop(t0 + dur);
+
+  // Low hull groan
+  const hullOsc = ctx.createOscillator();
+  hullOsc.type = 'sine';
+  hullOsc.frequency.setValueAtTime(55, t0);
+  hullOsc.frequency.linearRampToValueAtTime(42, t0 + dur);
+  const hullGain = ctx.createGain();
+  hullGain.gain.setValueAtTime(0.08, t0);
+  hullGain.gain.exponentialRampToValueAtTime(0.01, t0 + dur);
+  hullOsc.connect(hullGain).connect(ctx.destination);
+  hullOsc.start(t0);
+  hullOsc.stop(t0 + dur);
+}
+
+/** Play movement sound for the given unit type. Naval units all share one sound. */
+export function playMoveSound(unitType: UnitType): void {
+  switch (unitType) {
+    case UnitType.Army:
+      playArmyMove();
+      break;
+    case UnitType.Fighter:
+      playFighterMove();
+      break;
+    case UnitType.Bomber:
+      playBomberMove();
+      break;
+    default: // Transport, Destroyer, Submarine, Carrier, Battleship
+      playNavalMove();
+      break;
+  }
+}
+
 /** Crash sound — descending whine + impact for stranded fighters (~1.5s) */
 export function playCrashSound(): void {
   const ctx = getCtx();
@@ -299,8 +480,7 @@ export function playAttackSound(unitType: UnitType): void {
     case UnitType.Fighter:
       playFighterAttack();
       break;
-    case UnitType.Infantry:
-    case UnitType.Tank:
+    case UnitType.Army:
       playRifleAttack();
       break;
     case UnitType.Submarine:

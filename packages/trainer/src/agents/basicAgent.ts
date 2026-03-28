@@ -54,12 +54,12 @@ export class BasicAgent implements Agent {
   }
 
   private chooseProduction(obs: AgentObservation, _city: CityView): UnitType {
-    const armyCount = obs.myUnits.filter((u) => u.type === UnitType.Infantry).length;
+    const armyCount = obs.myUnits.filter((u) => u.type === UnitType.Army).length;
     const cityCount = obs.myCities.length;
 
     // Early game: build armies to expand
     if (armyCount < cityCount * 2 + 3) {
-      return UnitType.Infantry;
+      return UnitType.Army;
     }
 
     // Mix in naval units when we have enough armies
@@ -78,7 +78,7 @@ export class BasicAgent implements Agent {
     }
 
     // Default to infantry
-    return UnitType.Infantry;
+    return UnitType.Army;
   }
 
   private requiresNavalApproach(obs: AgentObservation, target: CityView): boolean {
@@ -148,7 +148,7 @@ export class BasicAgent implements Agent {
       // Look for armies to load (same tile or adjacent)
       const armyToLoad = obs.myUnits.find(
         (u) =>
-          u.type === UnitType.Infantry &&
+          u.type === UnitType.Army &&
           u.carriedBy === null &&
           unit.cargo.length < stats.cargoCapacity &&
           u.movesLeft > 0 &&
@@ -210,34 +210,56 @@ export class BasicAgent implements Agent {
 
   private bestStepToward(obs: AgentObservation, unit: UnitView, target: Coord): Coord | null {
     const stats = UNIT_STATS[unit.type];
-    const candidates = this.getAdjacentTiles(unit.x, unit.y);
-    let bestDist = Infinity;
-    let bestCoord: Coord | null = null;
+    const allCities = [...obs.myCities, ...obs.visibleEnemyCities];
 
-    for (const c of candidates) {
-      if (c.y < 0 || c.y >= this.mapHeight) continue;
-
-      const tile = obs.tiles[c.y]?.[c.x];
-      if (!tile) continue;
-
-      // Check terrain compatibility
-      if (stats.domain === UnitDomain.Land && tile.terrain === Terrain.Ocean) continue;
-      if (stats.domain === UnitDomain.Sea && tile.terrain === Terrain.Land) {
-        // Sea units can enter city tiles — check if there's a city
-        const hasCity = [...obs.myCities, ...obs.visibleEnemyCities].some(
-          (ct) => ct.x === c.x && ct.y === c.y,
-        );
-        if (!hasCity) continue;
+    const canEnter = (x: number, y: number): boolean => {
+      if (y < 0 || y >= this.mapHeight) return false;
+      const tile = obs.tiles[y]?.[x];
+      if (!tile) return false; // unexplored — treat as blocked
+      if (stats.domain === UnitDomain.Land) return tile.terrain === Terrain.Land;
+      if (stats.domain === UnitDomain.Sea) {
+        if (tile.terrain === Terrain.Ocean) return true;
+        // Land tile allowed only if it has a city (port)
+        return allCities.some((c) => c.x === x && c.y === y);
       }
+      return true; // air
+    };
 
-      const dist = this.wrappedDist(c, target);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestCoord = c;
+    // BFS — find first step on shortest path to target
+    const key = (x: number, y: number) => `${x},${y}`;
+    const visited = new Set<string>();
+    visited.add(key(unit.x, unit.y));
+
+    // Each queue entry: [x, y, firstStep]
+    const queue: Array<{ x: number; y: number; first: Coord | null }> = [
+      { x: unit.x, y: unit.y, first: null },
+    ];
+
+    const dirs = [
+      { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+      { x: -1, y: 0 },                    { x: 1, y: 0 },
+      { x: -1, y: 1 },  { x: 0, y: 1 },  { x: 1, y: 1 },
+    ];
+
+    const MAX_VISITED = 800;
+    while (queue.length > 0 && visited.size < MAX_VISITED) {
+      const cur = queue.shift()!;
+      for (const d of dirs) {
+        const nx = wrapX(cur.x + d.x, this.mapWidth);
+        const ny = cur.y + d.y;
+        const k = key(nx, ny);
+        if (visited.has(k)) continue;
+        visited.add(k);
+
+        const firstStep = cur.first ?? { x: nx, y: ny };
+
+        if (nx === target.x && ny === target.y) return firstStep;
+        if (!canEnter(nx, ny)) continue;
+        queue.push({ x: nx, y: ny, first: firstStep });
       }
     }
 
-    return bestCoord;
+    return null;
   }
 
   private moveTowardExploration(obs: AgentObservation, unit: UnitView): AgentAction | null {

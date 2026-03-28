@@ -174,33 +174,79 @@ function handleMove(
     // Pick a random defender from the enemies present
     const defender = enemyUnits[Math.floor(Math.random() * enemyUnits.length)];
 
-    // Bomber: destroy units in blast radius, bomber is always destroyed
+    // Bomber: check for intercepting fighters anywhere in the blast area.
+    // If interceptors are present, the bomber fights them instead of bombing.
+    // Bomber survives → it has "attacked" and flies back (not destroyed, no bomb dropped).
+    // Bomber destroyed → no bomb.
+    // No interceptors → bomb drops, kills ALL enemy units in blast area, bomber is destroyed.
     if (unit.type === UnitType.Bomber) {
       const blastRadius = getBomberBlastRadius(state, playerId);
-      // Destroy all units (enemy AND friendly if radius > 0) in affected tiles
       const affectedTiles = getTilesInRadius(target.x, target.y, blastRadius, state.mapWidth, state.mapHeight);
-      for (const pos of affectedTiles) {
-        const unitsOnTile = state.units.filter(
-          (u) => u.x === pos.x && u.y === pos.y && u.carriedBy === null && u.id !== unit.id,
-        );
-        for (const u of unitsOnTile) {
-          // Radius 0: only enemies. Radius 1+: everyone (friendly and enemy)
-          if (blastRadius === 0 && u.owner === playerId) continue;
-          u.health = 0;
+
+      // Gather all enemy fighters in the blast area
+      const interceptors = affectedTiles.flatMap((pos) =>
+        state.units.filter(
+          (u) => u.x === pos.x && u.y === pos.y && u.owner !== playerId &&
+                 u.type === UnitType.Fighter && u.carriedBy === null,
+        ),
+      );
+
+      if (interceptors.length > 0) {
+        let lastInterceptCombat = {
+          attackerId: unit.id,
+          defenderId: interceptors[0].id,
+          attackerDamage: 0,
+          defenderDamage: 0,
+          attackerDestroyed: false,
+          defenderDestroyed: false,
+        };
+        for (const fighter of interceptors) {
+          const bomberHits = Math.floor(Math.random() * 6) + 1 <= 1; // bomber attack = 1
+          const fighterHits = Math.floor(Math.random() * 6) + 1 <= UNIT_STATS[fighter.type].defense;
+          if (bomberHits) fighter.health--;
+          if (fighterHits) unit.health--;
+          lastInterceptCombat = {
+            attackerId: unit.id,
+            defenderId: fighter.id,
+            attackerDamage: fighterHits ? 1 : 0,
+            defenderDamage: bomberHits ? 1 : 0,
+            attackerDestroyed: unit.health <= 0,
+            defenderDestroyed: fighter.health <= 0,
+          };
+          removeDestroyedUnits(state);
+          if (unit.health <= 0) {
+            checkWinCondition(state);
+            return { success: true, combat: lastInterceptCombat };
+          }
         }
+        // Bomber survived — intercepted, no bomb; bomber flies back alive
+        unit.movesLeft = 0;
+        unit.hasAttacked = true;
+        return { success: true, combat: lastInterceptCombat };
+      }
+
+      // No interceptors — drop the bomb; kill ALL enemy units in blast area, bomber is destroyed
+      const enemiesInArea = affectedTiles.flatMap((pos) =>
+        state.units.filter(
+          (u) => u.x === pos.x && u.y === pos.y && u.owner !== playerId &&
+                 u.carriedBy === null && u.id !== unit.id,
+        ),
+      );
+      for (const enemy of enemiesInArea) {
+        enemy.health = 0;
       }
       unit.health = 0;
-      const combat = {
+      const bombCombat = {
         attackerId: unit.id,
-        defenderId: defender.id,
+        defenderId: (enemiesInArea[0] ?? defender).id,
         attackerDamage: 1,
         defenderDamage: 0,
         attackerDestroyed: true,
-        defenderDestroyed: true,
+        defenderDestroyed: enemiesInArea.length > 0,
       };
       removeDestroyedUnits(state);
       checkWinCondition(state);
-      return { success: true, combat, bomberBlastRadius: blastRadius, bomberBlastCenter: target };
+      return { success: true, combat: bombCombat, bomberBlastRadius: blastRadius, bomberBlastCenter: target };
     }
 
     // Normal combat with the selected defender
@@ -239,11 +285,11 @@ function handleMove(
         }
 
         // Check for city capture (armies only)
-        const cityCaptured = tryCaptureCity(state, unit, playerId);
+        const captureResult = tryCaptureCity(state, unit, playerId);
         unit.movesLeft--;
         unit.hasAttacked = true;
         checkWinCondition(state);
-        return { success: true, combat, cityCaptured: cityCaptured ?? undefined };
+        return { success: true, combat, cityCaptured: captureResult.captured ?? undefined, cityCaptureFailed: captureResult.failed };
       }
       // Attacker survived but defenders remain — stay put
       unit.movesLeft--;
@@ -320,8 +366,8 @@ function handleMove(
   }
 
   // Check for city capture
-  const cityCaptured = tryCaptureCity(state, unit, playerId);
-  return { success: true, cityCaptured: cityCaptured ?? undefined };
+  const captureResult = tryCaptureCity(state, unit, playerId);
+  return { success: true, cityCaptured: captureResult.captured ?? undefined, cityCaptureFailed: captureResult.failed };
 }
 
 function handleSkip(
@@ -366,19 +412,32 @@ function handleDisband(
 
 function tryCaptureCity(
   state: GameState,
-  unit: { type: string; x: number; y: number; owner: string },
+  unit: import('../types.js').Unit,
   playerId: PlayerId,
-): string | null {
-  if (unit.type !== 'infantry' && unit.type !== 'tank') return null;
+): { captured: string | null; failed?: boolean } {
+  if (unit.type !== 'army' as string) return { captured: null };
   const city = state.cities.find((c) => c.x === unit.x && c.y === unit.y);
-  if (!city) return null;
-  if (city.owner === playerId) return null;
+  if (!city) return { captured: null };
+  if (city.owner === playerId) return { captured: null };
 
+  const isNeutral = city.owner === null;
+  const winChance = isNeutral ? 0.7 : 0.5;
+
+  if (Math.random() >= winChance) {
+    // City defense succeeds (attack fails). Army is destroyed.
+    unit.health = 0;
+    removeDestroyedUnits(state);
+    return { captured: null, failed: true };
+  }
+
+  // Attack succeeds. Army is consumed to capture the city.
   city.owner = playerId;
   city.producing = null;
   city.productionTurnsLeft = 0;
   city.productionProgress = 0;
-  return city.id;
+  unit.health = 0;
+  removeDestroyedUnits(state);
+  return { captured: city.id };
 }
 
 /**
@@ -393,7 +452,9 @@ export function isCityCoastal(
       if (dx === 0 && dy === 0) continue;
       const nx = wrapX(city.x + dx, state.mapWidth);
       const ny = city.y + dy;
-      if (ny >= 0 && ny < state.mapHeight && state.tiles[ny][nx] === Terrain.Ocean) {
+      // Exclude ice cap rows — transports cannot enter y=0 or y=mapHeight-1,
+      // so ocean there does not make a city usable as a port.
+      if (ny > 0 && ny < state.mapHeight - 1 && state.tiles[ny][nx] === Terrain.Ocean) {
         return true;
       }
     }
@@ -512,15 +573,54 @@ function handleUnload(
     return { success: false, error: check.error };
   }
 
+  // Check for enemy units at the landing tile before moving in
+  const enemiesAtTarget = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
+
+  if (enemiesAtTarget.length > 0) {
+    if (unit.hasAttacked) {
+      unit.carriedBy = transport.id;
+      return { success: false, error: 'Already attacked this turn' };
+    }
+
+    const defender = enemiesAtTarget[Math.floor(Math.random() * enemiesAtTarget.length)];
+    const combat = resolveCombat(state, unit, defender);
+    removeDestroyedUnits(state);
+
+    if (combat.attackerDestroyed) {
+      // Unit lost — it's already removed from state; transport.cargo cleaned up by removeDestroyedUnits
+      checkWinCondition(state);
+      return { success: true, combat };
+    }
+
+    const remaining = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
+    if (remaining.length > 0) {
+      // Survived but tile is not clear — stay in the transport
+      unit.carriedBy = transport.id;
+      unit.movesLeft--;
+      unit.hasAttacked = true;
+      checkWinCondition(state);
+      return { success: true, combat };
+    }
+
+    // Tile is clear — land the unit
+    unit.x = target.x;
+    unit.y = target.y;
+    unit.movesLeft--;
+    unit.hasAttacked = true;
+    transport.cargo = transport.cargo.filter((id) => id !== unit.id);
+    const captureResult = tryCaptureCity(state, unit, playerId);
+    checkWinCondition(state);
+    return { success: true, combat, cityCaptured: captureResult.captured ?? undefined, cityCaptureFailed: captureResult.failed };
+  }
+
+  // No enemies — land and try to capture
   unit.x = target.x;
   unit.y = target.y;
   unit.movesLeft--;
   transport.cargo = transport.cargo.filter((id) => id !== unit.id);
-
-  // Check for city capture
-  const cityCaptured = tryCaptureCity(state, unit, playerId);
+  const captureResult = tryCaptureCity(state, unit, playerId);
   checkWinCondition(state);
-  return { success: true, cityCaptured: cityCaptured ?? undefined };
+  return { success: true, cityCaptured: captureResult.captured ?? undefined, cityCaptureFailed: captureResult.failed };
 }
 
 function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
@@ -773,6 +873,7 @@ export function getPlayerView(
     currentPlayer: state.currentPlayer,
     phase: state.phase,
     winner: state.winner,
+    myBomberBlastRadius: getBomberBlastRadius(state, playerId),
   };
 }
 

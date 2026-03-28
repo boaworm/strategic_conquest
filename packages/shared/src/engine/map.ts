@@ -48,6 +48,12 @@ export interface MapOptions {
  * `height` is the number of *playable* rows. Two extra rows are added
  * automatically for the north and south ice caps, so the actual tile
  * grid is height + 2 rows tall.
+ *
+ * Guarantees:
+ * - At least 3 islands (MIN_ISLANDS)
+ * - Each island has at least 3 cities (MIN_ISLAND_CITIES)
+ * - Cities on the same island are at least 4 tiles apart (Chebyshev, MIN_CITY_DIST)
+ * - Cities on different islands have no minimum distance requirement
  */
 export function generateMap(opts: MapOptions): {
   tiles: Terrain[][];
@@ -60,189 +66,297 @@ export function generateMap(opts: MapOptions): {
     height,
     seed = Date.now(),
     landRatio = 0.35,
-    cityCount = 15,
   } = opts;
 
   // Add 2 rows for ice caps (north pole at y=0, south pole at y=totalHeight-1)
   const totalHeight = height + 2;
 
-  const rng = mulberry32(seed);
+  // Scale all constraints with map area so small maps (30×10) and large maps (80×30) both work.
+  const mapArea = width * height;
 
-  // Init all ocean (totalHeight rows)
-  const tiles: Terrain[][] = Array.from({ length: totalHeight }, () =>
-    Array.from({ length: width }, () => Terrain.Ocean),
+  const MIN_ISLANDS = 3;
+
+  // Small/medium maps need a lower city-distance threshold so cities can fit on compact islands.
+  // Strict constraints only kick in on large maps (area ≥ 1500, e.g. 60×25).
+  const MIN_CITY_DIST = mapArea < 1500 ? 3 : 4;
+
+  // Small/medium maps only require 2 cities per island; large maps require 3.
+  const MIN_ISLAND_CITIES = mapArea < 1500 ? 2 : 3;
+
+  // Island must be large enough to comfortably hold MIN_ISLAND_CITIES cities.
+  // ~2% of map area, minimum 6 tiles.
+  // 30×10→6, 50×20→20, 80×30→48
+  const MIN_ISLAND_SIZE = Math.max(6, Math.floor(mapArea * 0.02));
+
+  // Total cities scales with map size: roughly one per 30 tiles, bounded [8, 30].
+  const cityCount = opts.cityCount ?? Math.min(30, Math.max(8, Math.floor(mapArea / 30)));
+
+  type CityConfig = { x: number; y: number; owner: PlayerId | null };
+
+  // Retry with shifted seeds until constraints are satisfied
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const rng = mulberry32(seed + attempt * 7919);
+
+    // Init all ocean (totalHeight rows)
+    const tiles: Terrain[][] = Array.from({ length: totalHeight }, () =>
+      Array.from({ length: width }, () => Terrain.Ocean),
+    );
+
+    // Generate land blobs (only in the playable area, rows 1..totalHeight-2)
+    const targetLand = Math.floor(width * height * landRatio);
+    let landCount = 0;
+
+    const blobCount = 6 + Math.floor(rng() * 6);
+    const blobCenters: Coord[] = [];
+
+    for (let i = 0; i < blobCount; i++) {
+      const cx = Math.floor(rng() * width);
+      const cy = 1 + Math.floor(rng() * height);
+      blobCenters.push({ x: cx, y: cy });
+    }
+
+    while (landCount < targetLand) {
+      for (const center of blobCenters) {
+        if (landCount >= targetLand) break;
+
+        let x = center.x;
+        let y = center.y;
+        const steps = 10 + Math.floor(rng() * 30);
+
+        for (let s = 0; s < steps && landCount < targetLand; s++) {
+          x = wrapX(x, width);
+          if (x >= 0 && x < width && y >= 1 && y <= totalHeight - 2) {
+            if (tiles[y][x] === Terrain.Ocean) {
+              tiles[y][x] = Terrain.Land;
+              landCount++;
+            }
+          }
+          const dir = Math.floor(rng() * 4);
+          if (dir === 0) x++;
+          else if (dir === 1) x--;
+          else if (dir === 2) y++;
+          else y--;
+        }
+      }
+    }
+
+    // Remove lakes: ocean tiles not connected to the main ocean (ice cap rows).
+    // Lakes confuse coastal-city detection and make ships appear to have port
+    // access where none actually exists.
+    removeLakes(tiles, width, totalHeight);
+
+    // Find all islands and remove those too small to support MIN_ISLAND_CITIES cities.
+    // This also removes single-tile islands.
+    const allIslands = findIslandTiles(tiles, width, totalHeight);
+    for (const island of allIslands) {
+      if (island.length < MIN_ISLAND_SIZE) {
+        for (const t of island) tiles[t.y][t.x] = Terrain.Ocean;
+      }
+    }
+
+    const validIslands = allIslands.filter(island => island.length >= MIN_ISLAND_SIZE);
+    if (validIslands.length < MIN_ISLANDS) continue;
+
+    // Build tile -> island index lookup
+    const tileIslandMap = new Map<string, number>();
+    for (let i = 0; i < validIslands.length; i++) {
+      for (const tile of validIslands[i]) {
+        tileIslandMap.set(`${tile.x},${tile.y}`, i);
+      }
+    }
+
+    const posKey = (c: { x: number; y: number }) => `${c.x},${c.y}`;
+    const getIslandIdx = (x: number, y: number) => tileIslandMap.get(`${x},${y}`);
+
+    const chebyshev = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      Math.max(wrappedDistX(a.x, b.x, width), Math.abs(a.y - b.y));
+
+    // Cities on the same island must be at least MIN_CITY_DIST apart.
+    // Cities on different islands have no minimum distance constraint.
+    const isTooClose = (pos: { x: number; y: number }, existingCities: CityConfig[]) => {
+      const posIsland = getIslandIdx(pos.x, pos.y);
+      if (posIsland === undefined) return false;
+      return existingCities.some(c => {
+        const cityIsland = getIslandIdx(c.x, c.y);
+        if (cityIsland !== posIsland) return false;
+        return chebyshev(pos, c) < MIN_CITY_DIST;
+      });
+    };
+
+    // Shuffle tiles within each island independently
+    const shuffledIslandTiles: Coord[][] = validIslands.map(island => {
+      const shuffled = [...island];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled;
+    });
+
+    const cityConfigs: CityConfig[] = [];
+    const usedPositions = new Set<string>();
+
+    // Place Player 1 on island 0
+    let p1Start: Coord | null = null;
+    for (const tile of shuffledIslandTiles[0]) {
+      if (!isTooClose(tile, cityConfigs)) {
+        p1Start = tile;
+        break;
+      }
+    }
+    if (!p1Start) continue;
+    cityConfigs.push({ x: p1Start.x, y: p1Start.y, owner: 'player1' });
+    usedPositions.add(posKey(p1Start));
+
+    // Place Player 2 on a different island, maximizing distance from Player 1
+    let p2Start: Coord | null = null;
+    let maxDist = -1;
+    for (let i = 1; i < validIslands.length; i++) {
+      for (const tile of shuffledIslandTiles[i]) {
+        if (isTooClose(tile, cityConfigs)) continue;
+        const dist = wrappedDistX(p1Start.x, tile.x, width) + Math.abs(p1Start.y - tile.y);
+        if (dist > maxDist) {
+          maxDist = dist;
+          p2Start = tile;
+        }
+      }
+    }
+    if (!p2Start) continue;
+    cityConfigs.push({ x: p2Start.x, y: p2Start.y, owner: 'player2' });
+    usedPositions.add(posKey(p2Start));
+
+    // Ensure each island has at least MIN_ISLAND_CITIES cities total
+    let valid = true;
+    for (let i = 0; i < validIslands.length; i++) {
+      const existing = cityConfigs.filter(c => getIslandIdx(c.x, c.y) === i);
+      let needed = MIN_ISLAND_CITIES - existing.length;
+
+      for (const tile of shuffledIslandTiles[i]) {
+        if (needed <= 0) break;
+        if (usedPositions.has(posKey(tile))) continue;
+        if (isTooClose(tile, cityConfigs)) continue;
+        cityConfigs.push({ x: tile.x, y: tile.y, owner: null });
+        usedPositions.add(posKey(tile));
+        needed--;
+      }
+
+      if (needed > 0) {
+        valid = false;
+        break;
+      }
+    }
+    if (!valid) continue;
+
+    // Place remaining neutral cities up to cityCount, spread across all islands
+    const allTiles = shuffledIslandTiles.flat();
+    for (let i = allTiles.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [allTiles[i], allTiles[j]] = [allTiles[j], allTiles[i]];
+    }
+
+    const neutralPlaced = cityConfigs.filter(c => c.owner === null).length;
+    let placed = neutralPlaced;
+    for (const tile of allTiles) {
+      if (placed >= cityCount) break;
+      if (usedPositions.has(posKey(tile))) continue;
+      if (isTooClose(tile, cityConfigs)) continue;
+      cityConfigs.push({ x: tile.x, y: tile.y, owner: null });
+      usedPositions.add(posKey(tile));
+      placed++;
+    }
+
+    // Build final City objects with IDs (only called on success)
+    const cities: City[] = cityConfigs.map(cfg => ({
+      id: genId('city'),
+      x: cfg.x,
+      y: cfg.y,
+      owner: cfg.owner,
+      producing: cfg.owner ? UnitType.Army : null,
+      productionTurnsLeft: cfg.owner ? 3 : 0,
+      productionProgress: 0,
+    }));
+
+    // Starting units: one army per player at their city
+    const units: Unit[] = [
+      {
+        id: genId('unit'),
+        type: UnitType.Army,
+        owner: 'player1' as PlayerId,
+        x: p1Start.x,
+        y: p1Start.y,
+        health: 1,
+        movesLeft: 1,
+        sleeping: false,
+        hasAttacked: false,
+        cargo: [],
+        carriedBy: null,
+      },
+      {
+        id: genId('unit'),
+        type: UnitType.Army,
+        owner: 'player2' as PlayerId,
+        x: p2Start.x,
+        y: p2Start.y,
+        health: 1,
+        movesLeft: 1,
+        sleeping: false,
+        hasAttacked: false,
+        cargo: [],
+        carriedBy: null,
+      },
+    ];
+
+    return { tiles, cities, units, totalHeight };
+  }
+
+  throw new Error('Failed to generate a valid map after 200 attempts');
+}
+
+/**
+ * Remove lake tiles: ocean that is not reachable from the polar ice cap rows
+ * (y=0 and y=totalHeight-1). Ships can never reach such enclosed water, so it
+ * is converted to land. Uses the same 8-directional connectivity as ship movement.
+ */
+function removeLakes(tiles: Terrain[][], width: number, height: number): void {
+  const reachable: boolean[][] = Array.from({ length: height }, () =>
+    Array.from({ length: width }, () => false),
   );
 
-  // Generate land blobs (only in the playable area, rows 1..totalHeight-2)
-  const targetLand = Math.floor(width * height * landRatio);
-  let landCount = 0;
-
-  // Seed several land blobs within the playable area
-  const blobCount = 6 + Math.floor(rng() * 6);
-  const blobCenters: Coord[] = [];
-
-  for (let i = 0; i < blobCount; i++) {
-    const cx = Math.floor(rng() * width);
-    // Keep blobs in the playable area (rows 1..totalHeight-2)
-    const cy = 1 + Math.floor(rng() * height);
-    blobCenters.push({ x: cx, y: cy });
-  }
-
-  // Grow land from blob centers (clamped to playable area)
-  while (landCount < targetLand) {
-    for (const center of blobCenters) {
-      if (landCount >= targetLand) break;
-
-      // Random walk from center
-      let x = center.x;
-      let y = center.y;
-      const steps = 10 + Math.floor(rng() * 30);
-
-      for (let s = 0; s < steps && landCount < targetLand; s++) {
-        // Wrap X for cylindrical map
-        x = wrapX(x, width);
-        // Stay inside playable rows (1..totalHeight-2)
-        if (x >= 0 && x < width && y >= 1 && y <= totalHeight - 2) {
-          if (tiles[y][x] === Terrain.Ocean) {
-            tiles[y][x] = Terrain.Land;
-            landCount++;
-          }
-        }
-        // Random direction
-        const dir = Math.floor(rng() * 4);
-        if (dir === 0) x++;
-        else if (dir === 1) x--;
-        else if (dir === 2) y++;
-        else y--;
-      }
-    }
-  }
-
-  // Find all islands and filter out single-tile islands
-  const islandTiles = findIslandTiles(tiles, width, totalHeight);
-  // Remove single-tile islands by turning them back to ocean
-  for (const island of islandTiles) {
-    if (island.length === 1) {
-      const t = island[0];
-      tiles[t.y][t.x] = Terrain.Ocean;
-    }
-  }
-
-  // Collect all land tiles (excluding ice cap border rows and single-tile islands)
-  const landTiles: Coord[] = [];
-  for (let y = 1; y <= totalHeight - 2; y++) {
-    for (let x = 0; x < width; x++) {
-      if (tiles[y][x] === Terrain.Land) {
-        landTiles.push({ x, y });
-      }
-    }
-  }
-
-  // Shuffle land tiles
-  for (let i = landTiles.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [landTiles[i], landTiles[j]] = [landTiles[j], landTiles[i]];
-  }
-
-  const cities: City[] = [];
-  const usedPositions = new Set<string>();
-
-  function posKey(c: Coord): string {
-    return `${c.x},${c.y}`;
-  }
-
-  // Player 1 start: left quarter of map
-  const p1Candidates = landTiles.filter((t) => t.x < width / 4);
-  // Player 2 start: right quarter of map
-  const p2Candidates = landTiles.filter((t) => t.x > (width * 3) / 4);
-
-  const p1Start = p1Candidates[0] ?? landTiles[0];
-  const p2Start = p2Candidates[0] ?? landTiles[landTiles.length - 1];
-
-  // Player starting cities
-  cities.push({
-    id: genId('city'),
-    x: p1Start.x,
-    y: p1Start.y,
-    owner: 'player1',
-    producing: UnitType.Infantry,
-    productionTurnsLeft: 3,
-    productionProgress: 0,
-  });
-  usedPositions.add(posKey(p1Start));
-
-  cities.push({
-    id: genId('city'),
-    x: p2Start.x,
-    y: p2Start.y,
-    owner: 'player2',
-    producing: UnitType.Infantry,
-    productionTurnsLeft: 3,
-    productionProgress: 0,
-  });
-  usedPositions.add(posKey(p2Start));
-
-  // Neutral cities: spread across the map
-  let placed = 0;
-  for (const tile of landTiles) {
-    if (placed >= cityCount) break;
-    const key = posKey(tile);
-    if (usedPositions.has(key)) continue;
-
-    // Check if adjacent to any existing city (Chebyshev distance <= 1)
-    const tooClose = cities.some(
-      (c) => {
-        const dx = wrappedDistX(c.x, tile.x, width);
-        const dy = Math.abs(c.y - tile.y);
-        return dx <= 1 && dy <= 1;
-      },
-    );
-    if (tooClose) continue;
-
-    cities.push({
-      id: genId('city'),
-      x: tile.x,
-      y: tile.y,
-      owner: null,
-      producing: null,
-      productionTurnsLeft: 0,
-      productionProgress: 0,
-    });
-    usedPositions.add(key);
-    placed++;
-  }
-
-  // Starting units: one army per player at their city
-  const units: Unit[] = [
-    {
-      id: genId('unit'),
-      type: UnitType.Infantry,
-      owner: 'player1' as PlayerId,
-      x: p1Start.x,
-      y: p1Start.y,
-      health: 1,
-      movesLeft: 1,
-      sleeping: false,
-      hasAttacked: false,
-      cargo: [],
-      carriedBy: null,
-    },
-    {
-      id: genId('unit'),
-      type: UnitType.Infantry,
-      owner: 'player2' as PlayerId,
-      x: p2Start.x,
-      y: p2Start.y,
-      health: 1,
-      movesLeft: 1,
-      sleeping: false,
-      hasAttacked: false,
-      cargo: [],
-      carriedBy: null,
-    },
+  const dirs = [
+    { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+    { x: -1, y: 0  },                   { x: 1, y: 0  },
+    { x: -1, y: 1  }, { x: 0, y: 1  }, { x: 1, y: 1  },
   ];
 
-  return { tiles, cities, units, totalHeight };
+  const queue: Coord[] = [];
+  for (let x = 0; x < width; x++) {
+    for (const y of [0, height - 1]) {
+      if (tiles[y][x] === Terrain.Ocean && !reachable[y][x]) {
+        reachable[y][x] = true;
+        queue.push({ x, y });
+      }
+    }
+  }
+
+  while (queue.length > 0) {
+    const { x, y } = queue.shift()!;
+    for (const d of dirs) {
+      const nx = wrapX(x + d.x, width);
+      const ny = y + d.y;
+      if (ny < 0 || ny >= height || reachable[ny][nx]) continue;
+      if (tiles[ny][nx] !== Terrain.Ocean) continue;
+      reachable[ny][nx] = true;
+      queue.push({ x: nx, y: ny });
+    }
+  }
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (tiles[y][x] === Terrain.Ocean && !reachable[y][x]) {
+        tiles[y][x] = Terrain.Land;
+      }
+    }
+  }
 }
 
 /**
