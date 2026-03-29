@@ -225,13 +225,22 @@ export function generateMap(opts: MapOptions): {
     cityConfigs.push({ x: p2Start.x, y: p2Start.y, owner: 'player2' });
     usedPositions.add(posKey(p2Start));
 
-    // Ensure each island has at least MIN_ISLAND_CITIES cities total
+    // Ensure each island has at least MIN_ISLAND_CITIES cities total,
+    // with at least one city on a coastal tile (land adjacent to ocean).
     let valid = true;
     for (let i = 0; i < validIslands.length; i++) {
       const existing = cityConfigs.filter(c => getIslandIdx(c.x, c.y) === i);
       let needed = MIN_ISLAND_CITIES - existing.length;
 
-      for (const tile of shuffledIslandTiles[i]) {
+      // Prioritize coastal tiles so neutral city placement naturally satisfies
+      // the coastal-city requirement without extra passes.
+      const islandTiles = shuffledIslandTiles[i];
+      const coastalFirst = [
+        ...islandTiles.filter(t => isCoastal(tiles, t.x, t.y, width, totalHeight)),
+        ...islandTiles.filter(t => !isCoastal(tiles, t.x, t.y, width, totalHeight)),
+      ];
+
+      for (const tile of coastalFirst) {
         if (needed <= 0) break;
         if (usedPositions.has(posKey(tile))) continue;
         if (isTooClose(tile, cityConfigs)) continue;
@@ -241,6 +250,16 @@ export function generateMap(opts: MapOptions): {
       }
 
       if (needed > 0) {
+        valid = false;
+        break;
+      }
+
+      // Hard guarantee: every island must have at least one coastal city.
+      // This catches the edge case where the player's starting city landed
+      // on an inland tile and no coastal neutral could be added above.
+      const allIslandCities = cityConfigs.filter(c => getIslandIdx(c.x, c.y) === i);
+      const hasCoastal = allIslandCities.some(c => isCoastal(tiles, c.x, c.y, width, totalHeight));
+      if (!hasCoastal) {
         valid = false;
         break;
       }
@@ -310,6 +329,19 @@ export function generateMap(opts: MapOptions): {
   }
 
   throw new Error('Failed to generate a valid map after 200 attempts');
+}
+
+/**
+ * Returns true if the land tile at (x, y) is adjacent (4-directional) to at least one ocean tile.
+ */
+function isCoastal(tiles: Terrain[][], x: number, y: number, width: number, height: number): boolean {
+  const dirs = [{ x: 0, y: -1 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 1, y: 0 }];
+  for (const d of dirs) {
+    const nx = wrapX(x + d.x, width);
+    const ny = y + d.y;
+    if (ny >= 0 && ny < height && tiles[ny][nx] === Terrain.Ocean) return true;
+  }
+  return false;
 }
 
 /**

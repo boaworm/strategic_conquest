@@ -528,6 +528,19 @@ The server does not limit simultaneous connections per token. If conflicting act
 
 ---
 
+## Running the Server
+
+```bash
+npm start               # build and start (port 4000)
+npm start -- --verbose  # same, with verbose AI turn logging
+VERBOSE=1 npm start     # alternative env-var form
+npm run dev             # build and start with hot-reload
+```
+
+`--verbose` enables per-action `[AI]` log lines (unit moves, city production, SKIP/SLEEP/WAKE, END_TURN). Without it the server is silent except for errors.
+
+---
+
 ## Milestones
 
 ### M1 — Map & Rendering

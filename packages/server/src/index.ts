@@ -16,30 +16,32 @@ import { createGameRoutes } from './routes/game.js';
 import { createTrainingRoutes } from './routes/training.js';
 import { createReplayRoutes } from './routes/replay.js';
 
-// ── Parse port from CLI args ─────────────────────────────────
+// ── Parse CLI args ────────────────────────────────────────────
+
+const _argv = process.argv.slice(2);
 
 function parsePort(): number {
-  const args = process.argv.slice(2);
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--port' || args[i] === '-p') {
-      const val = Number(args[i + 1]);
+  for (let i = 0; i < _argv.length; i++) {
+    if (_argv[i] === '--port' || _argv[i] === '-p') {
+      const val = Number(_argv[i + 1]);
       if (!Number.isNaN(val) && val > 0 && val < 65536) return val;
     }
     // Also accept --port=N
-    if (args[i].startsWith('--port=')) {
-      const val = Number(args[i].split('=')[1]);
+    if (_argv[i].startsWith('--port=')) {
+      const val = Number(_argv[i].split('=')[1]);
       if (!Number.isNaN(val) && val > 0 && val < 65536) return val;
     }
   }
   // Bare number as first arg
-  if (args.length > 0) {
-    const val = Number(args[0]);
+  if (_argv.length > 0) {
+    const val = Number(_argv[0]);
     if (!Number.isNaN(val) && val > 0 && val < 65536) return val;
   }
   return 4000;
 }
 
 const PORT = parsePort();
+
 
 // ── Server setup ─────────────────────────────────────────────
 

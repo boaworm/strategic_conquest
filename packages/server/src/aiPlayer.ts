@@ -3,8 +3,10 @@ import { AdamAI, BasicAgent, GunAirAgent, UNIT_STATS } from '@sc/shared';
 import type { Agent, AgentAction } from '@sc/shared';
 import type { GameSession } from './gameManager.js';
 import type { PlayerId } from '@sc/shared';
+import { VERBOSE } from './config.js';
 
 const TAG = '[AI]';
+const log = VERBOSE ? console.log : () => {};
 
 /**
  * Spawns an AI player that connects to the game via WebSocket
@@ -87,7 +89,7 @@ function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId
   );
   for (const u of activeUnits) {
     const stats = UNIT_STATS[u.type as keyof typeof UNIT_STATS];
-    console.log(
+    log(
       `${prefix} | Unit ${u.type} (${u.id}) at (${u.x},${u.y}) — moves ${u.movesLeft}/${stats.movesPerTurn}`,
     );
   }
@@ -96,17 +98,17 @@ function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId
     (u: any) => u.sleeping && u.movesLeft > 0 && u.carriedBy === null,
   );
   for (const u of sleepingUnits) {
-    console.log(`${prefix} | Unit ${u.type} (${u.id}) at (${u.x},${u.y}) — sleeping, will wake`);
+    log(`${prefix} | Unit ${u.type} (${u.id}) at (${u.x},${u.y}) — sleeping, will wake`);
   }
 
   // Log city production status
   for (const city of view.myCities as any[]) {
     if (city.producing) {
-      console.log(
+      log(
         `${prefix} | City (${city.x},${city.y}) producing ${city.producing} (${city.productionTurnsLeft} turns left)`,
       );
     } else {
-      console.log(`${prefix} | City (${city.x},${city.y}) — idle, will assign production`);
+      log(`${prefix} | City (${city.x},${city.y}) — idle, will assign production`);
     }
   }
 
@@ -131,22 +133,22 @@ function logAction(prefix: string, action: AgentAction, view: any) {
     case 'MOVE': {
       const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
       const from = unit ? `(${unit.x},${unit.y})` : '(??)';
-      console.log(`${prefix} | → MOVE ${unit?.type ?? action.unitId} from ${from} to (${action.to.x},${action.to.y})`);
+      log(`${prefix} | → MOVE ${unit?.type ?? action.unitId} from ${from} to (${action.to.x},${action.to.y})`);
       break;
     }
     case 'SKIP': {
       const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
-      console.log(`${prefix} | → SKIP ${unit?.type ?? action.unitId} (stuck — no valid moves)`);
+      log(`${prefix} | → SKIP ${unit?.type ?? action.unitId} (stuck — no valid moves)`);
       break;
     }
     case 'SLEEP': {
       const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
-      console.log(`${prefix} | → SLEEP ${unit?.type ?? action.unitId}`);
+      log(`${prefix} | → SLEEP ${unit?.type ?? action.unitId}`);
       break;
     }
     case 'WAKE': {
       const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
-      console.log(`${prefix} | → WAKE ${unit?.type ?? action.unitId}`);
+      log(`${prefix} | → WAKE ${unit?.type ?? action.unitId}`);
       break;
     }
     case 'SET_PRODUCTION': {
@@ -154,19 +156,19 @@ function logAction(prefix: string, action: AgentAction, view: any) {
       const was = city?.producing ?? 'idle';
       const now = action.unitType;
       const change = was === now ? `stays ${now}` : `${was} → ${now}`;
-      console.log(`${prefix} | → SET_PRODUCTION city (${city?.x ?? '?'},${city?.y ?? '?'}): ${change}`);
+      log(`${prefix} | → SET_PRODUCTION city (${city?.x ?? '?'},${city?.y ?? '?'}): ${change}`);
       break;
     }
     case 'LOAD':
-      console.log(`${prefix} | → LOAD unit ${action.unitId} onto transport ${action.transportId}`);
+      log(`${prefix} | → LOAD unit ${action.unitId} onto transport ${action.transportId}`);
       break;
     case 'UNLOAD':
-      console.log(`${prefix} | → UNLOAD unit ${action.unitId} to (${action.to.x},${action.to.y})`);
+      log(`${prefix} | → UNLOAD unit ${action.unitId} to (${action.to.x},${action.to.y})`);
       break;
     case 'END_TURN':
-      console.log(`${prefix} | → END_TURN`);
+      log(`${prefix} | → END_TURN`);
       break;
     default:
-      console.log(`${prefix} | → ${JSON.stringify(action)}`);
+      log(`${prefix} | → ${JSON.stringify(action)}`);
   }
 }
