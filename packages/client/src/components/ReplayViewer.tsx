@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Terrain,
   UnitType,
@@ -198,6 +198,57 @@ function drawUnitShape(ctx: CanvasRenderingContext2D, type: UnitType, cx: number
   ctx.restore();
 }
 
+// ── Unit image loading & tinted rendering ────────────────────
+
+const UNIT_IMAGE_SRCS: Record<UnitType, string> = {
+  [UnitType.Army]:       '/units/army.png',
+  [UnitType.Fighter]:    '/units/figher.png',
+  [UnitType.Bomber]:     '/units/bomber.png',
+  [UnitType.Transport]:  '/units/transport.png',
+  [UnitType.Destroyer]:  '/units/destroyer.png',
+  [UnitType.Submarine]:  '/units/submarine.png',
+  [UnitType.Carrier]:    '/units/carrier.png',
+  [UnitType.Battleship]: '/units/battleship.png',
+};
+
+const unitImageTintCache = new Map<string, HTMLCanvasElement>();
+
+function drawUnit(
+  ctx: CanvasRenderingContext2D,
+  type: UnitType,
+  cx: number,
+  cy: number,
+  size: number,
+  color: string,
+  images: Partial<Record<UnitType, HTMLImageElement>>,
+) {
+  const img = images[type];
+  if (!img || !img.complete || img.naturalWidth === 0) {
+    drawUnitShape(ctx, type, cx, cy, size, color);
+    return;
+  }
+
+  const aspect = img.naturalWidth / img.naturalHeight;
+  const w = aspect >= 1 ? Math.round(size * 0.82) : Math.round(size * 0.82 * aspect);
+  const h = aspect >= 1 ? Math.round(w / aspect) : Math.round(size * 0.82);
+
+  const cacheKey = `${type}:${w}:${h}:${color}`;
+  let tinted = unitImageTintCache.get(cacheKey);
+  if (!tinted) {
+    tinted = document.createElement('canvas');
+    tinted.width = w;
+    tinted.height = h;
+    const tc = tinted.getContext('2d')!;
+    tc.fillStyle = color;
+    tc.fillRect(0, 0, w, h);
+    tc.globalCompositeOperation = 'destination-in';
+    tc.drawImage(img, 0, 0, w, h);
+    unitImageTintCache.set(cacheKey, tinted);
+  }
+
+  ctx.drawImage(tinted, Math.round(cx - w / 2), Math.round(cy - h / 2));
+}
+
 // ── Canvas renderer ───────────────────────────────────────────
 
 interface ReplayCanvasProps {
@@ -209,6 +260,8 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const camRef = useRef({ x: replay.mapWidth / 2, y: replay.mapHeight / 2, tileSize: 24 });
   const dragRef = useRef<{ sx: number; sy: number; cx: number; cy: number } | null>(null);
+  const unitImagesRef = useRef<Partial<Record<UnitType, HTMLImageElement>>>({});
+  const drawRef = useRef<() => void>(() => {});
 
   const mapW = replay.mapWidth;
   const mapH = replay.mapHeight;
@@ -272,7 +325,7 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
 
         const units = unitsByPos.get(key);
         if (units && units.length > 0) {
-          drawUnitShape(ctx, units[0].type, ccx, ccy, ts, ownerColor(units[0].owner));
+          drawUnit(ctx, units[0].type, ccx, ccy, ts, ownerColor(units[0].owner), unitImagesRef.current);
           if ((units[0].type === UnitType.Carrier || units[0].type === UnitType.Transport) && units[0].cargo.length > 0 && ts >= 14) {
             ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.max(8, ts * 0.3)}px sans-serif`;
             ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`${units[0].cargo.length}`, sx + 2, sy + 1);
@@ -304,7 +357,19 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
     ro.observe(canvas); return () => ro.disconnect();
   }, [draw]);
 
+  useEffect(() => { drawRef.current = draw; });
   useEffect(() => { draw(); }, [draw]);
+  useEffect(() => {
+    for (const [type, src] of Object.entries(UNIT_IMAGE_SRCS) as [UnitType, string][]) {
+      const img = new Image();
+      img.src = src;
+      img.onload = () => {
+        unitImagesRef.current[type] = img;
+        unitImageTintCache.clear();
+        drawRef.current();
+      };
+    }
+  }, []);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button === 2 || e.button === 1) {
@@ -340,6 +405,20 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
     />
   );
 }
+
+// ── Unit table constants ──────────────────────────────────────
+
+const UNIT_TYPES_ORDERED = [
+  UnitType.Army, UnitType.Transport, UnitType.Destroyer,
+  UnitType.Submarine, UnitType.Battleship, UnitType.Carrier,
+  UnitType.Fighter, UnitType.Bomber,
+] as const;
+
+const UNIT_LABELS: Record<UnitType, string> = {
+  [UnitType.Army]: 'Army', [UnitType.Transport]: 'Transport', [UnitType.Destroyer]: 'Destroyer',
+  [UnitType.Submarine]: 'Submarine', [UnitType.Battleship]: 'Battleship', [UnitType.Carrier]: 'Carrier',
+  [UnitType.Fighter]: 'Fighter', [UnitType.Bomber]: 'Bomber',
+};
 
 // ── Main component ────────────────────────────────────────────
 
@@ -389,6 +468,35 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
     }
   }
 
+  const currentCounts = useMemo(() => {
+    if (!replay) return null;
+    const frame = replay.frames[frameIdx];
+    const counts: Record<UnitType, { p1: number; p2: number }> = {} as any;
+    for (const t of UNIT_TYPES_ORDERED) counts[t] = { p1: 0, p2: 0 };
+    for (const u of frame.units) {
+      if (u.owner === 'player1') counts[u.type].p1++;
+      else if (u.owner === 'player2') counts[u.type].p2++;
+    }
+    return counts;
+  }, [replay, frameIdx]);
+
+  const totalProduced = useMemo(() => {
+    if (!replay) return null;
+    const seen = new Set<string>();
+    const counts: Record<UnitType, { p1: number; p2: number }> = {} as any;
+    for (const t of UNIT_TYPES_ORDERED) counts[t] = { p1: 0, p2: 0 };
+    for (let i = 0; i <= frameIdx; i++) {
+      for (const u of replay.frames[i].units) {
+        if (!seen.has(u.id)) {
+          seen.add(u.id);
+          if (u.owner === 'player1') counts[u.type].p1++;
+          else if (u.owner === 'player2') counts[u.type].p2++;
+        }
+      }
+    }
+    return counts;
+  }, [replay, frameIdx]);
+
   if (replay) {
     const frame = replay.frames[frameIdx];
     const total = replay.frames.length;
@@ -416,6 +524,47 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
             </span>
           )}
         </div>
+
+        {currentCounts && totalProduced && (
+          <div className="shrink-0 px-4 py-1 bg-gray-900 border-b border-gray-700 flex gap-8 text-xs">
+            <table className="border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-gray-500 font-normal text-left pr-2 pb-0.5">Current</th>
+                  <th className="px-2 pb-0.5" style={{ color: COL_P1 }}>P1</th>
+                  <th className="px-2 pb-0.5" style={{ color: COL_P2 }}>P2</th>
+                </tr>
+              </thead>
+              <tbody>
+                {UNIT_TYPES_ORDERED.map((t) => (
+                  <tr key={t}>
+                    <td className="text-gray-400 pr-2">{UNIT_LABELS[t]}</td>
+                    <td className="text-center px-2" style={{ color: COL_P1 }}>{currentCounts[t].p1 || ''}</td>
+                    <td className="text-center px-2" style={{ color: COL_P2 }}>{currentCounts[t].p2 || ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <table className="border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-gray-500 font-normal text-left pr-2 pb-0.5">Produced</th>
+                  <th className="px-2 pb-0.5" style={{ color: COL_P1 }}>P1</th>
+                  <th className="px-2 pb-0.5" style={{ color: COL_P2 }}>P2</th>
+                </tr>
+              </thead>
+              <tbody>
+                {UNIT_TYPES_ORDERED.map((t) => (
+                  <tr key={t}>
+                    <td className="text-gray-400 pr-2">{UNIT_LABELS[t]}</td>
+                    <td className="text-center px-2" style={{ color: COL_P1 }}>{totalProduced[t].p1 || ''}</td>
+                    <td className="text-center px-2" style={{ color: COL_P2 }}>{totalProduced[t].p2 || ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         <div className="flex-1 overflow-hidden">
           <ReplayCanvas replay={replay} frame={frame} />

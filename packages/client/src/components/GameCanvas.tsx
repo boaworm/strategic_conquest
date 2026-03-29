@@ -267,15 +267,15 @@ function drawUnitShape(
       break;
     }
     case UnitType.Transport: {
-      // Container ship: tall boxy hull (high freeboard), bridge tower at stern, cargo containers on deck
+      // Transport: low boxy hull, single bridge tower at stern
       const hw = r * 0.93;
-      const deckY = cy - r * 0.2;   // HIGH deck — tall sides distinguish it from the sleek destroyer
-      const wl = cy + r * 0.1;
-      const keel = cy + r * 0.52;
-      // Hull — boxy rectangle with only slight bow taper
+      const deckY = cy + r * 0.04;   // LOW deck — sits close to the waterline
+      const wl = cy + r * 0.2;
+      const keel = cy + r * 0.46;
+      // Hull — boxy with slight bow taper
       ctx.beginPath();
       ctx.moveTo(cx - hw, deckY);
-      ctx.lineTo(cx + hw * 0.68, deckY);
+      ctx.lineTo(cx + hw * 0.72, deckY);
       ctx.lineTo(cx + hw, wl);
       ctx.lineTo(cx + hw * 0.88, keel);
       ctx.lineTo(cx - hw, keel);
@@ -291,19 +291,11 @@ function drawUnitShape(
       ctx.stroke();
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#000';
-      // Bridge tower at far stern — tall, prominent
-      ctx.globalAlpha = 0.4;
-      const brW = hw * 0.22;
-      const brH = r * 0.72;
-      ctx.fillRect(cx - hw + hw * 0.03, deckY - brH, brW, brH);
-      // Funnel on top of bridge
-      ctx.globalAlpha = 0.48;
-      ctx.fillRect(cx - hw + hw * 0.1, deckY - brH - r * 0.26, hw * 0.07, r * 0.26);
-      // Three cargo containers along deck — clearly rectangular blocks of different heights
-      ctx.globalAlpha = 0.32;
-      ctx.fillRect(cx + hw * 0.32, deckY - r * 0.38, hw * 0.22, r * 0.38);   // bow-side, tallest
-      ctx.fillRect(cx + hw * 0.04, deckY - r * 0.3,  hw * 0.2,  r * 0.3);   // middle
-      ctx.fillRect(cx - hw * 0.2,  deckY - r * 0.22, hw * 0.18, r * 0.22);  // near bridge, shortest
+      // Single bridge tower at stern
+      ctx.globalAlpha = 0.42;
+      const brW = hw * 0.28;
+      const brH = r * 0.62;
+      ctx.fillRect(cx - hw + hw * 0.02, deckY - brH, brW, brH);
       ctx.globalAlpha = 1;
       ctx.fillStyle = color;
       break;
@@ -495,76 +487,75 @@ function drawUnitShape(
       break;
     }
     case UnitType.Battleship: {
-      // Battleship: wide deep hull, massive superstructure, three twin-barrel gun turrets, twin funnels
+      // Battleship: larger destroyer silhouette — deeper hull, taller angled bridge, twin-barrel turrets
       const hw = r * 0.95;
-      const deckY = cy - r * 0.08;
-      const wl = cy + r * 0.22;
-      const keel = cy + r * 0.6;   // DEEP keel — heaviest ship on the water
-      // Hull — wide and deep
+      const deckY = cy - r * 0.02;  // slightly higher deck than destroyer (more freeboard)
+      const wl = cy + r * 0.26;
+      const keel = cy + r * 0.54;   // deeper keel — heavier ship
+      // Hull — same knife-bow shape as destroyer but deeper/heavier
       ctx.beginPath();
-      ctx.moveTo(cx - hw, deckY);
-      ctx.lineTo(cx + hw * 0.58, deckY);
-      ctx.lineTo(cx + hw, wl);
-      ctx.lineTo(cx + hw * 0.86, keel);
-      ctx.lineTo(cx - hw * 0.82, keel);
-      ctx.lineTo(cx - hw, wl);
+      ctx.moveTo(cx - hw, deckY + r * 0.06);   // stern top
+      ctx.lineTo(cx - hw, wl);                  // stern
+      ctx.lineTo(cx - hw * 0.78, keel);
+      ctx.lineTo(cx + hw * 0.7, keel);
+      ctx.lineTo(cx + hw, wl - r * 0.04);       // sharp bow tip
+      ctx.lineTo(cx + hw * 0.56, deckY);
+      ctx.lineTo(cx - hw * 0.9, deckY);
       ctx.closePath();
       ctx.fill();
       // Waterline
       ctx.strokeStyle = '#000';
-      ctx.globalAlpha = 0.25;
-      ctx.lineWidth = Math.max(1, size / 13);
+      ctx.globalAlpha = 0.3;
+      ctx.lineWidth = Math.max(1, size / 16);
       ctx.beginPath();
       ctx.moveTo(cx - hw, wl);
       ctx.lineTo(cx + hw, wl);
       ctx.stroke();
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#000';
-      // Central superstructure — tall, wide, tiered
+      // Angled bridge — same forward-lean as destroyer but taller/wider
       ctx.globalAlpha = 0.38;
-      const sW = hw * 0.36;
-      const sH = r * 0.58;
-      ctx.fillRect(cx - sW * 0.58, deckY - sH, sW, sH);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.16, deckY);
+      ctx.lineTo(cx - hw * 0.18, deckY - r * 0.58);
+      ctx.lineTo(cx + hw * 0.09, deckY - r * 0.38);
+      ctx.lineTo(cx + hw * 0.09, deckY);
+      ctx.closePath();
+      ctx.fill();
+      // Tall mast with radar crossbar
       ctx.globalAlpha = 0.44;
-      const uW = sW * 0.62;
-      const uH = r * 0.3;
-      ctx.fillRect(cx - uW * 0.5, deckY - sH - uH, uW, uH);
-      ctx.globalAlpha = 0.48;
-      ctx.fillRect(cx - uW * 0.32, deckY - sH - uH - r * 0.15, uW * 0.55, r * 0.15);
-      // Mast
-      ctx.globalAlpha = 0.46;
       ctx.strokeStyle = '#000';
-      ctx.lineWidth = Math.max(1, size / 20);
+      ctx.lineWidth = Math.max(1, size / 22);
       ctx.beginPath();
-      ctx.moveTo(cx - uW * 0.04, deckY - sH - uH - r * 0.15);
-      ctx.lineTo(cx - uW * 0.04, deckY - sH - uH - r * 0.42);
+      ctx.moveTo(cx - hw * 0.06, deckY - r * 0.58);
+      ctx.lineTo(cx - hw * 0.06, deckY - r * 0.90);
       ctx.stroke();
-      // Twin funnels behind superstructure
-      ctx.globalAlpha = 0.42;
-      ctx.fillStyle = '#000';
-      ctx.fillRect(cx - sW * 0.54, deckY - r * 0.42, hw * 0.1,  r * 0.42);
-      ctx.fillRect(cx - sW * 0.4,  deckY - r * 0.34, hw * 0.08, r * 0.34);
-      // Fore turret 1 (closest to bow) — twin barrels
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.17, deckY - r * 0.78);
+      ctx.lineTo(cx + hw * 0.05, deckY - r * 0.78);
+      ctx.stroke();
+      // Fore turret 1 (near bow) — twin barrels
       ctx.globalAlpha = 0.44;
+      ctx.fillStyle = '#000';
       ctx.beginPath();
-      ctx.arc(cx + hw * 0.38, deckY - r * 0.05, r * 0.13, 0, 2 * Math.PI);
+      ctx.arc(cx + hw * 0.3, deckY - r * 0.06, r * 0.12, 0, 2 * Math.PI);
       ctx.fill();
-      ctx.fillRect(cx + hw * 0.51, deckY - r * 0.1,  hw * 0.32, r * 0.04);
-      ctx.fillRect(cx + hw * 0.51, deckY - r * 0.02, hw * 0.32, r * 0.04);
-      // Fore turret 2 (behind turret 1) — twin barrels
+      ctx.fillRect(cx + hw * 0.42, deckY - r * 0.12, hw * 0.34, r * 0.04);
+      ctx.fillRect(cx + hw * 0.42, deckY - r * 0.03, hw * 0.34, r * 0.04);
+      // Fore turret 2 (mid-fore) — twin barrels
       ctx.globalAlpha = 0.42;
       ctx.beginPath();
-      ctx.arc(cx + hw * 0.14, deckY - r * 0.05, r * 0.12, 0, 2 * Math.PI);
+      ctx.arc(cx + hw * 0.08, deckY - r * 0.06, r * 0.10, 0, 2 * Math.PI);
       ctx.fill();
-      ctx.fillRect(cx + hw * 0.26, deckY - r * 0.09, hw * 0.27, r * 0.04);
-      ctx.fillRect(cx + hw * 0.26, deckY - r * 0.01, hw * 0.27, r * 0.04);
+      ctx.fillRect(cx + hw * 0.18, deckY - r * 0.10, hw * 0.26, r * 0.04);
+      ctx.fillRect(cx + hw * 0.18, deckY - r * 0.02, hw * 0.26, r * 0.04);
       // Aft turret — twin barrels pointing stern
       ctx.globalAlpha = 0.42;
       ctx.beginPath();
-      ctx.arc(cx - hw * 0.65, deckY - r * 0.05, r * 0.12, 0, 2 * Math.PI);
+      ctx.arc(cx - hw * 0.52, deckY - r * 0.05, r * 0.10, 0, 2 * Math.PI);
       ctx.fill();
-      ctx.fillRect(cx - hw * 0.95, deckY - r * 0.09, hw * 0.29, r * 0.04);
-      ctx.fillRect(cx - hw * 0.95, deckY - r * 0.01, hw * 0.29, r * 0.04);
+      ctx.fillRect(cx - hw * 0.82, deckY - r * 0.09, hw * 0.28, r * 0.04);
+      ctx.fillRect(cx - hw * 0.82, deckY - r * 0.01, hw * 0.28, r * 0.04);
       ctx.globalAlpha = 1;
       ctx.fillStyle = color;
       break;
@@ -655,6 +646,58 @@ function drawIceCap(
   }
 }
 
+// ── Unit image loading & tinted rendering ────────────────────
+
+const UNIT_IMAGE_SRCS: Record<UnitType, string> = {
+  [UnitType.Army]:       '/units/army.png',
+  [UnitType.Fighter]:    '/units/figher.png',
+  [UnitType.Bomber]:     '/units/bomber.png',
+  [UnitType.Transport]:  '/units/transport.png',
+  [UnitType.Destroyer]:  '/units/destroyer.png',
+  [UnitType.Submarine]:  '/units/submarine.png',
+  [UnitType.Carrier]:    '/units/carrier.png',
+  [UnitType.Battleship]: '/units/battleship.png',
+};
+
+// Cache tinted canvases keyed by "unitType:size:color"
+const unitImageTintCache = new Map<string, HTMLCanvasElement>();
+
+function drawUnit(
+  ctx: CanvasRenderingContext2D,
+  type: UnitType,
+  cx: number,
+  cy: number,
+  size: number,
+  color: string,
+  images: Partial<Record<UnitType, HTMLImageElement>>,
+) {
+  const img = images[type];
+  if (!img || !img.complete || img.naturalWidth === 0) {
+    drawUnitShape(ctx, type, cx, cy, size, color);
+    return;
+  }
+
+  const aspect = img.naturalWidth / img.naturalHeight;
+  const w = aspect >= 1 ? Math.round(size * 0.82) : Math.round(size * 0.82 * aspect);
+  const h = aspect >= 1 ? Math.round(w / aspect) : Math.round(size * 0.82);
+
+  const cacheKey = `${type}:${w}:${h}:${color}`;
+  let tinted = unitImageTintCache.get(cacheKey);
+  if (!tinted) {
+    tinted = document.createElement('canvas');
+    tinted.width = w;
+    tinted.height = h;
+    const tc = tinted.getContext('2d')!;
+    tc.fillStyle = color;
+    tc.fillRect(0, 0, w, h);
+    tc.globalCompositeOperation = 'destination-in';
+    tc.drawImage(img, 0, 0, w, h);
+    unitImageTintCache.set(cacheKey, tinted);
+  }
+
+  ctx.drawImage(tinted, Math.round(cx - w / 2), Math.round(cy - h / 2));
+}
+
 // ── Component ────────────────────────────────────────────────
 
 interface Props {
@@ -736,6 +779,21 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   }
   const moveAnimRef = useRef<MoveAnim | null>(null);
   const MOVE_STEP_DURATION = 333; // ms per tile
+
+  // ── Unit sprite images ─────────────────────────────────────
+  const unitImagesRef = useRef<Partial<Record<UnitType, HTMLImageElement>>>({});
+  useEffect(() => {
+    for (const [type, src] of Object.entries(UNIT_IMAGE_SRCS) as [UnitType, string][]) {
+      const img = new Image();
+      img.src = src;
+      img.onload = () => {
+        unitImagesRef.current[type] = img;
+        unitImageTintCache.clear(); // invalidate tint cache on new load
+        setImagesLoaded((n) => n + 1);
+      };
+    }
+  }, []);
+  const [, setImagesLoaded] = useState(0);
 
   // "Your turn" banner: stores the timestamp when the current player's turn began
   const yourTurnStartRef = useRef<number | null>(null);
@@ -932,7 +990,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
           const unit = units[0];
           if (dimmed) ctx.globalAlpha = 0.5;
 
-          drawUnitShape(ctx, unit.type, cxCenter, cyCenter, tileSize, ownerColor(unit.owner));
+          drawUnit(ctx, unit.type, cxCenter, cyCenter, tileSize, ownerColor(unit.owner), unitImagesRef.current);
 
           // Cargo count for carriers/transports (white number, top-left)
           if (
@@ -1084,7 +1142,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         const t = envelope * maxTravel * Math.max(0, bounce);
         const ax = fromSX + (toSX - fromSX) * t;
         const ay = fromSY + (toSY - fromSY) * t;
-        drawUnitShape(ctx, combatAnim.attackerType, ax, ay, tileSize, ownerColor(combatAnim.attackerOwner));
+        drawUnit(ctx, combatAnim.attackerType, ax, ay, tileSize, ownerColor(combatAnim.attackerOwner), unitImagesRef.current);
       } else if (combatAnim.phase === 'flash') {
         // White flash burst at midpoint
         const mx = (fromSX + toSX) / 2;
@@ -1101,7 +1159,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         if (combatAnim.result && !combatAnim.result.attackerDestroyed) {
           const drawX = combatAnim.result.defenderDestroyed ? toSX : fromSX;
           const drawY = combatAnim.result.defenderDestroyed ? toSY : fromSY;
-          drawUnitShape(ctx, combatAnim.attackerType, drawX, drawY, tileSize, ownerColor(combatAnim.attackerOwner));
+          drawUnit(ctx, combatAnim.attackerType, drawX, drawY, tileSize, ownerColor(combatAnim.attackerOwner), unitImagesRef.current);
         }
       }
     }
@@ -1204,7 +1262,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
 
       const sx = interpX * tileSize - originX + tileSize / 2;
       const sy = interpY * tileSize - originY + tileSize / 2;
-      drawUnitShape(ctx, mAnim.unitType, sx, sy, tileSize, ownerColor(mAnim.unitOwner));
+      drawUnit(ctx, mAnim.unitType, sx, sy, tileSize, ownerColor(mAnim.unitOwner), unitImagesRef.current);
     }
 
     // ── Flame hit indicators ──────────────────────────────────

@@ -75,6 +75,7 @@ export function runGame(
       visibleEnemyCities: view.visibleEnemyCities,
       turn: view.turn,
       myPlayerId: currentPlayer,
+      myBomberBlastRadius: view.myBomberBlastRadius,
     };
 
     // Let agent take actions until it ends its turn
