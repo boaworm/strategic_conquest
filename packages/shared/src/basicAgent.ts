@@ -34,6 +34,9 @@ export class BasicAgent implements Agent {
   private attackTarget: Coord | null = null;
   // Current strategic phase (recomputed each act() call).
   private phase: 1 | 2 | 3 = 1;
+  // Turn numbers when phases first advanced (undefined = not yet reached).
+  private phase2Turn: number | undefined = undefined;
+  private phase3Turn: number | undefined = undefined;
 
   init(config: AgentConfig): void {
     this.playerId = config.playerId;
@@ -51,31 +54,28 @@ export class BasicAgent implements Agent {
    * of ours" — in both cases we want air/naval support and island-specific armies.
    */
   private computePhase(obs: AgentObservation): 1 | 2 | 3 {
-    // Phase 3: any of our cities is within combatDist of an enemy-owned city.
-    // Covers both "foothold on enemy island" and "enemy is on our island".
-    const combatDist = Math.min(12, Math.floor(this.mapWidth / 4));
-    const inCombat = obs.myCities.some((mine) =>
-      obs.visibleEnemyCities.some(
-        (enemy) => enemy.owner !== null && this.wrappedDist(mine, enemy) <= combatDist,
-      ),
-    );
-    if (inCombat) return 3;
+    // Phase transitions are one-way: 1 → 2 → 3, never back.
+    if (this.phase === 3) return 3;
 
-    // Phase 2: home island colonised — no neutral cities visible AND no land left to
-    // explore.  Use a land army's exploration result as the proxy: if no army can find
-    // an unexplored land tile, the island is done.  Require at least 2 cities so we
-    // don't trigger on turn 1 before any exploration has happened.
-    const hasVisibleNeutral = obs.visibleEnemyCities.some((c) => c.owner === null);
-    if (!hasVisibleNeutral && obs.myCities.length >= 2) {
-      const sampleArmy = obs.myUnits.find(
-        (u) => u.type === UnitType.Army && u.carriedBy === null,
-      );
-      const islandFullyExplored =
-        !sampleArmy || this.moveTowardExploration(obs, sampleArmy) === null;
-      if (islandFullyExplored) return 2;
+    if (this.phase >= 2) {
+      // Phase 2 → 3: first enemy contact.
+      if (obs.visibleEnemyCities.some((c) => c.owner !== null)) return 3;
+      return 2;
     }
 
-    // Phase 1 by default: colonise and explore the home island.
+    // Phase 1 → 2: home island fully explored (no null/never-seen land tiles) AND
+    // all its cities are ours.
+    // We intentionally ignore Hidden tiles — those are mapped, just not currently
+    // visible. Only null (never seen) tiles count as unexplored.
+    if (obs.myCities.length >= 2) {
+      const { islandOf, mineIndices } = this.classifyIslands(obs);
+      const homeRef = obs.myCities[0];
+      const homeIslandIdx = islandOf.get(`${homeRef.x},${homeRef.y}`);
+      if (homeIslandIdx !== undefined && mineIndices.has(homeIslandIdx)) {
+        if (!this.hasUnexploredLand(obs, homeRef)) return 2;
+      }
+    }
+
     return 1;
   }
 
@@ -129,9 +129,18 @@ export class BasicAgent implements Agent {
     }
   }
 
+  getPhaseTransitions(): { phase2Turn: number | undefined; phase3Turn: number | undefined } {
+    return { phase2Turn: this.phase2Turn, phase3Turn: this.phase3Turn };
+  }
+
   act(obs: AgentObservation): AgentAction {
     this.updateTargets(obs);
-    this.phase = this.computePhase(obs);
+    const newPhase = this.computePhase(obs);
+    if (newPhase > this.phase) {
+      if (newPhase === 2) this.phase2Turn = obs.turn;
+      if (newPhase === 3) this.phase3Turn = obs.turn;
+    }
+    this.phase = newPhase;
 
     // Sea units first so transports can LOAD armies before armies burn their moves on SKIP.
     // In attack mode, override with attack priority (bombers/fighters/battleships lead).
@@ -172,122 +181,127 @@ export class BasicAgent implements Agent {
   }
 
   private chooseProduction(obs: AgentObservation, city: CityView): UnitType {
-    const armyCount       = obs.myUnits.filter((u) => u.type === UnitType.Army).length;
-    const transportCount  = obs.myUnits.filter((u) => u.type === UnitType.Transport).length;
-    const destroyerCount  = obs.myUnits.filter((u) => u.type === UnitType.Destroyer).length;
-    const carrierCount    = obs.myUnits.filter((u) => u.type === UnitType.Carrier).length;
-    const battleshipCount = obs.myUnits.filter((u) => u.type === UnitType.Battleship).length;
-    const fighterCount    = obs.myUnits.filter((u) => u.type === UnitType.Fighter).length;
-    const bomberCount     = obs.myUnits.filter((u) => u.type === UnitType.Bomber).length;
-    const cityCount       = obs.myCities.length;
+    // ── Phase 1: explore and colonise home island — all cities build armies ───
+    if (this.phase === 1) return UnitType.Army;
 
-    // ── Phase 1: colonise home island ────────────────────────────────────────
-    // Build armies almost exclusively. One early transport at a coastal city once
-    // we have 3+ armies so it's ready to sail the moment Phase 2 kicks in.
-    if (this.phase === 1) {
-      if (city.coastal && armyCount >= 3 && transportCount === 0) return UnitType.Transport;
-      return UnitType.Army;
-    }
-
-    // ── Phase 2: expansion to other islands ──────────────────────────────────
-    // Once home island is explored, keep transports flowing as long as every
-    // existing transport is "useful" (carrying troops or at sea returning home).
-    // An empty transport parked at a home port is idle — don't build another.
+    // ── Phase 2: home island secure, expand by sea ────────────────────────────
     if (this.phase === 2) {
-      if (city.coastal && this.needsMoreTransports(obs)) return UnitType.Transport;
-      if (city.coastal && destroyerCount < 1) return UnitType.Destroyer;
+      if (!city.coastal) return UnitType.Army;
+
+      const { islandOf } = this.classifyIslands(obs);
+      const cityIsland = islandOf.get(`${city.x},${city.y}`);
+
+      // 1 active transport per 3 army-producing cities on this island.
+      const armyCitiesHere = obs.myCities.filter(
+        (c) =>
+          c.id !== city.id &&
+          c.producing === UnitType.Army &&
+          islandOf.get(`${c.x},${c.y}`) === cityIsland,
+      ).length;
+      const transportCount = obs.myUnits.filter((u) => u.type === UnitType.Transport).length;
+      const targetTransports = Math.max(1, Math.ceil(armyCitiesHere / 3));
+      if (transportCount < targetTransports) return UnitType.Transport;
       return UnitType.Army;
     }
 
-    // ── Phase 3: combat ───────────────────────────────────────────────────────
-    // Classify this city: contested (near enemy) vs home territory.
-    const combatDist = Math.min(12, Math.floor(this.mapWidth / 4));
-    const isContestedCity = obs.visibleEnemyCities.some(
-      (enemy) => enemy.owner !== null && this.wrappedDist(city, enemy) <= combatDist,
-    );
-
-    if (isContestedCity) {
-      // On a contested island: produce armies to capture / defend cities.
+    // ── Phase 3: full warfare ──────────────────────────────────────────────────
+    // Enemy city reachable over land from this city → defend/attack with armies.
+    if (this.enemyCityWithinLandDist(obs, city, this.mapWidth * this.mapHeight)) {
       return UnitType.Army;
     }
 
-    // Home territory in Phase 3: keep the invasion pipeline full first,
-    // then invest in air and naval power.
-    //
-    // Transports come before expensive naval/air units — without them armies
-    // pile up indefinitely and neither side can invade.
-    // Bombers are high priority because more total produced = bigger blast radius
-    // (upgrades at 10 and 20 cumulative).
-    const submarineCount  = obs.myUnits.filter((u) => u.type === UnitType.Submarine).length;
-    const wantBombers     = Math.min(10, Math.max(4, cityCount));  // blast radius unlocks at 10 & 20
-    const wantFighters    = Math.min(8,  Math.ceil(cityCount * 0.6));
-    const wantBattleships = Math.min(6,  Math.ceil(cityCount / 2));
-    const wantDestroyers  = Math.min(4,  Math.ceil(cityCount / 3));
-    const wantSubmarines  = Math.min(3,  Math.ceil(cityCount / 4));
+    // Inland city, no land-connected enemy → air units (keep Fighter/Bomber balanced).
+    if (!city.coastal) return this.chooseAirType(obs);
 
-    // Transports first — army capacity must exist before producing more armies.
-    // Cap armies at ~3× transport capacity; beyond that transports are the bottleneck.
-    // Only count HOME armies (not near any enemy city) so captured-island armies
-    // don't mask a backlog of unshipped troops on the home island.
-    const totalTransportSlots = transportCount * UNIT_STATS[UnitType.Transport].cargoCapacity;
-    const combatDistLocal = Math.min(12, Math.floor(this.mapWidth / 4));
-    const armiesWaiting = obs.myUnits.filter(
-      (u) =>
-        u.type === UnitType.Army &&
-        u.carriedBy === null &&
-        !obs.visibleEnemyCities.some(
-          (e) => e.owner !== null && this.wrappedDist(u, e) <= combatDistLocal,
-        ),
-    ).length;
-    if (city.coastal && this.needsMoreTransports(obs) && armiesWaiting > totalTransportSlots) {
-      return UnitType.Transport;
-    }
-
-    if (bomberCount < wantBombers) return UnitType.Bomber;
-
-    // Coastal cities rotate between battleships and fighters in combat phase.
-    if (city.coastal && battleshipCount < wantBattleships) return UnitType.Battleship;
-    if (fighterCount < wantFighters) return UnitType.Fighter;
-
-    if (city.coastal) {
-      if (battleshipCount < wantBattleships) return UnitType.Battleship;
-      if (destroyerCount  < wantDestroyers)  return UnitType.Destroyer;
-      if (submarineCount  < wantSubmarines)  return UnitType.Submarine;
-      if (fighterCount >= 3 && carrierCount === 0) return UnitType.Carrier;
-      if (this.needsMoreTransports(obs)) return UnitType.Transport;
-    }
-
-    // Don't keep building armies once home armies vastly outnumber transport capacity.
-    if (armiesWaiting > totalTransportSlots * 2) return UnitType.Bomber;
-
-    // Non-coastal home city or all quotas met: build armies as strategic reserve
-    return UnitType.Army;
+    // Coastal city, no land-connected enemy → value-based naval + air mix.
+    return this.choosePhase3CoastalType(obs);
   }
 
   /**
-   * Returns true if we should queue another transport.
-   * We need more transports when every existing transport is "useful":
-   *   - carrying troops (shipping out), OR
-   *   - at sea / away from home (returning to pick up more).
-   * An empty transport parked at a home port is idle — no need to build another.
+   * Phase 3, coastal, no land-adjacent enemy.
+   * Computes total buildTime invested per unit type, divides by a scaling factor
+   * (higher = more desired), and builds the most under-invested type.
    */
-  private needsMoreTransports(obs: AgentObservation): boolean {
-    const transports = obs.myUnits.filter((u) => u.type === UnitType.Transport);
-    if (transports.length === 0) return true;
+  private choosePhase3CoastalType(obs: AgentObservation): UnitType {
+    const TYPES: [UnitType, number][] = [
+      [UnitType.Battleship, 2],
+      [UnitType.Submarine,  2],
+      [UnitType.Destroyer,  1],
+      [UnitType.Transport,  1],
+      [UnitType.Fighter,    1],
+      [UnitType.Bomber,     1],
+    ];
 
-    const combatDist = Math.min(12, Math.floor(this.mapWidth / 4));
-    const nearEnemy = (coord: Coord) =>
-      obs.visibleEnemyCities.some(
-        (e) => e.owner !== null && this.wrappedDist(coord, e) <= combatDist,
-      );
+    // Count both alive units AND units currently in production queues.
+    // Without the in-production count, all cities simultaneously see score=0
+    // for every type and pile into whichever type is first in the list.
+    const valueOf = (t: UnitType): number => {
+      const bt = UNIT_STATS[t].buildTime;
+      const alive  = obs.myUnits.filter((u) => u.type === t).length;
+      const inProd = obs.myCities.filter((c) => c.producing === t).length;
+      return (alive + inProd) * bt;
+    };
 
-    // An idle transport: empty AND docked at a home (non-contested) city.
-    const hasIdle = transports.some(
-      (t) =>
-        t.cargo.length === 0 &&
-        obs.myCities.some((c) => c.x === t.x && c.y === t.y && !nearEnemy(c)),
+    let bestType  = UnitType.Destroyer;
+    let bestScore = Infinity;
+    for (const [t, scale] of TYPES) {
+      const score = valueOf(t) / scale;
+      if (score < bestScore) { bestScore = score; bestType = t; }
+    }
+    return bestType;
+  }
+
+  /** Keep Fighter and Bomber counts equal; random tiebreak. */
+  private chooseAirType(obs: AgentObservation): UnitType {
+    const count = (t: UnitType) =>
+      obs.myUnits.filter((u) => u.type === t).length +
+      obs.myCities.filter((c) => c.producing === t).length;
+    const fCount = count(UnitType.Fighter);
+    const bCount = count(UnitType.Bomber);
+    if (fCount !== bCount) return fCount < bCount ? UnitType.Fighter : UnitType.Bomber;
+    return Math.random() < 0.5 ? UnitType.Fighter : UnitType.Bomber;
+  }
+
+  /**
+   * BFS over land-only tiles from `from`. Returns true if any visible enemy-owned
+   * city is reachable within `maxDist` steps. Sea tiles are never crossed, so two
+   * cities separated by even a single ocean tile will NOT trigger this check.
+   */
+  private enemyCityWithinLandDist(obs: AgentObservation, from: Coord, maxDist: number): boolean {
+    const enemySet = new Set(
+      obs.visibleEnemyCities
+        .filter((c) => c.owner !== null)
+        .map((c) => `${c.x},${c.y}`),
     );
-    return !hasIdle;
+    if (enemySet.size === 0) return false;
+
+    const visited = new Set<string>();
+    visited.add(`${from.x},${from.y}`);
+    const queue: Array<{ x: number; y: number; dist: number }> = [
+      { x: from.x, y: from.y, dist: 0 },
+    ];
+    const dirs = [
+      { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+      { x: -1, y:  0 },                   { x: 1, y:  0 },
+      { x: -1, y:  1 }, { x: 0, y:  1 }, { x: 1, y:  1 },
+    ];
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      if (cur.dist >= maxDist) continue;
+      for (const d of dirs) {
+        const nx = wrapX(cur.x + d.x, this.mapWidth);
+        const ny = cur.y + d.y;
+        const k  = `${nx},${ny}`;
+        if (visited.has(k)) continue;
+        visited.add(k);
+        const tile = obs.tiles[ny]?.[nx];
+        if (!tile || tile.terrain !== Terrain.Land) continue; // ocean / unexplored = impassable
+        if (enemySet.has(k)) return true;
+        queue.push({ x: nx, y: ny, dist: cur.dist + 1 });
+      }
+    }
+    return false;
   }
 
   private decideUnitAction(obs: AgentObservation, unit: UnitView): AgentAction | null {
@@ -356,10 +370,16 @@ export class BasicAgent implements Agent {
       }
     }
 
+    // ── EXPLORE ────────────────────────────────────────────────────────────────
+    // Always explore the current island first, regardless of phase.
+    // moveTowardExploration for land units is constrained to land tiles so it
+    // only ever explores the island the army is currently standing on.
+    // Armies don't head to the coast until the whole island is mapped.
+    const explorationMove = this.moveTowardExploration(obs, unit);
+    if (explorationMove) return explorationMove;
+
     // ── BOARD WAITING TRANSPORT ───────────────────────────────────────────────
-    // Phase 2/3: home island is done — board any non-full transport that is
-    // adjacent to a city on a MINE island. Transports sit in water next to land;
-    // they are never ON a city tile, so we check adjacency, not exact position.
+    // Island is fully explored — now head to the coast for boarding.
     if (this.phase >= 2) {
       const { mineIndices, islandOf } = this.classifyIslands(obs);
       const onMine = (x: number, y: number) => { const i = islandOf.get(`${x},${y}`); return i !== undefined && mineIndices.has(i); };
@@ -399,11 +419,6 @@ export class BasicAgent implements Agent {
         if (move) return move;
       }
     }
-
-    // ── EXPLORE ────────────────────────────────────────────────────────────────
-    // Phase 1: find neutral cities on the home island before they're visible.
-    const explorationMove = this.moveTowardExploration(obs, unit);
-    if (explorationMove) return explorationMove;
 
     // Wait at the nearest coastal city for a transport to arrive.
     const coastal = this.nearestCity(obs.myCities.filter((c) => c.coastal), unit);
@@ -637,7 +652,7 @@ export class BasicAgent implements Agent {
       const bomberMoves = UNIT_STATS[UnitType.Bomber].movesPerTurn;
       const blastR = obs.myBomberBlastRadius;
 
-      // Return to nearest friendly city if fuel is too low to make a strike
+      // Return to nearest friendly city if fuel is too low to make a strike.
       if ((unit.fuel ?? bomberMoves) < bomberMoves) {
         const city = obs.myCities.reduce<CityView | null>((best, c) => {
           const d = this.wrappedDist(c, unit);
@@ -647,20 +662,39 @@ export class BasicAgent implements Agent {
         return { type: 'SKIP', unitId: unit.id };
       }
 
+      // Attack any visible high-value target.
       const target = this.findBestBomberTarget(obs, unit, blastR);
       if (target) {
         const m = this.moveToward(obs, unit, target);
         if (m) return m;
       }
 
-      // No target visible — stage at the friendly city closest to our attack objective
+      // No visible target — position at a conflict city: a city we own that is within
+      // 15 tiles of any visible enemy city or unit. From there we can strike immediately
+      // when targets come into view.
+      const CONFLICT_RADIUS = 15;
+      const conflictCities = obs.myCities.filter((c) =>
+        obs.visibleEnemyCities.some((e) => e.owner !== null && this.wrappedDist(c, e) <= CONFLICT_RADIUS) ||
+        obs.visibleEnemyUnits.some((e) => this.wrappedDist(c, e) <= CONFLICT_RADIUS),
+      );
+
+      // Already at a conflict city — hold and wait for targets.
+      if (conflictCities.some((c) => c.x === unit.x && c.y === unit.y)) {
+        return { type: 'SKIP', unitId: unit.id };
+      }
+
+      // Fly to the nearest conflict city.
+      const nearestConflict = this.nearestCity(conflictCities, unit);
+      if (nearestConflict) {
+        const m = this.moveToward(obs, unit, nearestConflict);
+        if (m) return m;
+      }
+
+      // No conflict cities visible yet — fly toward the last known objective.
       const objective = this.attackTarget ?? this.expansionTarget;
       if (objective) {
-        const stagingCity = obs.myCities.reduce<CityView | null>((best, c) => {
-          const d = this.wrappedDist(c, objective);
-          return !best || d < this.wrappedDist(best, objective) ? c : best;
-        }, null);
-        if (stagingCity) { const m = this.moveToward(obs, unit, stagingCity); if (m) return m; }
+        const m = this.moveToward(obs, unit, objective);
+        if (m) return m;
       }
     }
 
@@ -875,6 +909,35 @@ export class BasicAgent implements Agent {
     return null;
   }
 
+  /** BFS over known land tiles; returns true if any adjacent tile is null (never mapped). */
+  /** Returns true if any land tile reachable from `from` has never been explored. */
+  private hasUnexploredLand(obs: AgentObservation, from: Coord): boolean {
+    const visited = new Set<string>();
+    const queue: Coord[] = [{ x: from.x, y: from.y }];
+    visited.add(`${from.x},${from.y}`);
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      for (const [dx, dy] of [
+        [-1, -1], [0, -1], [1, -1],
+        [-1,  0],           [1,  0],
+        [-1,  1], [0,  1], [1,  1],
+      ] as [number, number][]) {
+        const nx = wrapX(cur.x + dx, this.mapWidth);
+        const ny = cur.y + dy;
+        if (ny <= 0 || ny >= this.mapHeight - 1) continue;
+        const k = `${nx},${ny}`;
+        if (visited.has(k)) continue;
+        visited.add(k);
+        const tile = obs.tiles[ny]?.[nx];
+        if (!tile) continue;                                                  // off-map
+        if (tile.terrain !== Terrain.Land) continue;                         // skip ocean / ice
+        if (tile.visibility === TileVisibility.Hidden) return true;           // unexplored land
+        queue.push({ x: nx, y: ny });
+      }
+    }
+    return false;
+  }
+
   private moveTowardExploration(obs: AgentObservation, unit: UnitView): AgentAction | null {
     const stats = UNIT_STATS[unit.type];
     const canEnterExplore = (x: number, y: number): boolean => {
@@ -915,15 +978,9 @@ export class BasicAgent implements Agent {
         const tile = obs.tiles[ny]?.[nx];
         const firstStep = cur.first ?? { x: nx, y: ny };
 
-        // Null = never seen: always an exploration target. Return the first step
-        // toward it (which is a known navigable tile, not the null tile itself).
-        if (!tile) {
-          return { type: 'MOVE', unitId: unit.id, to: firstStep };
-        }
-
         if (!canEnterExplore(nx, ny)) continue;
 
-        // Hidden = seen before but outside current vision: worth revisiting.
+        // Hidden = never explored: worth exploring (Seen = was explored, skip).
         if (tile.visibility === TileVisibility.Hidden) {
           return { type: 'MOVE', unitId: unit.id, to: firstStep };
         }

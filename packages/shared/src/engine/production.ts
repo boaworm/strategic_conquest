@@ -57,8 +57,9 @@ export function advanceProduction(
         state.bombersProduced[pid] = (state.bombersProduced[pid] ?? 0) + 1;
       }
 
-      // Reset production timer and progress
-      city.productionTurnsLeft = stats.buildTime;
+      // Clear production so the agent re-evaluates what to build next.
+      city.producing = null;
+      city.productionTurnsLeft = 0;
       city.productionProgress = 0;
     }
   }

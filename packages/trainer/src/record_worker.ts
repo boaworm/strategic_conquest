@@ -138,9 +138,19 @@ for (let g = 0; g < numGames; g++) {
   fs.writeFileSync(path.join(replayDir, `${id}.json`), JSON.stringify({ meta, tiles: state.tiles, frames }));
   completed++;
 
+  const phaseTag = (agent: Agent, prefix: string): string => {
+    if (!(agent instanceof BasicAgent)) return '';
+    const { phase2Turn, phase3Turn } = agent.getPhaseTransitions();
+    return [
+      phase2Turn !== undefined ? `${prefix}ph2=${phase2Turn}` : '',
+      phase3Turn !== undefined ? `${prefix}ph3=${phase3Turn}` : '',
+    ].filter(Boolean).join(' ');
+  };
+  const phaseParts = [phaseTag(agents.player1, 'p1'), phaseTag(agents.player2, 'p2')].filter(Boolean).join(' ');
+
   process.stderr.write(
     `[W${workerId}] game ${gameNum + g}: [${id.slice(0, 8)}] turns=${state.turn} winner=${state.winner ?? 'draw'} ` +
-    `p1=${p1Cities} p2=${p2Cities} neutral=${neutral}\n`,
+    `p1=${p1Cities} p2=${p2Cities} neutral=${neutral}${phaseParts ? ' ' + phaseParts : ''}\n`,
   );
 
   if (g === 0 || (g + 1) % 10 === 0 || g === numGames - 1) {

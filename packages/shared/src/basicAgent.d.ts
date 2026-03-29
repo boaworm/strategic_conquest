@@ -11,6 +11,7 @@ export declare class BasicAgent implements Agent {
     private mapWidth;
     private mapHeight;
     init(config: AgentConfig): void;
+    getPhaseTransitions(): { phase2Turn: number | undefined; phase3Turn: number | undefined };
     act(obs: AgentObservation): AgentAction;
     private chooseProduction;
     private requiresNavalApproach;
