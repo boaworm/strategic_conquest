@@ -23,6 +23,7 @@ import {
   type MovementRulesSchema,
 } from './basicAgent_movementRulesEngine.js';
 import MOVEMENT_RULES from '../../../movement_rules.json' with { type: 'json' };
+import PRODUCTION_RULES_RAW from '../../../production_rules.json' with { type: 'json' };
 
 // ── Type for MovementHelpers (mirrors basicAgent_movementRulesEngine.ts) ─────
 
@@ -57,45 +58,10 @@ type MovementHelpers = {
   getIslandsByFriendlyState(obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, isFriendly: boolean): number[];
 };
 
-// Mirrors production_rules.json — the JSON file is the human-readable spec.
+// The production_rules.json file contains extra metadata (phases, shared_functions)
+// that isn't part of the ProductionRulesSchema. Extract just the production section.
 const PRODUCTION_RULES: ProductionRulesSchema = {
-  production: {
-    Explore: [
-      { conditions: [], produce: 'Army' },
-    ],
-    Expand: [
-      {
-        conditions: [
-          'City has access to water',
-          'active_transports < max(1, ceil(army_producing_cities_on_this_island / 3))',
-        ],
-        produce: 'Transport',
-      },
-      { produce: 'Army' },
-    ],
-    Combat: [
-      {
-        conditions: ['Enemy city is reachable by land from this city'],
-        produce: 'Army',
-      },
-      {
-        conditions: ['City has no access to water'],
-        produce: 'balance(Fighter, Bomber)',
-      },
-      {
-        conditions: ['City has access to water'],
-        produce: 'lowest_score(Transport, Battleship, Submarine, Destroyer, Fighter, Bomber)',
-        scaling_factors: {
-          Transport:  1,
-          Battleship: 2,
-          Submarine:  2,
-          Destroyer:  1,
-          Fighter:    1,
-          Bomber:     1,
-        },
-      },
-    ],
-  },
+  production: PRODUCTION_RULES_RAW.production,
 };
 
 /**
