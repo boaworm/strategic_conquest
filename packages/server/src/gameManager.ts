@@ -8,6 +8,7 @@ import {
   createGameState,
   applyAction,
   getPlayerView,
+  advanceProduction,
   type AIDifficulty,
   UNIT_STATS,
 } from '@sc/shared';
@@ -264,7 +265,10 @@ export class GameManager {
     session.state.currentPlayer = nextPlayer;
     session.state.turn++;
 
-    // Reset moves and attack status for the new player's units
+    // Advance production for the new current player (at beginning of turn)
+    advanceProduction(session.state, nextPlayer);
+
+    // Reset moves and attack status for the new player's units (including newly produced)
     for (const unit of session.state.units) {
       if (unit.owner === nextPlayer) {
         const stats = UNIT_STATS[unit.type];

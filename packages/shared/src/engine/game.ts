@@ -623,39 +623,21 @@ function handleUnload(
   return { success: true, cityCaptured: captureResult.captured ?? undefined, cityCaptureFailed: captureResult.failed };
 }
 
-function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
-  // Advance production for current player
+/**
+ * Handle the beginning of a player's turn:
+ * - Advance production
+ * - Reset moves and attack status
+ * - Repair capital ships
+ * - Refuel air units
+ * - Clear seen enemies
+ */
+function handleBeginOfTurn(state: GameState, playerId: PlayerId): void {
+  // Advance production for this player (at beginning of turn)
   advanceProduction(state, playerId);
 
-  // Crash fighters not on a friendly city or carrier
-  let fightersCrashed = 0;
+  // Refresh moves and attack status for this player's units (including newly produced)
   for (const unit of state.units) {
-    if (unit.owner !== playerId) continue;
-    if (unit.type !== UnitType.Fighter) continue;
-    if (unit.carriedBy !== null) continue; // safe on carrier
-    const onCity = state.cities.some(
-      (c) => c.x === unit.x && c.y === unit.y && c.owner === unit.owner,
-    );
-    if (!onCity) {
-      unit.health = 0;
-      fightersCrashed++;
-    }
-  }
-  if (fightersCrashed > 0) {
-    removeDestroyedUnits(state);
-  }
-
-  // Switch player
-  if (state.currentPlayer === 'player1') {
-    state.currentPlayer = 'player2';
-  } else {
-    state.currentPlayer = 'player1';
-    state.turn++;
-  }
-
-  // Refresh moves for the new current player's units
-  for (const unit of state.units) {
-    if (unit.owner === state.currentPlayer) {
+    if (unit.owner === playerId) {
       const stats = UNIT_STATS[unit.type];
       unit.movesLeft = stats.movesPerTurn;
       unit.hasAttacked = false;
@@ -665,7 +647,7 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
   // Repair capital ships in cities
   for (const unit of state.units) {
     if (
-      unit.owner === state.currentPlayer &&
+      unit.owner === playerId &&
       (unit.type === UnitType.Battleship || unit.type === UnitType.Carrier) &&
       unit.health < UNIT_STATS[unit.type].maxHealth
     ) {
@@ -680,7 +662,7 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
 
   // Refuel air units on cities or carriers
   for (const unit of state.units) {
-    if (unit.owner === state.currentPlayer && unit.fuel !== undefined) {
+    if (unit.owner === playerId && unit.fuel !== undefined) {
       const stats = UNIT_STATS[unit.type];
       // On a friendly city?
       const onCity = state.cities.some(
@@ -695,11 +677,42 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
     }
   }
 
-  // Clear seen enemies for the new current player (fresh turn)
-  state.seenEnemies[state.currentPlayer] = [];
+  // Clear seen enemies for this player (fresh turn)
+  state.seenEnemies[playerId] = [];
+}
+
+function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
+  // Crash fighters and bombers not on a friendly city or carrier
+  let aircraftCrashed = 0;
+  for (const unit of state.units) {
+    if (unit.owner !== playerId) continue;
+    if (unit.type !== UnitType.Fighter && unit.type !== UnitType.Bomber) continue;
+    if (unit.carriedBy !== null) continue; // safe on carrier
+    const onCity = state.cities.some(
+      (c) => c.x === unit.x && c.y === unit.y && c.owner === unit.owner,
+    );
+    if (!onCity) {
+      unit.health = 0;
+      aircraftCrashed++;
+    }
+  }
+  if (aircraftCrashed > 0) {
+    removeDestroyedUnits(state);
+  }
+
+  // Switch player
+  if (state.currentPlayer === 'player1') {
+    state.currentPlayer = 'player2';
+  } else {
+    state.currentPlayer = 'player1';
+    state.turn++;
+  }
+
+  // Handle the beginning of the new current player's turn
+  handleBeginOfTurn(state, state.currentPlayer);
 
   checkWinCondition(state);
-  return { success: true, fightersCrashed: fightersCrashed > 0 ? fightersCrashed : undefined };
+  return { success: true, fightersCrashed: aircraftCrashed > 0 ? aircraftCrashed : undefined };
 }
 
 function checkWinCondition(state: GameState): void {

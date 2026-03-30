@@ -49,13 +49,18 @@ type MovementHelpers = {
   findWaitingTransport(unit: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number): UnitView | null;
   isAdjacentToTransportWithRoom(unit: UnitView, obs: AgentObservation, mapWidth: number): UnitView | null;
   isOnboardTransport(unit: UnitView): boolean;
-  canDisembarkToUnexploredOrContested(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, exploredIslands: Set<number>): Coord | null;
+  canDisembarkToUnexploredOrContested(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, exploredIslands: Set<number>): number | null;
   anotherTransportWithEqualOrFewerArmies(currentTransport: UnitView, obs: AgentObservation, islandOf: Map<string, number>): boolean;
   isTransportParked(obs: AgentObservation, unit: UnitView, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number): boolean;
+  isTransportOnLandAtCity(obs: AgentObservation, unit: UnitView, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number): boolean;
   findAnyLandOnIsland(obs: AgentObservation, islandOf: Map<string, number>, islandIdx: number, mapWidth: number, mapHeight: number): Coord | null;
   findCoastalCityOnIsland(obs: AgentObservation, islandIdx: number, mineIndices: Set<number>, islandOf: Map<string, number>, mapWidth: number): Coord | null;
   getIslandsByExploredState(obs: AgentObservation, islandOf: Map<string, number>, exploredIslands: Set<number>, isExplored: boolean): number[];
   getIslandsByFriendlyState(obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, isFriendly: boolean): number[];
+  shouldTransportDepart(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number): boolean;
+  friendlyIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>): number | null;
+  contestedIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>): number | null;
+  getSeaUnitIslandIdx(x: number, y: number, islandOf: Map<string, number>): number | undefined;
 };
 
 // The production_rules.json file contains extra metadata (phases, shared_functions)
@@ -248,10 +253,15 @@ export class BasicAgent implements Agent {
       anotherTransportWithEqualOrFewerArmies: (currentTransport, obs, islandOf) =>
         this.anotherTransportWithEqualOrFewerArmies(currentTransport, obs, islandOf),
       isTransportParked: (obs, unit, islandOf, mineIndices) => this.isTransportParked(obs, unit, islandOf, mineIndices, this.mapWidth),
+      isTransportOnLandAtCity: (obs, unit, islandOf, mineIndices) => this.isTransportOnLandAtCity(obs, unit, islandOf, mineIndices, this.mapWidth),
       findAnyLandOnIsland: (obs, islandOf, islandIdx) => this.findAnyLandOnIsland(obs, islandOf, islandIdx, this.mapWidth, this.mapHeight),
       findCoastalCityOnIsland: (obs, islandIdx, mineIndices, islandOf) => this.findCoastalCityOnIsland(obs, islandIdx, mineIndices, islandOf, this.mapWidth),
       getIslandsByExploredState: (obs, islandOf, exploredIslands, isExplored) => this.getIslandsByExploredState(obs, islandOf, exploredIslands, isExplored),
       getIslandsByFriendlyState: (obs, islandOf, mineIndices, isFriendly) => this.getIslandsByFriendlyState(obs, islandOf, mineIndices, isFriendly),
+      shouldTransportDepart: (transport, obs, islandOf, mineIndices) => this.shouldTransportDepart(transport, obs, islandOf, mineIndices, this.mapWidth),
+      friendlyIslandWithMostArmies: (obs, islandOf, mineIndices) => this.friendlyIslandWithMostArmies(obs, islandOf, mineIndices),
+      contestedIslandWithMostArmies: (obs, islandOf) => this.contestedIslandWithMostArmies(obs, islandOf),
+      getSeaUnitIslandIdx: (x, y, islandOf) => this.getSeaUnitIslandIdx(x, y, islandOf),
     };
   }
 
@@ -262,6 +272,21 @@ export class BasicAgent implements Agent {
    */
   private isPhase(phase: 1 | 2 | 3): boolean {
     return this.phase === phase;
+  }
+
+  /**
+   * Get island index for a position, handling ocean tiles by checking adjacent land.
+   * Sea units on ocean are considered "at" the nearest adjacent island.
+   */
+  private getSeaUnitIslandIdx(x: number, y: number, islandOf: Map<string, number>): number | undefined {
+    const idx = islandOf.get(`${x},${y}`);
+    if (idx !== undefined) return idx;
+    const adj = this.getAdjacentTiles(x, y, this.mapWidth);
+    for (const tile of adj) {
+      const adjIdx = islandOf.get(`${tile.x},${tile.y}`);
+      if (adjIdx !== undefined) return adjIdx;
+    }
+    return undefined;
   }
 
   /**
@@ -354,18 +379,25 @@ export class BasicAgent implements Agent {
   }
 
   /**
-   * Check if transport can disembark to unexplored or contested land.
+   * Check if transport can disembark to unexplored or contested island.
+   * Returns the island index if yes, null otherwise.
    */
-  private canDisembarkToUnexploredOrContested(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, exploredIslands: Set<number>): Coord | null {
+  private canDisembarkToUnexploredOrContested(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, exploredIslands: Set<number>): number | null {
     const adjacentLand = this.getAdjacentLandTiles(obs, transport.x, transport.y, this.mapWidth);
+    const disembarkIslands = new Set<number>();
     for (const land of adjacentLand) {
       const landIdx = islandOf.get(`${land.x},${land.y}`);
+      if (landIdx === undefined) continue;
       const notExplored = !this.isIslandExplored(landIdx, exploredIslands);
       const notFriendly = !this.isIslandFriendly(landIdx, mineIndices);
 
       if (notExplored || notFriendly) {
-        return land;
+        disembarkIslands.add(landIdx);
       }
+    }
+    // Return first disembarkable island (or null if none)
+    for (const islandIdx of disembarkIslands) {
+      return islandIdx;
     }
     return null;
   }
@@ -382,24 +414,23 @@ export class BasicAgent implements Agent {
     mapWidth: number,
   ): UnitView | null {
     const cap = UNIT_STATS[UnitType.Transport].cargoCapacity;
-    const myIslandIdx = islandOf.get(`${unit.x},${unit.y}`);
+    const myIslandIdx = this.getSeaUnitIslandIdx(unit.x, unit.y, islandOf);
     if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) {
       return null; // Not on a friendly island
     }
 
     // Find transports that are:
-    // 1. On friendly island
-    // 2. On ocean tile (offshore)
+    // 1. Adjacent to friendly island (offshore)
+    // 2. On ocean tile
     // 3. Has room for cargo
-    // 4. Not currently sailing with armies
     for (const transport of obs.myUnits) {
       if (transport.type !== UnitType.Transport) continue;
       if (transport.id === unit.id) continue; // Skip self
       if (transport.cargo.length >= cap) continue; // Full
 
-      const transportIslandIdx = islandOf.get(`${transport.x},${transport.y}`);
+      const transportIslandIdx = this.getSeaUnitIslandIdx(transport.x, transport.y, islandOf);
       if (transportIslandIdx === undefined || !mineIndices.has(transportIslandIdx)) {
-        continue; // Not on friendly island
+        continue; // Not at friendly island
       }
 
       // Check if transport is on ocean (offshore)
@@ -413,6 +444,70 @@ export class BasicAgent implements Agent {
     }
 
     return null;
+  }
+
+  /**
+   * Check if transport should depart the friendly island.
+   * Returns true if:
+   * a) Transport is full, OR
+   * b) No friendly armies at the island, OR
+   * c) Another friendly transport at the same island has same or fewer armies
+   */
+  private shouldTransportDepart(
+    transport: UnitView,
+    obs: AgentObservation,
+    islandOf: Map<string, number>,
+    mineIndices: Set<number>,
+    mapWidth: number
+  ): boolean {
+    const cap = UNIT_STATS[UnitType.Transport].cargoCapacity;
+    const transportIslandIdx = this.getSeaUnitIslandIdx(transport.x, transport.y, islandOf);
+    if (transportIslandIdx === undefined || !mineIndices.has(transportIslandIdx)) {
+      return false; // Not at friendly island
+    }
+
+    // Check if transport is on ocean (offshore)
+    const transportTile = obs.tiles[transport.y]?.[transport.x];
+    if (!transportTile || transportTile.terrain !== Terrain.Ocean) {
+      return false; // Not on ocean
+    }
+
+    // a) Transport is full
+    if (transport.cargo.length >= cap) {
+      return true;
+    }
+
+    // b) Count friendly armies at the island
+    let friendlyArmyCount = 0;
+    for (const unit of obs.myUnits) {
+      if (unit.type === UnitType.Army && unit.carriedBy === null) {
+        const unitIsland = islandOf.get(`${unit.x},${unit.y}`);
+        if (unitIsland === transportIslandIdx) {
+          friendlyArmyCount++;
+        }
+      }
+    }
+    if (friendlyArmyCount === 0) {
+      return true;
+    }
+
+    // c) Check if another transport at same island has same or fewer armies
+    for (const unit of obs.myUnits) {
+      if (unit.type === UnitType.Transport && unit.id !== transport.id) {
+        const otherIsland = this.getSeaUnitIslandIdx(unit.x, unit.y, islandOf);
+        if (otherIsland === transportIslandIdx) {
+          // Check if other transport is also on ocean at same island
+          const otherTile = obs.tiles[unit.y]?.[unit.x];
+          if (otherTile && otherTile.terrain === Terrain.Ocean) {
+            if (unit.cargo.length <= transport.cargo.length) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -935,7 +1030,7 @@ export class BasicAgent implements Agent {
    */
   private anotherTransportWithEqualOrFewerArmies(currentTransport: UnitView, obs: AgentObservation, islandOf: Map<string, number>): boolean {
     const cap = UNIT_STATS[UnitType.Transport].cargoCapacity;
-    const currentIslandIdx = islandOf.get(`${currentTransport.x},${currentTransport.y}`);
+    const currentIslandIdx = this.getSeaUnitIslandIdx(currentTransport.x, currentTransport.y, islandOf);
     if (currentIslandIdx === undefined) return false;
 
     for (const transport of obs.myUnits) {
@@ -943,7 +1038,7 @@ export class BasicAgent implements Agent {
       if (transport.id === currentTransport.id) continue; // Skip self
       if (transport.carriedBy !== null) continue; // Only count transports at sea
 
-      const transportIslandIdx = islandOf.get(`${transport.x},${transport.y}`);
+      const transportIslandIdx = this.getSeaUnitIslandIdx(transport.x, transport.y, islandOf);
       if (transportIslandIdx !== currentIslandIdx) continue; // Different island
 
       if (transport.cargo.length <= currentTransport.cargo.length) {
@@ -957,15 +1052,15 @@ export class BasicAgent implements Agent {
    * Check if transport is already parked on a coastal sea tile adjacent to a friendly city.
    */
   private isTransportParked(obs: AgentObservation, unit: UnitView, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number): boolean {
-    const myIslandIdx = islandOf.get(`${unit.x},${unit.y}`);
-    if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) {
-      return false; // Not on a friendly island
-    }
-
     // Check if unit is on an ocean tile (parked position)
     const currentTile = obs.tiles[unit.y]?.[unit.x];
     if (!currentTile || currentTile.terrain !== Terrain.Ocean) {
       return false; // Not on ocean
+    }
+
+    const myIslandIdx = this.getSeaUnitIslandIdx(unit.x, unit.y, islandOf);
+    if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) {
+      return false; // Not adjacent to a friendly island
     }
 
     // Check if adjacent to a friendly coastal city on the same island
@@ -988,6 +1083,22 @@ export class BasicAgent implements Agent {
     }
 
     return false;
+  }
+
+  /**
+   * Check if transport is on land at a friendly city.
+   */
+  private isTransportOnLandAtCity(obs: AgentObservation, unit: UnitView, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number): boolean {
+    if (unit.type !== UnitType.Transport) return false;
+    const myIslandIdx = islandOf.get(`${unit.x},${unit.y}`);
+    if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) {
+      return false; // Not on a friendly island
+    }
+    // Check if transport is on land at a friendly city
+    const tile = obs.tiles[unit.y]?.[unit.x];
+    if (!tile || tile.terrain !== Terrain.Land) return false;
+    const city = obs.myCities.find((c) => c.x === unit.x && c.y === unit.y);
+    return city !== undefined;
   }
 
   /**
@@ -1121,5 +1232,53 @@ export class BasicAgent implements Agent {
       const idx = islandOf.get(`${c.x},${c.y}`);
       return idx !== undefined && mineIndices.has(idx);
     });
+  }
+
+  /**
+   * Find friendly island with most armies. Returns island index or null.
+   */
+  private friendlyIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>): number | null {
+    const armyCounts = new Map<number, number>();
+    for (const unit of obs.myUnits) {
+      if (unit.type === UnitType.Army && unit.carriedBy === null) {
+        const idx = islandOf.get(`${unit.x},${unit.y}`);
+        if (idx !== undefined && mineIndices.has(idx)) {
+          armyCounts.set(idx, (armyCounts.get(idx) || 0) + 1);
+        }
+      }
+    }
+    let maxCount = -1;
+    let maxIdx: number | null = null;
+    for (const [idx, count] of armyCounts) {
+      if (count > maxCount) {
+        maxCount = count;
+        maxIdx = idx;
+      }
+    }
+    return maxIdx;
+  }
+
+  /**
+   * Find contested island with most armies. Returns island index or null.
+   */
+  private contestedIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>): number | null {
+    const armyCounts = new Map<number, number>();
+    for (const unit of obs.myUnits) {
+      if (unit.type === UnitType.Army && unit.carriedBy === null) {
+        const idx = islandOf.get(`${unit.x},${unit.y}`);
+        if (idx !== undefined) {
+          armyCounts.set(idx, (armyCounts.get(idx) || 0) + 1);
+        }
+      }
+    }
+    let maxCount = -1;
+    let maxIdx: number | null = null;
+    for (const [idx, count] of armyCounts) {
+      if (count > maxCount) {
+        maxCount = count;
+        maxIdx = idx;
+      }
+    }
+    return maxIdx;
   }
 }

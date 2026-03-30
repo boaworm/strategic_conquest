@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspace=packages/shared && npm run build --workspace=packages/client",
+    "clean": "tsc --build --clean packages/shared packages/client && rm -rf packages/server/public/assets",
     "start": "npm run build && npx tsx packages/server/src/index.ts",
     "dev": "npm run build && npx tsx watch packages/server/src/index.ts",
     "test": "npm test --workspaces --if-present",
