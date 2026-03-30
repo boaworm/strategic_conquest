@@ -20,6 +20,10 @@ interface ReplayMeta {
   mapWidth: number;
   mapHeight: number;
   frames: number;
+  p1Phase2Turn?: number;
+  p1Phase3Turn?: number;
+  p2Phase2Turn?: number;
+  p2Phase3Turn?: number;
 }
 
 interface ReplayFrame {
@@ -28,6 +32,8 @@ interface ReplayFrame {
   cities: City[];
   units: Unit[];
   winner: string | null;
+  p1Phase?: number;
+  p2Phase?: number;
 }
 
 interface ReplayData {
@@ -49,6 +55,9 @@ const COL_GRID         = 'rgba(0,0,0,0.2)';
 const COL_P1           = '#4a9eed';
 const COL_P2           = '#ed4a4a';
 const COL_NEUTRAL      = '#aaa';
+const COL_PHASE1       = '#22c55e'; // green
+const COL_PHASE2       = '#3b82f6'; // blue
+const COL_PHASE3       = '#ef4444'; // red
 
 function ownerColor(owner: string | null): string {
   if (owner === 'player1') return COL_P1;
@@ -406,6 +415,72 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
   );
 }
 
+// ── Phase track bars component (renders bars only, no label) ───
+
+interface PhaseTrackBarsProps {
+  totalFrames: number;
+  phase2Turn?: number;
+  phase3Turn?: number;
+  color: string;
+}
+
+function PhaseTrackBars({ totalFrames, phase2Turn, phase3Turn, color }: PhaseTrackBarsProps) {
+  if (totalFrames === 0) return null;
+
+  const p2T = phase2Turn ?? totalFrames;
+  const p3T = phase3Turn ?? totalFrames;
+
+  const t1 = 0;
+  const t2 = Math.min(p2T, p3T);
+  const t3 = p3T;
+
+  const bars: React.ReactNode[] = [];
+
+  if (t2 > 0) {
+    bars.push(
+      <div
+        key="p1"
+        className="absolute top-0 bottom-0"
+        style={{
+          left: `${(t1 / totalFrames) * 100}%`,
+          width: `${((t2 - t1) / totalFrames) * 100}%`,
+          backgroundColor: COL_PHASE1,
+        }}
+      />
+    );
+  }
+
+  if (t3 > t2) {
+    bars.push(
+      <div
+        key="p2"
+        className="absolute top-0 bottom-0"
+        style={{
+          left: `${(t2 / totalFrames) * 100}%`,
+          width: `${((t3 - t2) / totalFrames) * 100}%`,
+          backgroundColor: COL_PHASE2,
+        }}
+      />
+    );
+  }
+
+  if (totalFrames > t3) {
+    bars.push(
+      <div
+        key="p3"
+        className="absolute top-0 bottom-0"
+        style={{
+          left: `${(t3 / totalFrames) * 100}%`,
+          width: `${((totalFrames - t3) / totalFrames) * 100}%`,
+          backgroundColor: COL_PHASE3,
+        }}
+      />
+    );
+  }
+
+  return <>{bars}</>;
+}
+
 // ── Unit table constants ──────────────────────────────────────
 
 const UNIT_TYPES_ORDERED = [
@@ -570,17 +645,67 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
           <ReplayCanvas replay={replay} frame={frame} />
         </div>
 
-        <div className="shrink-0 px-4 py-3 bg-gray-900 border-t border-gray-700 flex items-center gap-3">
-          <button className="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-white text-sm disabled:opacity-40"
-            disabled={frameIdx === 0} onClick={() => setFrameIdx((i) => Math.max(0, i - 1))}>‹</button>
-          <input type="range" min={0} max={total - 1} value={frameIdx}
-            onChange={(e) => setFrameIdx(Number(e.target.value))} className="flex-1" />
-          <button className="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-white text-sm disabled:opacity-40"
-            disabled={frameIdx === total - 1} onClick={() => setFrameIdx((i) => Math.min(total - 1, i + 1))}>›</button>
-          <span className="text-gray-400 text-sm w-24 text-right shrink-0">
-            Turn {frame.turn} &nbsp;({frameIdx + 1}/{total})
-          </span>
-        </div>
+        {/* Phase tracks and slider - table layout */}
+        {replay.frames.length > 0 && (
+          <div className="shrink-0 px-4 py-2 bg-gray-900 border-t border-gray-700">
+            <table className="w-full border-collapse" style={{tableLayout: 'fixed'}}>
+              <colgroup>
+                <col style={{width: '80px'}} />
+                <col style={{width: '100%'}} />
+                <col style={{width: '120px'}} />
+              </colgroup>
+              <tbody>
+                <tr>
+                  <td className="text-xs font-bold align-top" style={{ color: COL_P1 }}>Player 1</td>
+                  <td className="p-0 align-top">
+                    <div className="w-full h-2 bg-gray-800 relative overflow-hidden">
+                      <PhaseTrackBars
+                        totalFrames={total}
+                        phase2Turn={replay.meta.p1Phase2Turn}
+                        phase3Turn={replay.meta.p1Phase3Turn}
+                        color={COL_P1}
+                      />
+                    </div>
+                  </td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td className="text-xs font-bold align-top" style={{ color: COL_P2 }}>Player 2</td>
+                  <td className="p-0 align-top">
+                    <div className="w-full h-2 bg-gray-800 relative overflow-hidden">
+                      <PhaseTrackBars
+                        totalFrames={total}
+                        phase2Turn={replay.meta.p2Phase2Turn}
+                        phase3Turn={replay.meta.p2Phase3Turn}
+                        color={COL_P2}
+                      />
+                    </div>
+                  </td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td className="text-center align-top">
+                    <button className="w-8 h-8 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-white text-sm disabled:opacity-40 flex items-center justify-center"
+                      disabled={frameIdx === 0} onClick={() => setFrameIdx((i) => Math.max(0, i - 1))}>‹</button>
+                  </td>
+                  <td className="p-0 align-top">
+                    <input type="range" min={0} max={total - 1} value={frameIdx}
+                      onChange={(e) => setFrameIdx(Number(e.target.value))} className="w-full h-2" />
+                  </td>
+                  <td className="text-right align-top">
+                    <div className="flex items-center justify-end gap-1">
+                      <button className="w-8 h-8 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-white text-sm disabled:opacity-40 flex items-center justify-center"
+                        disabled={frameIdx === total - 1} onClick={() => setFrameIdx((i) => Math.min(total - 1, i + 1))}>›</button>
+                      <span className="text-gray-400 text-sm whitespace-nowrap">
+                        Turn {frame.turn} ({frameIdx + 1}/{total})
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
   }

@@ -74,7 +74,7 @@ for (let g = 0; g < numGames; g++) {
   agents.player1.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
   agents.player2.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
 
-  const frames: ReturnType<typeof snapshotGame>[] = [snapshotGame(state)];
+  const frames: ReturnType<typeof snapshotGame>[] = [snapshotGame(state, agents)];
   let prevTurn = state.turn;
   let actionsThisTurn = 0;
   let prevPlayer = state.currentPlayer;
@@ -101,13 +101,13 @@ for (let g = 0; g < numGames; g++) {
     }
 
     if (state.turn !== prevTurn) {
-      frames.push(snapshotGame(state));
+      frames.push(snapshotGame(state, agents));
       prevTurn = state.turn;
     }
   }
 
   if (state.winner !== null && frames[frames.length - 1].turn !== state.turn) {
-    frames.push(snapshotGame(state));
+    frames.push(snapshotGame(state, agents));
   }
 
   const p1Cities = state.cities.filter((c) => c.owner === 'player1').length;
@@ -115,6 +115,13 @@ for (let g = 0; g < numGames; g++) {
   const neutral  = state.cities.filter((c) => c.owner === null).length;
 
   const id = randomUUID();
+
+  // Get phase transitions from agents
+  const p1Phase2Turn = agents.player1 instanceof BasicAgent ? agents.player1.getPhaseTransitions().phase2Turn : undefined;
+  const p1Phase3Turn = agents.player1 instanceof BasicAgent ? agents.player1.getPhaseTransitions().phase3Turn : undefined;
+  const p2Phase2Turn = agents.player2 instanceof BasicAgent ? agents.player2.getPhaseTransitions().phase2Turn : undefined;
+  const p2Phase3Turn = agents.player2 instanceof BasicAgent ? agents.player2.getPhaseTransitions().phase3Turn : undefined;
+
   const meta: ReplayMeta = {
     id,
     gameNum: gameNum + g,
@@ -129,6 +136,10 @@ for (let g = 0; g < numGames; g++) {
     frames: frames.length,
     p1Agent: p1AgentName,
     p2Agent: p2AgentName,
+    p1Phase2Turn,
+    p1Phase3Turn,
+    p2Phase2Turn,
+    p2Phase3Turn,
   };
 
   fs.writeFileSync(path.join(replayDir, `${id}.json`), JSON.stringify({ meta, tiles: state.tiles, frames }));
