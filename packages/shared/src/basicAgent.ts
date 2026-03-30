@@ -90,6 +90,20 @@ export class BasicAgent implements Agent {
   private movementEngine!: MovementRulesEngine;
   private movementHelpers!: MovementHelpers;
 
+  // Track turn for cache invalidation
+  private lastTurn: number = -1;
+
+  // Cache for classifyIslands - cleared each turn
+  private islandCache: {
+    key: string | null;
+    result: {
+      islandOf: Map<string, number>;
+      mineIndices: Set<number>;
+      contestedIndices: Set<number>;
+      exploredIslands: Set<number>;
+    };
+  } = { key: null, result: {} as any };
+
   init(config: AgentConfig): void {
     this.playerId = config.playerId;
     this.mapWidth = config.mapWidth;
@@ -813,6 +827,12 @@ export class BasicAgent implements Agent {
     contestedIndices: Set<number>;
     exploredIslands: Set<number>;
   } {
+    // Use cached result if available for this observation
+    const cacheKey = `${obs.turn}`;
+    if (this.islandCache.key === cacheKey) {
+      return this.islandCache.result;
+    }
+
     const tiles = obs.tiles;
     const h = tiles.length;
     const w = tiles[0]?.length ?? 0;
@@ -903,7 +923,9 @@ export class BasicAgent implements Agent {
       }
     }
 
-    return { islandOf, mineIndices, contestedIndices, exploredIslands };
+    const result = { islandOf, mineIndices, contestedIndices, exploredIslands };
+    this.islandCache = { key: cacheKey, result };
+    return result;
   }
 
   // ── Additional Helper Methods (for MovementRulesEngine) ─────────────────────

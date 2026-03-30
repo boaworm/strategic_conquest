@@ -13,6 +13,7 @@
     "replay": "npx tsx src/replay_picker.ts"
   },
   "dependencies": {
-    "@sc/shared": "*"
+    "@sc/shared": "*",
+    "@sc/testing": "*"
   }
 }

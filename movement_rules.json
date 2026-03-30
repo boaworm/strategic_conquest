@@ -12,7 +12,7 @@
   },
 
   "movement": {
-    "Army": {
+    "army": {
       "Explore": [
         {
           "conditions": ["Can reach neutral city on current island"],
@@ -20,11 +20,11 @@
         },
         {
           "conditions": ["Island is contested"],
-          "action": "Move toward enemy city and take it"
+          "action": "Move to enemy city and take it"
         },
         {
           "conditions": ["Island not fully explored"],
-          "action": "Move toward unexplored area"
+          "action": "Move to unexplored area"
         },
         {
           "conditions": [
@@ -43,11 +43,11 @@
         },
         {
           "conditions": ["Island is contested"],
-          "action": "Move toward enemy city and take it"
+          "action": "Move to enemy city and take it"
         },
         {
           "conditions": ["Island not fully explored"],
-          "action": "Move toward unexplored area"
+          "action": "Move to unexplored area"
         },
         {
           "conditions": [
@@ -73,11 +73,11 @@
         },
         {
           "conditions": ["Island is contested"],
-          "action": "Move toward enemy city and take it"
+          "action": "Move to enemy city and take it"
         },
         {
           "conditions": ["Island not fully explored"],
-          "action": "Move toward unexplored area"
+          "action": "Move to unexplored area"
         },
         {
           "conditions": [
@@ -97,7 +97,7 @@
       ]
     },
 
-    "Transport": {
+    "transport": {
       "Explore": [
         {
           "conditions": [
@@ -171,6 +171,15 @@
             "Army is adjacent or same location"
           ],
           "action": "Load army"
+        },
+        {
+          "conditions": [
+            "No units onboard",
+            "At friendly island",
+            "No armies to load",
+            "Unexplored islands available"
+          ],
+          "action": "Sail to unexplored island"
         },
         {
           "conditions": [
@@ -241,7 +250,7 @@
       ]
     },
 
-    "Destroyer": {
+    "destroyer": {
       "Explore": [
         {
           "conditions": ["Enemy transport/destroyer/submarine in range"],
@@ -249,7 +258,7 @@
         },
         {
           "conditions": [],
-          "action": "Move toward unexplored naval areas"
+          "action": "Move to unexplored naval areas"
         },
         {
           "conditions": [],
@@ -264,7 +273,7 @@
         },
         {
           "conditions": [],
-          "action": "Move toward unexplored naval areas"
+          "action": "Move to unexplored naval areas"
         },
         {
           "conditions": [],
@@ -279,7 +288,7 @@
         },
         {
           "conditions": [],
-          "action": "Move toward unexplored naval areas"
+          "action": "Move to unexplored naval areas"
         },
         {
           "conditions": [],
@@ -288,7 +297,7 @@
       ]
     },
 
-    "Fighter": {
+    "fighter": {
       "Explore": [
         {
           "conditions": ["Enemy transport in range with at least one unit onboard"],
@@ -359,7 +368,7 @@
       ]
     },
 
-    "Battleship": {
+    "battleship": {
       "Explore": [
         {
           "conditions": ["Enemy ship in range (transport/destroyer/battleship/carrier)"],
@@ -371,7 +380,7 @@
         },
         {
           "conditions": ["Enemy city not within range but has units"],
-          "action": "Move toward the city"
+          "action": "Move to the city"
         },
         {
           "conditions": [],
@@ -390,7 +399,7 @@
         },
         {
           "conditions": ["Enemy city not within range but has units"],
-          "action": "Move toward the city"
+          "action": "Move to the city"
         },
         {
           "conditions": [],
@@ -409,7 +418,7 @@
         },
         {
           "conditions": ["Enemy city not within range but has units"],
-          "action": "Move toward the city"
+          "action": "Move to the city"
         },
         {
           "conditions": [],
@@ -418,7 +427,7 @@
       ]
     },
 
-    "Submarine": {
+    "submarine": {
       "Explore": [
         {
           "conditions": ["Enemy transport/carrier/battleship in range"],
@@ -426,7 +435,7 @@
         },
         {
           "conditions": [],
-          "action": "Move toward unexplored naval areas"
+          "action": "Move to unexplored naval areas"
         },
         {
           "conditions": [],
@@ -441,7 +450,7 @@
         },
         {
           "conditions": [],
-          "action": "Move toward unexplored naval areas"
+          "action": "Move to unexplored naval areas"
         },
         {
           "conditions": [],
@@ -456,7 +465,7 @@
         },
         {
           "conditions": [],
-          "action": "Move toward unexplored naval areas"
+          "action": "Move to unexplored naval areas"
         },
         {
           "conditions": [],
@@ -465,7 +474,7 @@
       ]
     },
 
-    "Bomber": {
+    "bomber": {
       "Explore": [
         {
           "conditions": [
@@ -548,7 +557,7 @@
       ]
     },
 
-    "Carrier": {
+    "carrier": {
       "Explore": [
         {
           "conditions": ["Fighter needs a landing strip"],

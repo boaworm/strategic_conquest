@@ -12,42 +12,42 @@ export interface MovementRule {
 
 export interface MovementRulesSchema {
   movement: {
-    Army: {
+    army: {
       Explore: MovementRule[];
       Expand: MovementRule[];
       Combat: MovementRule[];
     };
-    Transport: {
+    transport: {
       Explore: MovementRule[];
       Expand: MovementRule[];
       Combat: MovementRule[];
     };
-    Destroyer: {
+    destroyer: {
       Explore: MovementRule[];
       Expand: MovementRule[];
       Combat: MovementRule[];
     };
-    Fighter: {
+    fighter: {
       Explore: MovementRule[];
       Expand: MovementRule[];
       Combat: MovementRule[];
     };
-    Battleship: {
+    battleship: {
       Explore: MovementRule[];
       Expand: MovementRule[];
       Combat: MovementRule[];
     };
-    Submarine: {
+    submarine: {
       Explore: MovementRule[];
       Expand: MovementRule[];
       Combat: MovementRule[];
     };
-    Bomber: {
+    bomber: {
       Explore: MovementRule[];
       Expand: MovementRule[];
       Combat: MovementRule[];
     };
-    Carrier: {
+    carrier: {
       Explore: MovementRule[];
       Expand: MovementRule[];
       Combat: MovementRule[];
@@ -286,6 +286,15 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     return !ctx.helpers.isAdjacentToTransportWithRoom(ctx.unit, ctx.obs, ctx.mapWidth);
   });
 
+  map.set('Unexplored islands available', (ctx) => {
+    if (ctx.unit.type !== UnitType.Transport) return false;
+    const { islandOf, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
+    const unexploredIslands = ctx.helpers.getIslandsByExploredState(
+      ctx.obs, islandOf, exploredIslands, false,
+    );
+    return unexploredIslands.length > 0;
+  });
+
   map.set('In combat phase', (ctx) => {
     return ctx.phase === 3;
   });
@@ -476,7 +485,7 @@ export class MovementRulesEngine {
     const unitType = ctx.unit.type;
     const phaseName = PHASE_NAMES[ctx.phase];
 
-    const phaseRules = this.rules.movement[unitType as unknown as 'Army' | 'Transport' | 'Destroyer' | 'Fighter' | 'Battleship' | 'Submarine' | 'Bomber' | 'Carrier']?.[phaseName];
+    const phaseRules = this.rules.movement[unitType as unknown as 'army' | 'transport' | 'destroyer' | 'fighter' | 'battleship' | 'submarine' | 'bomber' | 'carrier']?.[phaseName];
     if (!phaseRules) {
       console.warn(`[MovementRulesEngine] No rules for unit type ${unitType} in phase ${phaseName}`);
       return null;
@@ -541,6 +550,8 @@ export class MovementRulesEngine {
           );
           if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
         }
+        // Unexplored tile exists but not reachable - skip this turn
+        return null;
       }
       if (action.includes('transport and board')) {
         const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
@@ -568,13 +579,63 @@ export class MovementRulesEngine {
       }
     }
 
-    // LOAD action
+    // LOAD action (Army loading onto a transport)
     if (action === 'Load army') {
-      const adjacentTransport = ctx.helpers.isAdjacentToTransportWithRoom(
-        ctx.unit, ctx.obs, ctx.mapWidth,
-      );
-      if (adjacentTransport) {
-        return { type: 'LOAD', unitId: ctx.unit.id, transportId: adjacentTransport.id };
+      // If unit is an Army, try to load onto adjacent transport
+      if (ctx.unit.type === UnitType.Army) {
+        const adjacentTransport = ctx.helpers.isAdjacentToTransportWithRoom(
+          ctx.unit, ctx.obs, ctx.mapWidth,
+        );
+        if (adjacentTransport) {
+          return { type: 'LOAD', unitId: ctx.unit.id, transportId: adjacentTransport.id };
+        }
+        // Transport not adjacent but exists - try to move toward it
+        const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+        // Find all transports with room on the same friendly island
+        const transportsWithRoom = ctx.obs.myUnits.filter(
+          (u) => u.type === UnitType.Transport &&
+                 u.cargo.length < UNIT_STATS[u.type].cargoCapacity,
+        );
+        // Filter to transports on the same friendly island
+        const friendlyTransports = transportsWithRoom.filter((t) => {
+          const transIsland = islandOf.get(`${t.x},${t.y}`);
+          return transIsland !== undefined && mineIndices.has(transIsland);
+        });
+        if (friendlyTransports.length > 0) {
+          // Find nearest transport
+          let nearest: UnitView | null = null;
+          let nearestDist = Infinity;
+          for (const t of friendlyTransports) {
+            const d = ctx.helpers.wrappedDist(t, ctx.unit);
+            if (d < nearestDist) {
+              nearestDist = d;
+              nearest = t;
+            }
+          }
+          if (nearest) {
+            const step = ctx.helpers.bestStepToward(
+              ctx.obs, ctx.unit, nearest, ctx.mapWidth, ctx.mapHeight,
+            );
+            if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+          }
+        }
+      }
+      // If unit is a Transport, check if army is adjacent and load it
+      else if (ctx.unit.type === UnitType.Transport) {
+        const adjTiles = ctx.helpers.getAdjacentTiles(ctx.unit.x, ctx.unit.y, ctx.mapWidth);
+        const allPositions = [...adjTiles, { x: ctx.unit.x, y: ctx.unit.y }];
+        const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+        for (const pos of allPositions) {
+          const army = ctx.obs.myUnits.find(
+            (u) => u.type === UnitType.Army && u.x === pos.x && u.y === pos.y && u.carriedBy === null,
+          );
+          if (army) {
+            const armyIsland = islandOf.get(`${army.x},${army.y}`);
+            if (armyIsland !== undefined && mineIndices.has(armyIsland)) {
+              return { type: 'LOAD', unitId: army.id, transportId: ctx.unit.id };
+            }
+          }
+        }
       }
     }
 
@@ -647,12 +708,21 @@ export class MovementRulesEngine {
         }
       }
       if (action.includes('unexplored island')) {
-        const { islandOf, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
+        const { islandOf, mineIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
         const unexploredIslands = ctx.helpers.getIslandsByExploredState(
           ctx.obs, islandOf, exploredIslands, false,
         );
         if (unexploredIslands.length > 0) {
           const targetIsland = unexploredIslands[0];
+          // If we have armies onboard, try to disembark first
+          if (ctx.unit.cargo.length > 0) {
+            const disembarkTarget = ctx.helpers.canDisembarkToUnexploredOrContested(
+              ctx.unit, ctx.obs, islandOf, mineIndices, exploredIslands,
+            );
+            if (disembarkTarget) {
+              return { type: 'UNLOAD', unitId: ctx.unit.id, to: disembarkTarget };
+            }
+          }
           const targetCity = ctx.helpers.findCoastalCityOnIsland(
             ctx.obs, targetIsland, ctx.helpers.classifyIslands(ctx.obs).mineIndices, islandOf, ctx.mapWidth,
           );
@@ -716,9 +786,38 @@ export class MovementRulesEngine {
     // PARK/WAIT actions
     if (action.includes('Wait') || action.includes('park')) {
       const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      // If already parked, skip
       if (ctx.helpers.isTransportParked(ctx.obs, ctx.unit, islandOf, mineIndices, ctx.mapWidth)) {
         return { type: 'SKIP', unitId: ctx.unit.id };
       }
+      // Otherwise, try to find a parking spot adjacent to a friendly city
+      const coastalCities = ctx.obs.myCities.filter((c) => {
+        for (const [dx, dy] of [
+          [-1, -1], [0, -1], [1, -1],
+          [-1,  0],          [1,  0],
+          [-1,  1], [0,  1], [1,  1],
+        ] as [number, number][]) {
+          const nx = wrapX(c.x + dx, ctx.mapWidth);
+          const ny = c.y + dy;
+          if (ny > 0 && ny < ctx.mapHeight - 1) {
+            const tile = ctx.obs.tiles[ny]?.[nx];
+            if (tile && tile.terrain === Terrain.Ocean) return true;
+          }
+        }
+        return false;
+      }).filter((c) => {
+        const idx = islandOf.get(`${c.x},${c.y}`);
+        return idx !== undefined && mineIndices.has(idx);
+      });
+      for (const city of coastalCities) {
+        const targetTile = ctx.helpers.getAdjacentOceanTiles(ctx.obs, city.x, city.y, ctx.mapWidth);
+        if (targetTile) {
+          const step = ctx.helpers.bestStepToward(ctx.obs, ctx.unit, targetTile, ctx.mapWidth, ctx.mapHeight);
+          if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+        }
+      }
+      // If no parking spot found, just skip
+      return { type: 'SKIP', unitId: ctx.unit.id };
     }
 
     // RETURN/RESUPPLY actions

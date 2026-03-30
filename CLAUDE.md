@@ -14,6 +14,11 @@ cat << 'EOF' > change.patch
 EOF
 patch path/to/file change.patch
 
+## Temporary files, data, scripts
+Keep all things like this in a tmp/ directory in the root level. 
+It should always be OK to remove everything in tmp/
+You should never write to locations outside of the project dir.
+
 ## Commands
 
 ### Running the game (development)

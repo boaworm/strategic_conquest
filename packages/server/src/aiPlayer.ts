@@ -117,6 +117,7 @@ function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId
     visibleEnemyCities: view.visibleEnemyCities,
     turn: view.turn,
     myPlayerId: expectedPlayerId as any,
+    myBomberBlastRadius: view.myBomberBlastRadius,
   });
 
   logAction(prefix, action, view);

@@ -6,7 +6,8 @@
     "packages/shared",
     "packages/server",
     "packages/client",
-    "packages/trainer"
+    "packages/trainer",
+    "packages/testing"
   ],
   "scripts": {
     "build": "npm run build --workspace=packages/shared && npm run build --workspace=packages/client",
@@ -14,6 +15,7 @@
     "dev": "npm run build && npx tsx watch packages/server/src/index.ts",
     "test": "npm test --workspaces --if-present",
     "record": "npm run record --workspace=packages/trainer",
-    "replay": "npm run replay --workspace=packages/trainer"
+    "replay": "npm run replay --workspace=packages/trainer",
+    "profile": "npm run profile --workspace=packages/testing"
   }
 }

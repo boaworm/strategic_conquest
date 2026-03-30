@@ -155,6 +155,37 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     },
   );
 
+  // active_transports < 1 (simple check for no transports)
+  map.set(
+    'active_transports < 1',
+    (ctx) => {
+      const activeTransports = ctx.obs.myUnits.filter(
+        (u) => u.type === UnitType.Transport,
+      ).length;
+      return activeTransports < 1;
+    },
+  );
+
+  return map;
+  map.set(
+    'active_transports < max(1, ceil(army_producing_cities_on_this_island / 3))',
+    (ctx) => {
+      const { islandOf } = ctx.helpers.classifyIslands(ctx.obs);
+      const cityIslandIdx = islandOf.get(`${ctx.city.x},${ctx.city.y}`);
+      const armyCitiesHere = ctx.obs.myCities.filter(
+        (c) =>
+          c.id !== ctx.city.id &&
+          c.producing === UnitType.Army &&
+          islandOf.get(`${c.x},${c.y}`) === cityIslandIdx,
+      ).length;
+      const activeTransports = ctx.obs.myUnits.filter(
+        (u) => u.type === UnitType.Transport,
+      ).length;
+      const target = Math.max(1, Math.ceil(armyCitiesHere / 3));
+      return activeTransports < target;
+    },
+  );
+
   return map;
 }
 
