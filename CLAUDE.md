@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Patching rules
+Precision Editing Protocol
+Anchor Strategy: When using edit_file, use the smallest possible old_str that is still unique. Avoid including more than 1 line of unchanged context.
+
+Verification: You MUST run grep -F (fixed strings) on your intended old_str before calling edit_file to ensure a match exists.
+
+Fallback to Patch: If an edit_file call fails once, DO NOT try again with the same tool. Instead, generate a Unified Diff and use the bash tool to apply it:
+cat << 'EOF' > change.patch
+[DIFF CONTENT]
+EOF
+patch path/to/file change.patch
+
 ## Commands
 
 ### Running the game (development)

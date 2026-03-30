@@ -1,0 +1,605 @@
+{
+  "implementation_instructions": {
+    "unit_movement": "Unit movement should be evaluated for each unit type from top to bottom, executing the first matching condition. If no condition matches, perform the wait move.",
+    "shared_functions": "Use existing shared functions where applicable.",
+    "unit_order": "Sea units first, then air, then land. Within sea units: Transport with Army > other Sea > Bomber > Fighter > other Land."
+  },
+
+  "phases": {
+    "Explore": "Fully explore starting island and take all cities.",
+    "Expand": "Home island secure — build transports, push armies to other islands.",
+    "Combat": "First enemy contact made — prioritize combat."
+  },
+
+  "movement": {
+    "Army": {
+      "Explore": [
+        {
+          "conditions": ["Can reach neutral city on current island"],
+          "action": "Move to nearest neutral city and take it"
+        },
+        {
+          "conditions": ["Island is contested"],
+          "action": "Move toward enemy city and take it"
+        },
+        {
+          "conditions": ["Island not fully explored"],
+          "action": "Move toward unexplored area"
+        },
+        {
+          "conditions": [
+            "Island not fully explored",
+            "Adjacent to friendly transport with room",
+            "Transport has no army onboard"
+          ],
+          "action": "Board transport to explore new islands"
+        }
+      ],
+
+      "Expand": [
+        {
+          "conditions": ["Can reach neutral city on current island"],
+          "action": "Move to nearest neutral city and take it"
+        },
+        {
+          "conditions": ["Island is contested"],
+          "action": "Move toward enemy city and take it"
+        },
+        {
+          "conditions": ["Island not fully explored"],
+          "action": "Move toward unexplored area"
+        },
+        {
+          "conditions": [
+            "Onboard transport",
+            "Can disembark to unexplored or contested island",
+            "Transport is at sea"
+          ],
+          "action": "Disembark to new island"
+        },
+        {
+          "conditions": [
+            "Island is friendly and explored",
+            "Transport is offshore waiting for armies"
+          ],
+          "action": "Move to transport and board"
+        }
+      ],
+
+      "Combat": [
+        {
+          "conditions": ["Can reach neutral city on current island"],
+          "action": "Move to nearest neutral city and take it"
+        },
+        {
+          "conditions": ["Island is contested"],
+          "action": "Move toward enemy city and take it"
+        },
+        {
+          "conditions": ["Island not fully explored"],
+          "action": "Move toward unexplored area"
+        },
+        {
+          "conditions": [
+            "Onboard transport",
+            "Can disembark to unexplored or contested island",
+            "Transport is at sea"
+          ],
+          "action": "Disembark to new island"
+        },
+        {
+          "conditions": [
+            "Island is friendly and explored",
+            "Transport is offshore waiting for armies"
+          ],
+          "action": "Move to transport and board"
+        }
+      ]
+    },
+
+    "Transport": {
+      "Explore": [
+        {
+          "conditions": [
+            "No units onboard",
+            "Not at friendly island",
+            "Adjacent to friendly island"
+          ],
+          "action": "Sail to nearest friendly island, park at coastal ocean square"
+        },
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity at max"
+          ],
+          "action": "Sail to unexplored island, disembark armies to explore"
+        },
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity not at max",
+            "Another transport with equal or fewer armies onboard"
+          ],
+          "action": "Sail to unexplored island, disembark armies to explore"
+        },
+        {
+          "conditions": [
+            "No units onboard",
+            "At friendly island",
+            "Army is adjacent or same location"
+          ],
+          "action": "Load army"
+        },
+        {
+          "conditions": [
+            "No units onboard",
+            "At friendly island",
+            "No armies to load"
+          ],
+          "action": "Wait (stay parked) on a square next to a friendly city"
+        }
+      ],
+
+      "Expand": [
+        {
+          "conditions": [
+            "No units onboard",
+            "Not at friendly island",
+            "Adjacent to friendly island"
+          ],
+          "action": "Sail to nearest friendly island, park at coastal ocean square"
+        },
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity at max"
+          ],
+          "action": "Sail to unexplored island, disembark armies to explore"
+        },
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity not at max",
+            "Another transport with equal or fewer armies onboard"
+          ],
+          "action": "Sail to unexplored island, disembark armies to explore"
+        },
+        {
+          "conditions": [
+            "No units onboard",
+            "At friendly island",
+            "Army is adjacent or same location"
+          ],
+          "action": "Load army"
+        },
+        {
+          "conditions": [
+            "No units onboard",
+            "At friendly island",
+            "No armies to load"
+          ],
+          "action": "Wait (stay parked) on a square next to a friendly city"
+        },
+        {
+          "conditions": [
+            "No units onboard",
+            "Not at friendly island",
+            "In combat phase"
+          ],
+          "action": "Return to friendly island for resupply"
+        }
+      ],
+
+      "Combat": [
+        {
+          "conditions": [
+            "No units onboard",
+            "Not at friendly island",
+            "Adjacent to friendly island"
+          ],
+          "action": "Sail to nearest friendly island, park at coastal ocean square"
+        },
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity at max"
+          ],
+          "action": "Sail to contested island, disembark armies"
+        },
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity not at max",
+            "Another transport with equal or fewer armies onboard"
+          ],
+          "action": "Sail to contested island, disembark armies"
+        },
+        {
+          "conditions": [
+            "No units onboard",
+            "At friendly island",
+            "Army is adjacent or same location"
+          ],
+          "action": "Load army"
+        },
+        {
+          "conditions": [
+            "No units onboard",
+            "At friendly island",
+            "No armies to load"
+          ],
+          "action": "Wait (stay parked) on a square next to a friendly city"
+        },
+        {
+          "conditions": [
+            "No units onboard",
+            "Not at friendly island",
+            "In combat phase"
+          ],
+          "action": "Return to friendly island for resupply"
+        }
+      ]
+    },
+
+    "Destroyer": {
+      "Explore": [
+        {
+          "conditions": ["Enemy transport/destroyer/submarine in range"],
+          "action": "Attack it"
+        },
+        {
+          "conditions": [],
+          "action": "Move toward unexplored naval areas"
+        },
+        {
+          "conditions": [],
+          "action": "Begin patrol pattern around ocean"
+        }
+      ],
+
+      "Expand": [
+        {
+          "conditions": ["Enemy transport/destroyer/submarine in range"],
+          "action": "Attack it"
+        },
+        {
+          "conditions": [],
+          "action": "Move toward unexplored naval areas"
+        },
+        {
+          "conditions": [],
+          "action": "Begin patrol pattern around ocean"
+        }
+      ],
+
+      "Combat": [
+        {
+          "conditions": ["Enemy transport/destroyer/submarine in range"],
+          "action": "Attack it"
+        },
+        {
+          "conditions": [],
+          "action": "Move toward unexplored naval areas"
+        },
+        {
+          "conditions": [],
+          "action": "Begin patrol pattern around ocean"
+        }
+      ]
+    },
+
+    "Fighter": {
+      "Explore": [
+        {
+          "conditions": ["Enemy transport in range with at least one unit onboard"],
+          "action": "Attack"
+        },
+        {
+          "conditions": ["Enemy submarine in range"],
+          "action": "Attack"
+        },
+        {
+          "conditions": ["Friendly city under attack (enemy army within 3 squares)"],
+          "action": "Fly to friendly city, stay there"
+        },
+        {
+          "conditions": [],
+          "action": "Board a carrier if available"
+        },
+        {
+          "conditions": [],
+          "action": "Move to nearest unexplored sea zone (explore)"
+        }
+      ],
+
+      "Expand": [
+        {
+          "conditions": ["Enemy transport in range with at least one unit onboard"],
+          "action": "Attack"
+        },
+        {
+          "conditions": ["Enemy submarine in range"],
+          "action": "Attack"
+        },
+        {
+          "conditions": ["Friendly city under attack (enemy army within 3 squares)"],
+          "action": "Fly to friendly city, stay there"
+        },
+        {
+          "conditions": [],
+          "action": "Board a carrier if available"
+        },
+        {
+          "conditions": [],
+          "action": "Move to nearest unexplored sea zone (explore)"
+        }
+      ],
+
+      "Combat": [
+        {
+          "conditions": ["Enemy transport in range with at least one unit onboard"],
+          "action": "Attack"
+        },
+        {
+          "conditions": ["Enemy submarine in range"],
+          "action": "Attack"
+        },
+        {
+          "conditions": ["Friendly city under attack (enemy army within 3 squares)"],
+          "action": "Fly to friendly city, stay there"
+        },
+        {
+          "conditions": [],
+          "action": "Board a carrier if available"
+        },
+        {
+          "conditions": [],
+          "action": "Move to nearest unexplored sea zone (explore)"
+        }
+      ]
+    },
+
+    "Battleship": {
+      "Explore": [
+        {
+          "conditions": ["Enemy ship in range (transport/destroyer/battleship/carrier)"],
+          "action": "Attack it"
+        },
+        {
+          "conditions": ["Enemy city in range with units"],
+          "action": "Bombard the city while it has units"
+        },
+        {
+          "conditions": ["Enemy city not within range but has units"],
+          "action": "Move toward the city"
+        },
+        {
+          "conditions": [],
+          "action": "Patrol ocean looking for enemy ships"
+        }
+      ],
+
+      "Expand": [
+        {
+          "conditions": ["Enemy ship in range (transport/destroyer/battleship/carrier)"],
+          "action": "Attack it"
+        },
+        {
+          "conditions": ["Enemy city in range with units"],
+          "action": "Bombard the city while it has units"
+        },
+        {
+          "conditions": ["Enemy city not within range but has units"],
+          "action": "Move toward the city"
+        },
+        {
+          "conditions": [],
+          "action": "Patrol ocean looking for enemy ships"
+        }
+      ],
+
+      "Combat": [
+        {
+          "conditions": ["Enemy ship in range (transport/destroyer/battleship/carrier)"],
+          "action": "Attack it"
+        },
+        {
+          "conditions": ["Enemy city in range with units"],
+          "action": "Bombard the city while it has units"
+        },
+        {
+          "conditions": ["Enemy city not within range but has units"],
+          "action": "Move toward the city"
+        },
+        {
+          "conditions": [],
+          "action": "Patrol ocean looking for enemy ships"
+        }
+      ]
+    },
+
+    "Submarine": {
+      "Explore": [
+        {
+          "conditions": ["Enemy transport/carrier/battleship in range"],
+          "action": "Attack it"
+        },
+        {
+          "conditions": [],
+          "action": "Move toward unexplored naval areas"
+        },
+        {
+          "conditions": [],
+          "action": "Begin patrol pattern around ocean"
+        }
+      ],
+
+      "Expand": [
+        {
+          "conditions": ["Enemy transport/carrier/battleship in range"],
+          "action": "Attack it"
+        },
+        {
+          "conditions": [],
+          "action": "Move toward unexplored naval areas"
+        },
+        {
+          "conditions": [],
+          "action": "Begin patrol pattern around ocean"
+        }
+      ],
+
+      "Combat": [
+        {
+          "conditions": ["Enemy transport/carrier/battleship in range"],
+          "action": "Attack it"
+        },
+        {
+          "conditions": [],
+          "action": "Move toward unexplored naval areas"
+        },
+        {
+          "conditions": [],
+          "action": "Begin patrol pattern around ocean"
+        }
+      ]
+    },
+
+    "Bomber": {
+      "Explore": [
+        {
+          "conditions": [
+            "Enemy city within range",
+            "Troops within city",
+            "Friendly troops within 2 squares"
+          ],
+          "action": "Bomb city"
+        },
+        {
+          "conditions": ["Enemy transport within range with at least one army onboard"],
+          "action": "Bomb transport"
+        },
+        {
+          "conditions": ["Area with at least 30 enemy unit production combined value"],
+          "action": "Bomb area"
+        },
+        {
+          "conditions": [],
+          "action": "Move to friendly city within 15 squares of enemy city or enemy units worth 15+"
+        },
+        {
+          "conditions": [],
+          "action": "Return to nearest friendly city"
+        }
+      ],
+
+      "Expand": [
+        {
+          "conditions": [
+            "Enemy city within range",
+            "Troops within city",
+            "Friendly troops within 2 squares"
+          ],
+          "action": "Bomb city"
+        },
+        {
+          "conditions": ["Enemy transport within range with at least one army onboard"],
+          "action": "Bomb transport"
+        },
+        {
+          "conditions": ["Area with at least 30 enemy unit production combined value"],
+          "action": "Bomb area"
+        },
+        {
+          "conditions": [],
+          "action": "Move to friendly city within 15 squares of enemy city or enemy units worth 15+"
+        },
+        {
+          "conditions": [],
+          "action": "Return to nearest friendly city"
+        }
+      ],
+
+      "Combat": [
+        {
+          "conditions": [
+            "Enemy city within range",
+            "Troops within city",
+            "Friendly troops within 2 squares"
+          ],
+          "action": "Bomb city"
+        },
+        {
+          "conditions": ["Enemy transport within range with at least one army onboard"],
+          "action": "Bomb transport"
+        },
+        {
+          "conditions": ["Area with at least 30 enemy unit production combined value"],
+          "action": "Bomb area"
+        },
+        {
+          "conditions": [],
+          "action": "Move to friendly city within 15 squares of enemy city or enemy units worth 15+"
+        },
+        {
+          "conditions": [],
+          "action": "Return to nearest friendly city"
+        }
+      ]
+    },
+
+    "Carrier": {
+      "Explore": [
+        {
+          "conditions": ["Fighter needs a landing strip"],
+          "action": "Position carrier to support fighter operations"
+        },
+        {
+          "conditions": [],
+          "action": "Explore unexplored naval areas"
+        }
+      ],
+
+      "Expand": [
+        {
+          "conditions": ["Fighter needs a landing strip"],
+          "action": "Position carrier to support fighter operations"
+        },
+        {
+          "conditions": [],
+          "action": "Explore unexplored naval areas"
+        }
+      ],
+
+      "Combat": [
+        {
+          "conditions": ["Fighter needs a landing strip"],
+          "action": "Position carrier to support fighter operations"
+        },
+        {
+          "conditions": [],
+          "action": "Explore unexplored naval areas"
+        }
+      ]
+    }
+  },
+
+  "shared_functions": {
+    "current_phase": "Returns if we are in expansion, exploration or combat phase.",
+    "movement_to_nearest_friendly_coastal": "For units needing to find friendly coastal cities.",
+    "board_transport": "Handling boarding logic across unit types.",
+    "disembark": "When transport lands and units need to disembark.",
+    "valid_target": "Determine if a unit can attack a given square.",
+    "within_range": "Determine if one unit is within range of another square or unit.",
+    "is_island_fully_explored": "Determine if a land square belongs to a fully explored island.",
+    "is_island_contested": "Determine if a land square belongs to a contested island (at least one enemy city or unit).",
+    "production_value_of_enemy_square": "Sum up the enemy production value at a square.",
+    "transport_capacity_at_max": "Check if transport is carrying maximum cargo.",
+    "transport_capacity_not_at_max": "Check if transport is NOT carrying maximum cargo.",
+    "transport_has_no_army_onboard": "Check if transport currently has no armies loaded.",
+    "another_transport_with_equal_or_fewer_armies": "Check if there is another friendly transport at the same island with equal or fewer armies onboard. Pass the current transport unit to this function.",
+    "transport_is_offshore_waiting": "Check if transport is parked on ocean adjacent to friendly city and waiting for armies.",
+    "enemy_within_range": "Check if enemy unit is within movement range.",
+    "friendly_city_under_attack": "Check if any friendly city has enemy army within 3 squares."
+  }
+}

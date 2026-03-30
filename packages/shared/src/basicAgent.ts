@@ -14,6 +14,51 @@ import {
   wrapX,
   wrappedDistX,
 } from '@sc/shared';
+import {
+  ProductionRulesEngine,
+  type ProductionRulesSchema,
+} from './productionRulesEngine.js';
+
+// Mirrors production_rules.json — the JSON file is the human-readable spec.
+const PRODUCTION_RULES: ProductionRulesSchema = {
+  production: {
+    Explore: [
+      { conditions: [], produce: 'Army' },
+    ],
+    Expand: [
+      {
+        conditions: [
+          'City has access to water',
+          'active_transports < max(1, ceil(army_producing_cities_on_this_island / 3))',
+        ],
+        produce: 'Transport',
+      },
+      { produce: 'Army' },
+    ],
+    Combat: [
+      {
+        conditions: ['Enemy city is reachable by land from this city'],
+        produce: 'Army',
+      },
+      {
+        conditions: ['City has no access to water'],
+        produce: 'balance(Fighter, Bomber)',
+      },
+      {
+        conditions: ['City has access to water'],
+        produce: 'lowest_score(Transport, Battleship, Submarine, Destroyer, Fighter, Bomber)',
+        scaling_factors: {
+          Transport:  1,
+          Battleship: 2,
+          Submarine:  2,
+          Destroyer:  1,
+          Fighter:    1,
+          Bomber:     1,
+        },
+      },
+    ],
+  },
+};
 
 /**
  * Strategy (in priority order):
@@ -28,105 +73,55 @@ export class BasicAgent implements Agent {
   private mapWidth!: number;
   private mapHeight!: number;
 
-  // Nearest undefended/neutral city to claim — expansion mode.
-  private expansionTarget: Coord | null = null;
-  // Nearest defended enemy city — attack mode (only when no free cities exist).
-  private attackTarget: Coord | null = null;
   // Current strategic phase (recomputed each act() call).
   private phase: 1 | 2 | 3 = 1;
   // Turn numbers when phases first advanced (undefined = not yet reached).
   private phase2Turn: number | undefined = undefined;
   private phase3Turn: number | undefined = undefined;
 
+  // Patrol direction for destroyers (persistent across turns)
+  private destroyerPatrolDir: { x: number; y: number } | null = null;
+
+  private readonly productionEngine = new ProductionRulesEngine(PRODUCTION_RULES);
+
   init(config: AgentConfig): void {
     this.playerId = config.playerId;
     this.mapWidth = config.mapWidth;
     this.mapHeight = config.mapHeight;
+    // Reset patrol direction on new game
+    this.destroyerPatrolDir = null;
   }
 
   /**
    * Determine current strategic phase from observable signals:
-   *  1 — Colonise home island  (neutral cities still visible nearby)
-   *  2 — Expansion             (home done, no enemy contact yet)
-   *  3 — Combat                (enemy-owned cities within striking range of ours)
+   *  1 — Explore: Fully explore starting island and take all cities
+   *  2 — Expand: Build transports and move armies to other islands
+   *  3 — Combat: Encountered enemy, prioritize combat
    *
-   * Phase 3 covers both "we have a foothold on their island" and "they've taken one
-   * of ours" — in both cases we want air/naval support and island-specific armies.
+   * Phase transitions are one-way: 1 → 2 → 3, never back.
    */
+  private homeIslandIdx!: number;
+
   private computePhase(obs: AgentObservation): 1 | 2 | 3 {
-    // Phase transitions are one-way: 1 → 2 → 3, never back.
+    // If already in combat, stay in phase 3
     if (this.phase === 3) return 3;
 
-    if (this.phase >= 2) {
-      // Phase 2 → 3: first enemy contact.
-      if (obs.visibleEnemyCities.some((c) => c.owner !== null)) return 3;
-      return 2;
-    }
+    // Check for enemy contact
+    const { islandOf, mineIndices, exploredIslands } = this.classifyIslands(obs);
+    const homeRef = obs.myCities[0] ?? { x: 0, y: 1 };
+    const hasEnemyContact = obs.visibleEnemyCities.some((c) => c.owner !== null) ||
+                             obs.visibleEnemyUnits.some((u) => u.type === UnitType.Army && this.wrappedDist(u, homeRef) <= 2);
 
-    // Phase 1 → 2: home island fully explored (no null/never-seen land tiles) AND
-    // all its cities are ours.
-    // We intentionally ignore Hidden tiles — those are mapped, just not currently
-    // visible. Only null (never seen) tiles count as unexplored.
-    if (obs.myCities.length >= 2) {
-      const { islandOf, mineIndices } = this.classifyIslands(obs);
-      const homeRef = obs.myCities[0];
-      const homeIslandIdx = islandOf.get(`${homeRef.x},${homeRef.y}`);
-      if (homeIslandIdx !== undefined && mineIndices.has(homeIslandIdx)) {
-        if (!this.hasUnexploredLand(obs, homeRef)) return 2;
+    // Phase transitions
+    if (this.phase === 2 && hasEnemyContact) return 3; // Phase 2 → 3
+    if (this.phase === 1) {
+      if (this.homeIslandIdx !== undefined && mineIndices.has(this.homeIslandIdx) && this.isIslandExplored(this.homeIslandIdx, exploredIslands)) {
+        // Home island is fully explored and ours - ready to expand
+        return 2;
       }
     }
 
     return 1;
-  }
-
-  private updateTargets(obs: AgentObservation): void {
-    // Center of mass of all our units (for picking the nearest target)
-    const n = obs.myUnits.length || obs.myCities.length || 1;
-    const cx = Math.round(
-      (obs.myUnits.reduce((s, u) => s + u.x, 0) + obs.myCities.reduce((s, c) => s + c.x, 0)) /
-      (obs.myUnits.length + obs.myCities.length || 1)
-    );
-    const cy = Math.round(
-      (obs.myUnits.reduce((s, u) => s + u.y, 0) + obs.myCities.reduce((s, c) => s + c.y, 0)) /
-      (obs.myUnits.length + obs.myCities.length || 1)
-    );
-    const center: Coord = { x: cx, y: cy };
-
-    // Free cities: neutral, or enemy-owned but no visible enemy land unit standing on them.
-    const freeCities = obs.visibleEnemyCities.filter(
-      (c) =>
-        c.owner === null ||
-        !obs.visibleEnemyUnits.some(
-          (u) => UNIT_STATS[u.type].domain === UnitDomain.Land && u.x === c.x && u.y === c.y,
-        ),
-    );
-
-    if (freeCities.length > 0) {
-      this.expansionTarget = this.nearestCity(freeCities, center);
-      this.attackTarget = null;
-    } else {
-      this.expansionTarget = null;
-      const enemyCities = obs.visibleEnemyCities.filter((c) => c.owner !== null);
-      if (enemyCities.length > 0) {
-        // We can see enemy cities — update target unless current one is still visible.
-        if (!this.attackTarget || !enemyCities.some((c) => c.x === this.attackTarget!.x && c.y === this.attackTarget!.y)) {
-          this.attackTarget = this.nearestCity(enemyCities, center);
-        }
-      }
-      // If no enemy cities visible, keep the last known attackTarget — the transport
-      // may simply be out of view range and should keep heading toward it.
-    }
-  }
-
-  // When in attack mode, support units act before armies to soften defenders.
-  private attackPriority(unit: UnitView): number {
-    switch (unit.type) {
-      case UnitType.Bomber:     return 0;
-      case UnitType.Fighter:    return 1;
-      case UnitType.Battleship: return 2;
-      case UnitType.Destroyer:  return 3;
-      default:                  return 10;
-    }
   }
 
   getPhaseTransitions(): { phase2Turn: number | undefined; phase3Turn: number | undefined } {
@@ -134,7 +129,6 @@ export class BasicAgent implements Agent {
   }
 
   act(obs: AgentObservation): AgentAction {
-    this.updateTargets(obs);
     const newPhase = this.computePhase(obs);
     if (newPhase > this.phase) {
       if (newPhase === 2) this.phase2Turn = obs.turn;
@@ -144,13 +138,20 @@ export class BasicAgent implements Agent {
 
     // Sea units first so transports can LOAD armies before armies burn their moves on SKIP.
     // In attack mode, override with attack priority (bombers/fighters/battleships lead).
-    const domainOrder = (u: UnitView) => {
+    let domainOrder = (u: UnitView) => {
       const d = UNIT_STATS[u.type].domain;
       return d === UnitDomain.Sea ? 0 : d === UnitDomain.Air ? 1 : 2;
     };
-    const units = this.attackTarget
-      ? [...obs.myUnits].sort((a, b) => this.attackPriority(a) - this.attackPriority(b))
-      : [...obs.myUnits].sort((a, b) => domainOrder(a) - domainOrder(b));
+    const sortedUnits = [...obs.myUnits].sort((a, b) => domainOrder(a) - domainOrder(b));
+
+    // Sea units first so transports can LOAD armies before armies burn their moves
+    // In attack mode, override with attack priority
+    const attackOrder = (u: UnitView) => {
+      if (u.type === UnitType.Transport && u.cargo.length > 0) return 0; // Transport with army onboard
+      if (UNIT_STATS[u.type].domain === UnitDomain.Sea) return 0;
+      return 2; // Land and air units follow
+    };
+    const units = [...obs.myUnits].sort((a, b) => attackOrder(a) - attackOrder(b));
 
     for (const unit of units) {
       if (unit.carriedBy !== null) continue;
@@ -163,10 +164,10 @@ export class BasicAgent implements Agent {
       if (unit.movesLeft <= 0) continue;
       if (unit.hasAttacked) continue; // can't attack again; done for this turn
 
-      const action = this.decideUnitAction(obs, unit);
+      const action = this.determineMoveForUnit(obs, unit);
       if (action) return action;
 
-      // Completely blocked — exhaust moves to prevent infinite re-evaluation.
+      // Blocked — exhaust moves to prevent infinite re-evaluation.
       return { type: 'SKIP', unitId: unit.id };
     }
 
@@ -181,85 +182,214 @@ export class BasicAgent implements Agent {
   }
 
   private chooseProduction(obs: AgentObservation, city: CityView): UnitType {
-    // ── Phase 1: explore and colonise home island — all cities build armies ───
-    if (this.phase === 1) return UnitType.Army;
+    return this.productionEngine.chooseProduction({
+      phase: this.phase,
+      city,
+      obs,
+      helpers: {
+        enemyCityReachableByLand: (o, c) =>
+          this.enemyCityWithinLandDist(o, c, this.mapWidth * this.mapHeight),
+        classifyIslands: (o) => this.classifyIslands(o),
+      },
+    });
+  }
 
-    // ── Phase 2: home island secure, expand by sea ────────────────────────────
-    if (this.phase === 2) {
-      if (!city.coastal) return UnitType.Army;
+  // ── Helper Methods for Rule Evaluation ──────────────────────────────────────
 
-      const { islandOf } = this.classifyIslands(obs);
-      const cityIsland = islandOf.get(`${city.x},${city.y}`);
-
-      // 1 active transport per 3 army-producing cities on this island.
-      const armyCitiesHere = obs.myCities.filter(
-        (c) =>
-          c.id !== city.id &&
-          c.producing === UnitType.Army &&
-          islandOf.get(`${c.x},${c.y}`) === cityIsland,
-      ).length;
-      const transportCount = obs.myUnits.filter((u) => u.type === UnitType.Transport).length;
-      const targetTransports = Math.max(1, Math.ceil(armyCitiesHere / 3));
-      if (transportCount < targetTransports) return UnitType.Transport;
-      return UnitType.Army;
-    }
-
-    // ── Phase 3: full warfare ──────────────────────────────────────────────────
-    // Enemy city reachable over land from this city → defend/attack with armies.
-    if (this.enemyCityWithinLandDist(obs, city, this.mapWidth * this.mapHeight)) {
-      return UnitType.Army;
-    }
-
-    // Inland city, no land-connected enemy → air units (keep Fighter/Bomber balanced).
-    if (!city.coastal) return this.chooseAirType(obs);
-
-    // Coastal city, no land-connected enemy → value-based naval + air mix.
-    return this.choosePhase3CoastalType(obs);
+  /**
+   * Check if current phase matches the given phase.
+   */
+  private isPhase(phase: 1 | 2 | 3): boolean {
+    return this.phase === phase;
   }
 
   /**
-   * Phase 3, coastal, no land-adjacent enemy.
-   * Computes total buildTime invested per unit type, divides by a scaling factor
-   * (higher = more desired), and builds the most under-invested type.
+   * Check if an island is friendly (owned by us).
    */
-  private choosePhase3CoastalType(obs: AgentObservation): UnitType {
-    const TYPES: [UnitType, number][] = [
-      [UnitType.Battleship, 2],
-      [UnitType.Submarine,  2],
-      [UnitType.Destroyer,  1],
-      [UnitType.Transport,  1],
-      [UnitType.Fighter,    1],
-      [UnitType.Bomber,     1],
-    ];
-
-    // Count both alive units AND units currently in production queues.
-    // Without the in-production count, all cities simultaneously see score=0
-    // for every type and pile into whichever type is first in the list.
-    const valueOf = (t: UnitType): number => {
-      const bt = UNIT_STATS[t].buildTime;
-      const alive  = obs.myUnits.filter((u) => u.type === t).length;
-      const inProd = obs.myCities.filter((c) => c.producing === t).length;
-      return (alive + inProd) * bt;
-    };
-
-    let bestType  = UnitType.Destroyer;
-    let bestScore = Infinity;
-    for (const [t, scale] of TYPES) {
-      const score = valueOf(t) / scale;
-      if (score < bestScore) { bestScore = score; bestType = t; }
-    }
-    return bestType;
+  private isIslandFriendly(islandIdx: number | undefined, mineIndices: Set<number>): boolean {
+    if (islandIdx === undefined) return false;
+    return mineIndices.has(islandIdx);
   }
 
-  /** Keep Fighter and Bomber counts equal; random tiebreak. */
-  private chooseAirType(obs: AgentObservation): UnitType {
-    const count = (t: UnitType) =>
-      obs.myUnits.filter((u) => u.type === t).length +
-      obs.myCities.filter((c) => c.producing === t).length;
-    const fCount = count(UnitType.Fighter);
-    const bCount = count(UnitType.Bomber);
-    if (fCount !== bCount) return fCount < bCount ? UnitType.Fighter : UnitType.Bomber;
-    return Math.random() < 0.5 ? UnitType.Fighter : UnitType.Bomber;
+  /**
+   * Check if an island is fully explored.
+   */
+  private isIslandExplored(islandIdx: number | undefined, exploredIslands: Set<number>): boolean {
+    if (islandIdx === undefined) return false;
+    return exploredIslands.has(islandIdx);
+  }
+
+  /**
+   * Check if an island has enemy cities (is contested).
+   */
+  private isIslandContested(islandIdx: number | undefined, obs: AgentObservation, islandOf: Map<string, number>): boolean {
+    if (islandIdx === undefined) return false;
+    const enemyCities = obs.visibleEnemyCities.filter((c) => c.owner !== null);
+    for (const city of enemyCities) {
+      const cityIsland = islandOf.get(`${city.x},${city.y}`);
+      if (cityIsland === islandIdx) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Check if a city is reachable from unit using BFS pathfinding.
+   */
+  private canReachCity(city: CityView, unit: UnitView, obs: AgentObservation): boolean {
+    const move = this.moveToward(obs, unit, city);
+    return move !== null;
+  }
+
+  /**
+   * Check if any neutral city is reachable from unit.
+   */
+  private canReachNeutralCity(unit: UnitView, obs: AgentObservation): boolean {
+    const neutralCities = obs.visibleEnemyCities.filter((c) => c.owner === null);
+    for (const city of neutralCities) {
+      if (this.canReachCity(city, unit, obs)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Get nearest neutral city that is reachable.
+   */
+  private getNearestReachableNeutralCity(unit: UnitView, obs: AgentObservation): CityView | null {
+    const neutralCities = obs.visibleEnemyCities.filter((c) => c.owner === null);
+    let nearest: CityView | null = null;
+    let nearestDist = Infinity;
+
+    for (const city of neutralCities) {
+      const dist = this.wrappedDist(city, unit);
+      if (dist < nearestDist && this.canReachCity(city, unit, obs)) {
+        nearestDist = dist;
+        nearest = city;
+      }
+    }
+    return nearest;
+  }
+
+  /**
+   * Check if unit is adjacent to a friendly transport with room.
+   */
+  private isAdjacentToTransportWithRoom(unit: UnitView, obs: AgentObservation): UnitView | null {
+    const adjTiles = this.getAdjacentTiles(unit.x, unit.y);
+    const cap = UNIT_STATS[UnitType.Transport].cargoCapacity;
+
+    for (const tile of adjTiles) {
+      const transport = obs.myUnits.find(
+        (u) => u.type === UnitType.Transport && u.x === tile.x && u.y === tile.y && u.carriedBy === null && u.cargo.length < cap
+      );
+      if (transport) return transport;
+    }
+    return null;
+  }
+
+  /**
+   * Check if unit is onboard a transport.
+   */
+  private isOnboardTransport(unit: UnitView): boolean {
+    return unit.carriedBy !== null;
+  }
+
+  /**
+   * Check if transport can disembark to unexplored or contested land.
+   */
+  private canDisembarkToUnexploredOrContested(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, exploredIslands: Set<number>): Coord | null {
+    const adjacentLand = this.getAdjacentLandTiles(obs, transport.x, transport.y);
+    for (const land of adjacentLand) {
+      const landIdx = islandOf.get(`${land.x},${land.y}`);
+      const notExplored = !this.isIslandExplored(landIdx, exploredIslands);
+      const notFriendly = !this.isIslandFriendly(landIdx, mineIndices);
+
+      if (notExplored || notFriendly) {
+        return land;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Find a waiting transport on a friendly island that is offshore (on ocean tile adjacent to land).
+   * Returns the transport unit if found, null otherwise.
+   */
+  private findWaitingTransport(
+    unit: UnitView,
+    obs: AgentObservation,
+    islandOf: Map<string, number>,
+    mineIndices: Set<number>,
+  ): UnitView | null {
+    const cap = UNIT_STATS[UnitType.Transport].cargoCapacity;
+    const myIslandIdx = islandOf.get(`${unit.x},${unit.y}`);
+    if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) {
+      return null; // Not on a friendly island
+    }
+
+    // Find transports that are:
+    // 1. On friendly island
+    // 2. On ocean tile (offshore)
+    // 3. Has room for cargo
+    // 4. Not currently sailing with armies
+    for (const transport of obs.myUnits) {
+      if (transport.type !== UnitType.Transport) continue;
+      if (transport.id === unit.id) continue; // Skip self
+      if (transport.cargo.length >= cap) continue; // Full
+
+      const transportIslandIdx = islandOf.get(`${transport.x},${transport.y}`);
+      if (transportIslandIdx === undefined || !mineIndices.has(transportIslandIdx)) {
+        continue; // Not on friendly island
+      }
+
+      // Check if transport is on ocean (offshore)
+      const transportTile = obs.tiles[transport.y]?.[transport.x];
+      if (!transportTile || transportTile.terrain !== Terrain.Ocean) {
+        continue; // Not on ocean
+      }
+
+      // Transport is offshore on friendly island with room
+      return transport;
+    }
+
+    return null;
+  }
+
+  /**
+   * Get nearest reachable enemy city on a contested island.
+   */
+  private getNearestReachableEnemyCity(unit: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>): CityView | null {
+    const enemyCities = obs.visibleEnemyCities.filter((c) => c.owner !== null);
+    let nearest: CityView | null = null;
+    let nearestDist = Infinity;
+
+    for (const city of enemyCities) {
+      const cityIsland = islandOf.get(`${city.x},${city.y}`);
+      // Only target enemy cities on contested islands
+      if (this.isIslandContested(cityIsland, obs, islandOf)) {
+        const dist = this.wrappedDist(city, unit);
+        if (dist < nearestDist && this.canReachCity(city, unit, obs)) {
+          nearestDist = dist;
+          nearest = city;
+        }
+      }
+    }
+    return nearest;
+  }
+
+  /**
+   * Get nearest unexplored tile reachable from unit.
+   */
+  private getNearestReachableUnexplored(unit: UnitView, obs: AgentObservation): Coord | null {
+    const unexplored = this.nearestUnexploredTile(obs, unit);
+    // nearestUnexploredTile already checks reachability via bestStepToward
+    return unexplored;
+  }
+
+  /**
+   * Get nearest coastal city on friendly island.
+   */
+  private getNearestFriendlyCoastalCity(unit: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>): Coord | null {
+    const coastalCities = this.getCoastalCities(obs, mineIndices, islandOf);
+    return this.nearestCity(coastalCities, unit);
   }
 
   /**
@@ -304,544 +434,932 @@ export class BasicAgent implements Agent {
     return false;
   }
 
-  private decideUnitAction(obs: AgentObservation, unit: UnitView): AgentAction | null {
-    const stats = UNIT_STATS[unit.type];
+  /**
+   * Determine the move for a unit based on its type.
+   * Each unit type has its own movement function.
+   * Combat only happens when specified in rules.json conditions.
+   */
+  private determineMoveForUnit(obs: AgentObservation, unit: UnitView): AgentAction | null {
+    const { islandOf, mineIndices, exploredIslands } = this.classifyIslands(obs);
 
-    // Only attack if we can actually enter the enemy's tile (e.g. sea units can't attack armies in cities)
-    const adjacentEnemy = this.findAdjacentEnemy(obs, unit);
-    if (adjacentEnemy) {
-      const tile = obs.tiles[adjacentEnemy.y]?.[adjacentEnemy.x];
-      const canAttack =
-        !tile ||
-        stats.domain === UnitDomain.Air ||
-        (stats.domain === UnitDomain.Land && tile.terrain === Terrain.Land) ||
-        (stats.domain === UnitDomain.Sea && tile.terrain === Terrain.Ocean);
-      if (canAttack) {
-        return { type: 'MOVE', unitId: unit.id, to: { x: adjacentEnemy.x, y: adjacentEnemy.y } };
-      }
+    if (unit.type === UnitType.Army) {
+      return this.determineMoveForArmy(obs, unit, mineIndices, exploredIslands, islandOf);
     }
-
-    if (stats.domain === UnitDomain.Land) return this.decideLandUnit(obs, unit);
-    if (stats.domain === UnitDomain.Sea)  return this.decideSeaUnit(obs, unit);
-    if (stats.domain === UnitDomain.Air)  return this.decideAirUnit(obs, unit);
+    if (unit.type === UnitType.Transport) {
+      return this.determineMoveForTransport(obs, unit, mineIndices, exploredIslands, islandOf);
+    }
+    if (unit.type === UnitType.Destroyer) {
+      return this.determineMoveForDestroyer(obs, unit);
+    }
+    if (unit.type === UnitType.Battleship) {
+      return this.determineMoveForBattleship(obs, unit, mineIndices, exploredIslands, islandOf);
+    }
+    if (unit.type === UnitType.Carrier) {
+      return this.determineMoveForCarrier(obs, unit);
+    }
+    if (unit.type === UnitType.Submarine) {
+      return this.determineMoveForSubmarine(obs, unit);
+    }
+    if (unit.type === UnitType.Bomber) {
+      return this.determineMoveForBomber(obs, unit, obs.myBomberBlastRadius);
+    }
+    if (unit.type === UnitType.Fighter) {
+      return this.determineMoveForFighter(obs, unit, mineIndices, islandOf);
+    }
 
     return null;
   }
 
-  private decideLandUnit(obs: AgentObservation, unit: UnitView): AgentAction | null {
-    // ── STEP 1: Nearest free city reachable by land ────────────────────────────
-    // Free = neutral OR enemy-owned without a visible land defender on the tile.
-    const freeCities = obs.visibleEnemyCities.filter(
-      (c) =>
-        c.owner === null ||
-        !obs.visibleEnemyUnits.some(
-          (u) => UNIT_STATS[u.type].domain === UnitDomain.Land && u.x === c.x && u.y === c.y,
-        ),
-    );
-    const freeTarget = this.nearestCity(freeCities, unit);
-    if (freeTarget) {
-      const move = this.moveToward(obs, unit, freeTarget);
-      if (move) return move;
-      // Free city exists but is unreachable by land (on another island) — fall through.
+  // ── Unit-Specific Movement Functions ────────────────────────────────────────
+
+  /**
+   * Determine the move for an Army unit according to rules.json.
+   * Evaluate conditions top-to-bottom, first match executes.
+   * If no conditions match, perform wait (SKIP).
+   */
+  private determineMoveForArmy(
+    obs: AgentObservation,
+    unit: UnitView,
+    mineIndices: Set<number>,
+    exploredIslands: Set<number>,
+    islandOf: Map<string, number>,
+  ): AgentAction | null {
+    const myIslandIdx = islandOf.get(`${unit.x},${unit.y}`);
+
+    // Rule 1: Can reach neutral city on current island -> Move to nearest neutral city and take it
+    if (this.canReachNeutralCity(unit, obs)) {
+      const nearestNeutral = this.getNearestReachableNeutralCity(unit, obs);
+      if (nearestNeutral) {
+        const move = this.moveToward(obs, unit, nearestNeutral);
+        if (move) return move;
+      }
     }
 
-    // ── STEP 2: Attack nearest reachable enemy city ────────────────────────────
-    // Reached here because either no free cities are visible, or they're only accessible
-    // by sea. In both cases, attack any enemy city reachable by land.
-    // In full attack mode (no free cities), also chase nearby enemy units first.
-    if (this.attackTarget) {
-      const COMBAT_RANGE = 6;
-      const nearbyEnemy = this.nearestEnemy(
-        obs.visibleEnemyUnits.filter((u) => UNIT_STATS[u.type].domain !== UnitDomain.Air),
-        unit,
-      );
-      if (nearbyEnemy && this.wrappedDist(nearbyEnemy, unit) <= COMBAT_RANGE) {
-        return this.moveToward(obs, unit, nearbyEnemy);
+    // Rule 2: Island is contested -> Move toward enemy city and take it
+    if (this.isIslandContested(myIslandIdx, obs, islandOf)) {
+      const nearestEnemyCity = this.getNearestReachableEnemyCity(unit, obs, islandOf, mineIndices);
+      if (nearestEnemyCity) {
+        const move = this.moveToward(obs, unit, nearestEnemyCity);
+        if (move) return move;
       }
-      const move = this.moveToward(obs, unit, this.attackTarget);
+    }
+
+    // Rule 3: Island not fully explored -> Move toward unexplored area
+    if (!this.isIslandExplored(myIslandIdx, exploredIslands)) {
+      const unexplored = this.getNearestReachableUnexplored(unit, obs);
+      if (unexplored) {
+        const step = this.bestStepToward(obs, unit, unexplored);
+        if (step) return { type: 'MOVE', unitId: unit.id, to: step };
+      }
+    }
+
+    // Rule 4: Island is friendly AND transport offshore waiting -> Move toward transport
+    if (this.isIslandFriendly(myIslandIdx, mineIndices)) {
+      const waitingTransport = this.findWaitingTransport(unit, obs, islandOf, mineIndices);
+      if (waitingTransport) {
+        const move = this.moveToward(obs, unit, waitingTransport);
+        if (move) return move;
+      }
+    }
+
+    // Rule 5: Adjacent to friendly transport with room AND island is friendly -> Board transport
+    const adjacentTransport = this.isAdjacentToTransportWithRoom(unit, obs);
+    if (adjacentTransport && this.isIslandFriendly(myIslandIdx, mineIndices)) {
+      return { type: 'LOAD', unitId: unit.id, transportId: adjacentTransport.id };
+    }
+
+    // Rule 5: Island is friendly and explored -> Move to coastal city and wait
+    if (this.isIslandFriendly(myIslandIdx, mineIndices) && this.isIslandExplored(myIslandIdx, exploredIslands)) {
+      const nearestCoastal = this.getNearestFriendlyCoastalCity(unit, obs, islandOf, mineIndices);
+      if (nearestCoastal) {
+        const move = this.moveToward(obs, unit, nearestCoastal);
+        if (move) return move;
+      }
+      // If already at coastal city, wait (SKIP)
+      const atCoastal = obs.myCities.some(
+        (c) => c.x === unit.x && c.y === unit.y &&
+          this.getAdjacentOceanTiles(obs, c.x, c.y) !== null
+      );
+      if (atCoastal) {
+        return { type: 'SKIP', unitId: unit.id };
+      }
+    }
+
+    // Rule 6: Onboard transport AND can disembark to unexplored or contested island -> Disembark
+    if (this.isOnboardTransport(unit)) {
+      const transport = obs.myUnits.find((u) => u.id === unit.carriedBy);
+      if (transport) {
+        const disembarkTarget = this.canDisembarkToUnexploredOrContested(transport, obs, islandOf, mineIndices, exploredIslands);
+        if (disembarkTarget) {
+          return { type: 'UNLOAD', unitId: unit.id, to: disembarkTarget };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Determine the move for a Transport unit according to rules.json.
+   * Evaluate conditions top-to-bottom, first match executes.
+   * If no conditions match, perform wait (SKIP).
+   */
+  private determineMoveForTransport(
+    obs: AgentObservation,
+    unit: UnitView,
+    mineIndices: Set<number>,
+    exploredIslands: Set<number>,
+    islandOf: Map<string, number>,
+  ): AgentAction | null {
+    const cap = UNIT_STATS[UnitType.Transport].cargoCapacity;
+    const myIslandIdx = islandOf.get(`${unit.x},${unit.y}`);
+    const onFriendlyIsland = this.isIslandFriendly(myIslandIdx, mineIndices);
+
+    // Rule 1: No units onboard AND Not at friendly island AND Adjacent to friendly island -> Return to friendly island
+    if (unit.cargo.length === 0 && !onFriendlyIsland) {
+      // Check if adjacent to friendly island
+      const adjTiles = this.getAdjacentTiles(unit.x, unit.y);
+      for (const tile of adjTiles) {
+        const adjIsland = islandOf.get(`${tile.x},${tile.y}`);
+        if (adjIsland !== undefined && mineIndices.has(adjIsland)) {
+          // Found adjacent friendly island - return to it
+          const friendlyCoastal = this.getCoastalCities(obs, mineIndices, islandOf);
+          const nearestFriendly = this.nearestCity(friendlyCoastal, unit);
+          if (nearestFriendly) {
+            const targetTile = this.getAdjacentOceanTiles(obs, nearestFriendly.x, nearestFriendly.y);
+            if (targetTile) {
+              const move = this.moveToward(obs, unit, targetTile);
+              if (move) return move;
+            }
+            const move = this.moveToward(obs, unit, nearestFriendly);
+            if (move) return move;
+          }
+          break;
+        }
+      }
+    }
+
+    // Rule 2: At friendly island AND units onboard AND (expansion or exploration phase) -> Sail to unexplored island
+    if (onFriendlyIsland && unit.cargo.length > 0 && (this.phase === 1 || this.phase === 2)) {
+      // Sail to nearest unexplored island
+      const unexploredIslands = this.getIslandsByExploredState(obs, islandOf, exploredIslands, false);
+      if (unexploredIslands.length > 0) {
+        const targetIsland = unexploredIslands[0];
+        const targetCity = this.findCoastalCityOnIsland(obs, targetIsland, mineIndices, islandOf);
+        if (targetCity) {
+          const move = this.moveToward(obs, unit, targetCity);
+          if (move) return move;
+        }
+        // If no coastal city, sail to any land on the island
+        const targetLand = this.findAnyLandOnIsland(obs, islandOf, targetIsland);
+        if (targetLand) {
+          const move = this.moveToward(obs, unit, targetLand);
+          if (move) return move;
+        }
+      }
+      // If no unexplored islands, sail to contested island
+      const contestedIslands = this.getIslandsByFriendlyState(obs, islandOf, mineIndices, false);
+      if (contestedIslands.length > 0) {
+        const targetIsland = contestedIslands[0];
+        const targetCity = this.findCoastalCityOnIsland(obs, targetIsland, mineIndices, islandOf);
+        if (targetCity) {
+          const move = this.moveToward(obs, unit, targetCity);
+          if (move) return move;
+        }
+        const targetLand = this.findAnyLandOnIsland(obs, islandOf, targetIsland);
+        if (targetLand) {
+          const move = this.moveToward(obs, unit, targetLand);
+          if (move) return move;
+        }
+      }
+      // If none, sail to unexplored sea areas
+      const unexplored = this.nearestUnexploredTile(obs, unit);
+      if (unexplored) {
+        const step = this.bestStepToward(obs, unit, unexplored);
+        if (step) return { type: 'MOVE', unitId: unit.id, to: step };
+      }
+    }
+
+    // Rule 3: At sea AND units onboard AND expansion phase -> Move to coastal square next to unexplored island
+    if (!onFriendlyIsland && unit.cargo.length > 0 && this.phase === 2) {
+      const unexploredIslands = this.getIslandsByExploredState(obs, islandOf, exploredIslands, false);
+      if (unexploredIslands.length > 0) {
+        const targetIsland = unexploredIslands[0];
+        const targetCity = this.findCoastalCityOnIsland(obs, targetIsland, mineIndices, islandOf);
+        if (targetCity) {
+          const move = this.moveToward(obs, unit, targetCity);
+          if (move) return move;
+        }
+        const targetLand = this.findAnyLandOnIsland(obs, islandOf, targetIsland);
+        if (targetLand) {
+          const move = this.moveToward(obs, unit, targetLand);
+          if (move) return move;
+        }
+      }
+    }
+
+    // Rule 4: At sea AND units onboard AND combat phase -> Move to coastal square next to contested island
+    if (!onFriendlyIsland && unit.cargo.length > 0 && this.phase === 3) {
+      const contestedIslands = this.getIslandsByFriendlyState(obs, islandOf, mineIndices, false);
+      if (contestedIslands.length > 0) {
+        const targetIsland = contestedIslands[0];
+        const targetCity = this.findCoastalCityOnIsland(obs, targetIsland, mineIndices, islandOf);
+        if (targetCity) {
+          const move = this.moveToward(obs, unit, targetCity);
+          if (move) return move;
+        }
+        const targetLand = this.findAnyLandOnIsland(obs, islandOf, targetIsland);
+        if (targetLand) {
+          const move = this.moveToward(obs, unit, targetLand);
+          if (move) return move;
+        }
+      }
+    }
+
+    // Rule 5: At friendly island AND units onboard AND combat phase -> Sail to nearest contested island
+    if (onFriendlyIsland && unit.cargo.length > 0 && this.phase === 3) {
+      const contestedIslands = this.getIslandsByFriendlyState(obs, islandOf, mineIndices, false);
+      if (contestedIslands.length > 0) {
+        const targetIsland = contestedIslands[0];
+        const targetCity = this.findCoastalCityOnIsland(obs, targetIsland, mineIndices, islandOf);
+        if (targetCity) {
+          const move = this.moveToward(obs, unit, targetCity);
+          if (move) return move;
+        }
+        const targetLand = this.findAnyLandOnIsland(obs, islandOf, targetIsland);
+        if (targetLand) {
+          const move = this.moveToward(obs, unit, targetLand);
+          if (move) return move;
+        }
+      }
+    }
+
+    // Rule 6: At friendly island AND no units onboard AND (expansion or combat phase) -> Park near friendly city
+    // First check if we're already parked (on a coastal sea tile adjacent to a friendly city)
+    if (onFriendlyIsland && unit.cargo.length === 0 && (this.phase === 2 || this.phase === 3)) {
+      const isParked = this.isTransportParked(obs, unit, islandOf, mineIndices);
+      if (isParked) {
+        // Already parked - skip to Rule 7/8 for loading
+        // Don't return here, let Rule 7/8 handle loading logic
+      } else {
+        // Not parked yet - move to coastal sea square next to nearest friendly coastal city
+        const friendlyCoastal = this.getCoastalCities(obs, mineIndices, islandOf);
+        const nearestFriendly = this.nearestCity(friendlyCoastal, unit);
+        if (nearestFriendly) {
+          const targetTile = this.getAdjacentOceanTiles(obs, nearestFriendly.x, nearestFriendly.y);
+          if (targetTile) {
+            const move = this.moveToward(obs, unit, targetTile);
+            if (move) return move;
+          }
+          // Fallback: move toward the city itself if no ocean tile available
+          const move = this.moveToward(obs, unit, nearestFriendly);
+          if (move) return move;
+        }
+      }
+    }
+
+    // Rule 7: At friendly island AND no units onboard AND (expansion or combat phase) AND army adjacent or at same location -> Load
+    if (onFriendlyIsland && unit.cargo.length === 0 && (this.phase === 2 || this.phase === 3)) {
+      // Check adjacent tiles
+      const adjArmies = this.getAdjacentTiles(unit.x, unit.y).flatMap((c) =>
+        obs.myUnits.filter(
+          (u) => u.type === UnitType.Army && u.carriedBy === null && this.isIslandFriendly(islandOf.get(`${c.x},${c.y}`), mineIndices),
+        ),
+      );
+      // Also check the transport's current tile (armies at same location)
+      const sameTileArmies = obs.myUnits.filter(
+        (u) => u.type === UnitType.Army && u.x === unit.x && u.y === unit.y && u.carriedBy === null && this.isIslandFriendly(islandOf.get(`${unit.x},${unit.y}`), mineIndices),
+      );
+      const allArmies = [...adjArmies, ...sameTileArmies];
+      if (allArmies.length > 0) {
+        return { type: 'LOAD', unitId: allArmies[0].id, transportId: unit.id };
+      }
+    }
+
+    // Rule 8: At friendly island AND no units onboard AND already parked AND no armies to load -> Wait
+    if (onFriendlyIsland && unit.cargo.length === 0) {
+      const isParked = this.isTransportParked(obs, unit, islandOf, mineIndices);
+      if (isParked) {
+        return { type: 'SKIP', unitId: unit.id };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if transport is already parked on a coastal sea tile adjacent to a friendly city.
+   */
+  private isTransportParked(
+    obs: AgentObservation,
+    unit: UnitView,
+    islandOf: Map<string, number>,
+    mineIndices: Set<number>,
+  ): boolean {
+    const myIslandIdx = islandOf.get(`${unit.x},${unit.y}`);
+    if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) {
+      return false; // Not on a friendly island
+    }
+
+    // Check if unit is on an ocean tile (parked position)
+    const currentTile = obs.tiles[unit.y]?.[unit.x];
+    if (!currentTile || currentTile.terrain !== Terrain.Ocean) {
+      return false; // Not on ocean
+    }
+
+    // Check if adjacent to a friendly coastal city on the same island
+    for (const [dx, dy] of [
+      [-1, -1], [0, -1], [1, -1],
+      [-1,  0],          [1,  0],
+      [-1,  1], [0,  1], [1,  1],
+    ] as [number, number][]) {
+      const nx = wrapX(unit.x + dx, this.mapWidth);
+      const ny = unit.y + dy;
+      for (const city of obs.myCities) {
+        if (city.x === nx && city.y === ny) {
+          // Check that the city is on the same island
+          const cityIslandIdx = islandOf.get(`${city.x},${city.y}`);
+          if (cityIslandIdx === myIslandIdx) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  // ── Shared Transport Helpers ────────────────────────────────────────────────
+
+  private getCoastalCities(
+    obs: AgentObservation,
+    mineIndices: Set<number>,
+    islandOf: Map<string, number>,
+  ): Coord[] {
+    return obs.myCities.filter((c) => {
+      for (const [dx, dy] of [
+        [-1, -1], [0, -1], [1, -1],
+        [-1,  0],          [1,  0],
+        [-1,  1], [0,  1], [1,  1],
+      ] as [number, number][]) {
+        const nx = wrapX(c.x + dx, this.mapWidth);
+        const ny = c.y + dy;
+        if (ny > 0 && ny < this.mapHeight - 1) {
+          const tile = obs.tiles[ny]?.[nx];
+          if (tile && tile.terrain === Terrain.Ocean) return true;
+        }
+      }
+      return false;
+    }).filter((c) => {
+      const idx = islandOf.get(`${c.x},${c.y}`);
+      return idx !== undefined && mineIndices.has(idx);
+    });
+  }
+
+  private findCoastalCityOnIsland(
+    obs: AgentObservation,
+    islandIdx: number,
+    mineIndices: Set<number>,
+    islandOf: Map<string, number>,
+  ): Coord | null {
+    const coastal = obs.myCities.filter((c) => {
+      for (const [dx, dy] of [
+        [-1, -1], [0, -1], [1, -1],
+        [-1,  0],          [1,  0],
+        [-1,  1], [0,  1], [1,  1],
+      ] as [number, number][]) {
+        const nx = wrapX(c.x + dx, this.mapWidth);
+        const ny = c.y + dy;
+        if (ny > 0 && ny < this.mapHeight - 1) {
+          const tile = obs.tiles[ny]?.[nx];
+          if (tile && tile.terrain === Terrain.Ocean) return true;
+        }
+      }
+      return false;
+    });
+    for (const city of coastal) {
+      const idx = islandOf.get(`${city.x},${city.y}`);
+      if (idx === islandIdx && mineIndices.has(idx)) {
+        return city;
+      }
+    }
+    return null;
+  }
+
+  private findAnyLandOnIsland(
+    obs: AgentObservation,
+    islandOf: Map<string, number>,
+    islandIdx: number,
+  ): Coord | null {
+    const h = obs.tiles.length;
+    const w = obs.tiles[0]?.length ?? 0;
+
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 0; x < w; x++) {
+        const tile = obs.tiles[y]?.[x];
+        if (tile && tile.terrain === Terrain.Land) {
+          const idx = islandOf.get(`${x},${y}`);
+          if (idx === islandIdx) {
+            return { x, y };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  private getIslandsByExploredState(
+    obs: AgentObservation,
+    islandOf: Map<string, number>,
+    exploredIslands: Set<number>,
+    isExplored: boolean,
+  ): number[] {
+    const tiles = obs.tiles;
+    const h = tiles.length;
+    const w = tiles[0]?.length ?? 0;
+
+    // Find all unique island indices
+    const allIslands = new Set<number>();
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 0; x < w; x++) {
+        const tile = tiles[y]?.[x];
+        if (tile && tile.terrain === Terrain.Land) {
+          const idx = islandOf.get(`${x},${y}`);
+          if (idx !== undefined) allIslands.add(idx);
+        }
+      }
+    }
+
+    const result: number[] = [];
+    for (const idx of allIslands) {
+      const isActuallyExplored = exploredIslands.has(idx);
+      if (isActuallyExplored === isExplored) {
+        result.push(idx);
+      }
+    }
+    return result;
+  }
+
+  private getIslandsByFriendlyState(
+    obs: AgentObservation,
+    islandOf: Map<string, number>,
+    mineIndices: Set<number>,
+    isFriendly: boolean,
+  ): number[] {
+    const tiles = obs.tiles;
+    const h = tiles.length;
+    const w = tiles[0]?.length ?? 0;
+
+    // Find all unique island indices
+    const allIslands = new Set<number>();
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 0; x < w; x++) {
+        const tile = tiles[y]?.[x];
+        if (tile && tile.terrain === Terrain.Land) {
+          const idx = islandOf.get(`${x},${y}`);
+          if (idx !== undefined) allIslands.add(idx);
+        }
+      }
+    }
+
+    const result: number[] = [];
+    for (const idx of allIslands) {
+      const isActuallyFriendly = mineIndices.has(idx);
+      if (isActuallyFriendly === isFriendly) {
+        result.push(idx);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Determine the move for a Destroyer unit according to rules.json.
+   * Evaluate conditions top-to-bottom, first match executes.
+   * If no conditions match, perform wait (SKIP).
+   */
+  private determineMoveForDestroyer(obs: AgentObservation, unit: UnitView): AgentAction | null {
+    const fMov = UNIT_STATS[UnitType.Destroyer].movesPerTurn;
+
+    // Rule 1: Enemy transport/destroyer/submarine in range -> Attack it
+    const huntingOrder: UnitType[] = [UnitType.Transport, UnitType.Submarine, UnitType.Destroyer];
+    for (const preyType of huntingOrder) {
+      const candidates = obs.visibleEnemyUnits.filter((e) => e.type === preyType);
+      for (const target of candidates) {
+        if (this.wrappedDist(target, unit) <= fMov) {
+          const move = this.moveToward(obs, unit, target);
+          if (move) return move;
+        }
+      }
+    }
+
+    // Rule 2: No enemy ships in range -> Move toward unexplored naval areas
+    const unexplored = this.nearestUnexploredTile(obs, unit);
+    if (unexplored) {
+      const step = this.bestStepToward(obs, unit, unexplored);
+      if (step) return { type: 'MOVE', unitId: unit.id, to: step };
+    }
+
+    // Rule 3: No unexplored naval areas -> Begin patrol pattern around ocean
+    // Pick random direction, sail until unable, then pick new random direction
+    if (!this.destroyerPatrolDir) {
+      const dirs = [
+        { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+        { x: -1, y: 0 }, { x: 1, y: 0 },
+        { x: -1, y: 1 }, { x: 0, y: 1 }, { x: 1, y: 1 },
+      ];
+      this.destroyerPatrolDir = dirs[Math.floor(Math.random() * dirs.length)];
+    }
+
+    // Try to move in patrol direction
+    const patrolX = unit.x + this.destroyerPatrolDir.x * fMov;
+    const patrolY = unit.y + this.destroyerPatrolDir.y * fMov;
+    const wrappedPatrolX = wrapX(patrolX, this.mapWidth);
+
+    // Check if patrol destination is valid ocean
+    const patrolTile = obs.tiles[patrolY]?.[wrappedPatrolX];
+    if (patrolTile && patrolTile.terrain === Terrain.Ocean) {
+      const step = this.bestStepToward(obs, unit, { x: wrappedPatrolX, y: patrolY });
+      if (step) return { type: 'MOVE', unitId: unit.id, to: step };
+    }
+
+    // If unable to move in patrol direction, pick new random direction
+    const dirs = [
+      { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+      { x: -1, y: 0 }, { x: 1, y: 0 },
+      { x: -1, y: 1 }, { x: 0, y: 1 }, { x: 1, y: 1 },
+    ];
+    this.destroyerPatrolDir = dirs[Math.floor(Math.random() * dirs.length)];
+
+    const newPatrolX = unit.x + this.destroyerPatrolDir.x * fMov;
+    const newPatrolY = unit.y + this.destroyerPatrolDir.y * fMov;
+    const newWrappedX = wrapX(newPatrolX, this.mapWidth);
+    const newPatrolTile = obs.tiles[newPatrolY]?.[newWrappedX];
+    if (newPatrolTile && newPatrolTile.terrain === Terrain.Ocean) {
+      const step = this.bestStepToward(obs, unit, { x: newWrappedX, y: newPatrolY });
+      if (step) return { type: 'MOVE', unitId: unit.id, to: step };
+    }
+
+    return null;
+  }
+
+  /**
+   * Determine the move for a Battleship unit according to rules.json.
+   * Evaluate conditions top-to-bottom, first match executes.
+   * If no conditions match, perform wait (SKIP).
+   */
+  private determineMoveForBattleship(
+    obs: AgentObservation,
+    unit: UnitView,
+    mineIndices: Set<number>,
+    exploredIslands: Set<number>,
+    islandOf: Map<string, number>,
+  ): AgentAction | null {
+    const fMov = UNIT_STATS[UnitType.Battleship].movesPerTurn;
+
+    // Rule 1: Enemy ship in range (transport/destroyer/battleship/carrier) -> Attack it
+    const huntingOrder: UnitType[] = [UnitType.Transport, UnitType.Destroyer, UnitType.Carrier, UnitType.Battleship];
+    for (const preyType of huntingOrder) {
+      const candidates = obs.visibleEnemyUnits.filter((e) => e.type === preyType);
+      for (const target of candidates) {
+        if (this.wrappedDist(target, unit) <= fMov) {
+          const move = this.moveToward(obs, unit, target);
+          if (move) return move;
+        }
+      }
+    }
+
+    // Rule 2: Enemy city in range with units -> Bombard the city while it has units
+    const enemyCitiesWithUnits = obs.visibleEnemyCities
+      .filter((c) => c.owner !== null && c.coastal)
+      .map((c) => ({
+        city: c,
+        defenders: obs.visibleEnemyUnits.filter(
+          (u) => u.x === c.x && u.y === c.y && UNIT_STATS[u.type].domain === UnitDomain.Land,
+        ).length,
+      }))
+      .filter((e) => e.defenders > 0);
+
+    for (const entry of enemyCitiesWithUnits) {
+      if (this.wrappedDist(entry.city, unit) <= fMov) {
+        const move = this.moveToward(obs, unit, entry.city);
+        if (move) return move;
+      }
+    }
+
+    // Rule 3: Enemy city not within range but has units -> Move toward the city
+    for (const entry of enemyCitiesWithUnits) {
+      if (this.wrappedDist(entry.city, unit) > fMov) {
+        const move = this.moveToward(obs, unit, entry.city);
+        if (move) return move;
+      }
+    }
+
+    // Rule 4: No enemy ships/cities in range -> Patrol ocean looking for enemy ships
+    const unexplored = this.nearestUnexploredTile(obs, unit);
+    if (unexplored) {
+      const step = this.bestStepToward(obs, unit, unexplored);
+      if (step) return { type: 'MOVE', unitId: unit.id, to: step };
+    }
+
+    // Patrol: move toward nearest enemy city if no unexplored areas
+    const enemyCities = obs.visibleEnemyCities.filter((c) => c.owner !== null);
+    const patrolTarget = this.nearestCity(enemyCities, unit);
+    if (patrolTarget) {
+      const move = this.moveToward(obs, unit, patrolTarget);
       if (move) return move;
-    } else {
-      // Expansion mode but free cities unreachable by land — try any visible enemy city.
-      const enemyCities = obs.visibleEnemyCities.filter((c) => c.owner !== null);
-      const target = this.nearestCity(enemyCities, unit);
-      if (target) {
+    }
+
+    return null;
+  }
+
+  /**
+   * Determine the move for a Carrier unit according to rules.json.
+   * Evaluate conditions top-to-bottom, first match executes.
+   * If no conditions match, perform wait (SKIP).
+   */
+  private determineMoveForCarrier(obs: AgentObservation, unit: UnitView): AgentAction | null {
+    const fMov = UNIT_STATS[UnitType.Fighter].movesPerTurn;
+
+    // Rule 1: Fighter needs a landing strip -> Position carrier to support fighter operations
+    if (unit.cargo.length < UNIT_STATS[UnitType.Carrier].cargoCapacity) {
+      // Check if there are fighters that need landing (low fuel or no carrier to land on)
+      const fightersNeedingLand = obs.myUnits.filter(
+        (u) => u.type === UnitType.Fighter && u.carriedBy === null && u.movesLeft > 0,
+      );
+      if (fightersNeedingLand.length > 0) {
+        // Find friendly cities that are more than fighter range apart (need carrier to bridge)
+        const fighterRange = UNIT_STATS[UnitType.Fighter].movesPerTurn;
+        const citiesInRange = new Set<string>();
+
+        // Find cities within fighter range of each other
+        for (let i = 0; i < obs.myCities.length; i++) {
+          for (let j = i + 1; j < obs.myCities.length; j++) {
+            const dist = this.wrappedDist(obs.myCities[i], obs.myCities[j]);
+            if (dist <= fighterRange) {
+              citiesInRange.add(`${obs.myCities[i].x},${obs.myCities[i].y}`);
+              citiesInRange.add(`${obs.myCities[j].x},${obs.myCities[j].y}`);
+            }
+          }
+        }
+
+        // Move toward a friendly city that's isolated (not in citiesInRange)
+        // or toward unexplored sea to position for future expansion
+        const isolatedCities = obs.myCities.filter(
+          (c) => !citiesInRange.has(`${c.x},${c.y}`) && c.coastal
+        );
+
+        let target: Coord | null = null;
+        if (isolatedCities.length > 0) {
+          target = this.nearestCity(isolatedCities, unit);
+        }
+
+        // If no isolated cities, move toward unexplored sea
+        if (!target) {
+          target = this.nearestUnexploredTile(obs, unit);
+        }
+
+        if (target) {
+          const step = this.bestStepToward(obs, unit, target);
+          if (step) return { type: 'MOVE', unitId: unit.id, to: step };
+        }
+      }
+    }
+
+    // Rule 2: No landing strip needed -> Explore unexplored naval areas
+    const unexplored = this.nearestUnexploredTile(obs, unit);
+    if (unexplored) {
+      const step = this.bestStepToward(obs, unit, unexplored);
+      if (step) return { type: 'MOVE', unitId: unit.id, to: step };
+    }
+
+    return null;
+  }
+
+  /**
+   * Determine the move for a Submarine unit according to rules.json.
+   * Evaluate conditions top-to-bottom, first match executes.
+   * If no conditions match, perform wait (SKIP).
+   */
+  private determineMoveForSubmarine(obs: AgentObservation, unit: UnitView): AgentAction | null {
+    const fMov = UNIT_STATS[UnitType.Submarine].movesPerTurn;
+
+    // Rule 1: Enemy transport/carrier/battleship in range -> Attack it
+    const huntingOrder: UnitType[] = [UnitType.Transport, UnitType.Carrier, UnitType.Battleship];
+    for (const preyType of huntingOrder) {
+      const candidates = obs.visibleEnemyUnits.filter((e) => e.type === preyType);
+      for (const target of candidates) {
+        if (this.wrappedDist(target, unit) <= fMov) {
+          const move = this.moveToward(obs, unit, target);
+          if (move) return move;
+        }
+      }
+    }
+
+    // Rule 2: No enemy ships in range -> Move toward unexplored naval areas
+    const unexplored = this.nearestUnexploredTile(obs, unit);
+    if (unexplored) {
+      const step = this.bestStepToward(obs, unit, unexplored);
+      if (step) return { type: 'MOVE', unitId: unit.id, to: step };
+    }
+
+    // Rule 3: No unexplored naval areas -> Begin patrol pattern around ocean
+    const enemyCities = obs.visibleEnemyCities.filter((c) => c.owner !== null);
+    const patrolTarget = this.nearestCity(enemyCities, unit);
+    if (patrolTarget) {
+      const move = this.moveToward(obs, unit, patrolTarget);
+      if (move) return move;
+    }
+
+    // Try adjacent ocean tiles for patrol
+    const adjTiles = this.getAdjacentTiles(unit.x, unit.y);
+    for (const tile of adjTiles) {
+      const tileObj = obs.tiles[tile.y]?.[tile.x];
+      if (tileObj && tileObj.terrain === Terrain.Ocean) {
+        return { type: 'MOVE', unitId: unit.id, to: tile };
+      }
+    }
+
+    return { type: 'SKIP', unitId: unit.id };
+  }
+
+  /**
+   * Determine the move for a Bomber unit according to rules.json.
+   * Evaluate conditions top-to-bottom, first match executes.
+   * If no conditions match, perform wait (SKIP).
+   */
+  private determineMoveForBomber(
+    obs: AgentObservation,
+    unit: UnitView,
+    blastRadius: number,
+  ): AgentAction | null {
+    const maxFuel = UNIT_STATS[UnitType.Bomber].maxFuel ?? 100;
+
+    // Rule 1: Enemy city within range, troops within city, friendly troops within 2 squares -> Bomb city
+    let bestCityTarget: Coord | null = null;
+    let bestCityValue = -1;
+
+    for (const city of obs.visibleEnemyCities) {
+      if (city.owner === null) continue;
+      const hasDefender = obs.visibleEnemyUnits.some(
+        (u) => u.x === city.x && u.y === city.y && UNIT_STATS[u.type].domain === UnitDomain.Land,
+      );
+      if (!hasDefender) continue;
+
+      const friendlyArmyNear = obs.myUnits.some(
+        (u) => u.type === UnitType.Army && this.wrappedDist(u, city) <= 2,
+      );
+      if (!friendlyArmyNear) continue;
+
+      const cityUnits = obs.visibleEnemyUnits.filter(
+        (u) => u.x === city.x && u.y === city.y,
+      );
+      const productionValue = cityUnits.reduce((sum, u) => sum + UNIT_STATS[u.type].buildTime, 0);
+
+      if (productionValue > 0 && this.wrappedDist(city, unit) <= maxFuel) {
+        if (productionValue > bestCityValue) {
+          bestCityValue = productionValue;
+          bestCityTarget = city;
+        }
+      }
+    }
+
+    if (bestCityTarget) {
+      const move = this.moveToward(obs, unit, bestCityTarget);
+      if (move) return move;
+    }
+
+    // Rule 2: Enemy transport within range with at least one army onboard -> Bomb transport
+    for (const target of obs.visibleEnemyUnits) {
+      if (target.type === UnitType.Transport && target.cargo.length > 0 && this.wrappedDist(target, unit) <= maxFuel) {
         const move = this.moveToward(obs, unit, target);
         if (move) return move;
       }
     }
 
-    // ── EXPLORE ────────────────────────────────────────────────────────────────
-    // Always explore the current island first, regardless of phase.
-    // moveTowardExploration for land units is constrained to land tiles so it
-    // only ever explores the island the army is currently standing on.
-    // Armies don't head to the coast until the whole island is mapped.
-    const explorationMove = this.moveTowardExploration(obs, unit);
-    if (explorationMove) return explorationMove;
+    // Rule 3: Area with at least 30 enemy unit production combined value -> Bomb area
+    // Sum production value of all enemy units in a 3x3 area around each potential target
+    let bestAreaTarget: Coord | null = null;
+    let bestAreaValue = -1;
 
-    // ── BOARD WAITING TRANSPORT ───────────────────────────────────────────────
-    // Island is fully explored — now head to the coast for boarding.
-    if (this.phase >= 2) {
-      const { mineIndices, islandOf } = this.classifyIslands(obs);
-      const onMine = (x: number, y: number) => { const i = islandOf.get(`${x},${y}`); return i !== undefined && mineIndices.has(i); };
-
-      const waitingTransport = obs.myUnits.find(
-        (u) =>
-          u.type === UnitType.Transport &&
-          u.cargo.length < UNIT_STATS[UnitType.Transport].cargoCapacity &&
-          obs.myCities.some(
-            (c) =>
-              onMine(c.x, c.y) &&
-              wrappedDistX(u.x, c.x, this.mapWidth) <= 1 &&
-              Math.abs(u.y - c.y) <= 1,
-          ),
-      );
-      if (waitingTransport) {
-        if (
-          wrappedDistX(unit.x, waitingTransport.x, this.mapWidth) <= 1 &&
-          Math.abs(unit.y - waitingTransport.y) <= 1
-        ) {
-          return { type: 'LOAD', unitId: unit.id, transportId: waitingTransport.id };
+    for (const enemy of obs.visibleEnemyUnits) {
+      if (this.wrappedDist(enemy, unit) > maxFuel) continue;
+      let areaValue = 0;
+      for (const e of obs.visibleEnemyUnits) {
+        if (this.wrappedDist(e, enemy) <= 1) {
+          areaValue += UNIT_STATS[e.type].buildTime;
         }
-        const move = this.moveToward(obs, unit, waitingTransport);
-        if (move) return move;
       }
-
-      // No waiting transport — walk to the nearest REACHABLE coastal city on a
-      // mine island. Sort by distance; skip cities on other islands (moveToward null).
-      const coastalCities = obs.myCities
-        .filter((c) => c.coastal && onMine(c.x, c.y))
-        .sort((a, b) => this.wrappedDist(unit, a) - this.wrappedDist(unit, b));
-      for (const coastal of coastalCities) {
-        if (unit.x === coastal.x && unit.y === coastal.y) {
-          return { type: 'SKIP', unitId: unit.id };
-        }
-        const move = this.moveToward(obs, unit, coastal);
-        if (move) return move;
+      if (areaValue >= 30 && areaValue > bestAreaValue) {
+        bestAreaValue = areaValue;
+        bestAreaTarget = enemy;
       }
     }
 
-    // Wait at the nearest coastal city for a transport to arrive.
-    const coastal = this.nearestCity(obs.myCities.filter((c) => c.coastal), unit);
-    if (coastal) {
-      if (unit.x === coastal.x && unit.y === coastal.y) {
-        return { type: 'SKIP', unitId: unit.id };
-      }
-      return this.moveToward(obs, unit, coastal);
+    if (bestAreaTarget && bestAreaValue >= 30) {
+      const move = this.moveToward(obs, unit, bestAreaTarget);
+      if (move) return move;
+    }
+
+    // Rule 4: No high-value targets in range -> Move to friendly city within 15 squares of enemy city or enemy units worth 15+
+    const CONFLICT_RADIUS = 15;
+    const conflictCities = obs.myCities.filter((c) => {
+      const enemyCityNear = obs.visibleEnemyCities.some(
+        (e) => e.owner !== null && this.wrappedDist(c, e) <= CONFLICT_RADIUS,
+      );
+      const enemyUnitNear = obs.visibleEnemyUnits.some((e) => this.wrappedDist(c, e) <= CONFLICT_RADIUS);
+      return enemyCityNear || enemyUnitNear;
+    });
+
+    // Check if already at conflict city
+    if (conflictCities.some((c) => c.x === unit.x && c.y === unit.y)) {
+      return { type: 'SKIP', unitId: unit.id };
+    }
+
+    const nearestConflict = this.nearestCity(conflictCities, unit);
+    if (nearestConflict) {
+      const move = this.moveToward(obs, unit, nearestConflict);
+      if (move) return move;
+    }
+
+    // No conflict cities — return to nearest friendly city
+    const homeCity = this.nearestCity(obs.myCities, unit);
+    if (homeCity) {
+      const move = this.moveToward(obs, unit, homeCity);
+      if (move) return move;
     }
 
     return null;
   }
 
-  private decideSeaUnit(obs: AgentObservation, unit: UnitView): AgentAction | null {
-    const stats = UNIT_STATS[unit.type];
-
-    if (unit.type === UnitType.Transport) {
-      const cap = stats.cargoCapacity;
-      const { islandOf, mineIndices, contestedIndices } = this.classifyIslands(obs);
-      const tileIsland = (x: number, y: number) => islandOf.get(`${x},${y}`);
-      const isMine       = (x: number, y: number) => { const i = tileIsland(x, y); return i !== undefined && mineIndices.has(i); };
-      const isContested  = (x: number, y: number) => { const i = tileIsland(x, y); return i !== undefined && contestedIndices.has(i); };
-
-      // ── STEP 1: Load any adjacent army from a MINE island ────────────────────
-      if (unit.cargo.length < cap) {
-        const adjArmy = obs.myUnits.find(
-          (u) =>
-            u.type === UnitType.Army && u.carriedBy === null && u.movesLeft > 0 &&
-            isMine(u.x, u.y) &&
-            wrappedDistX(u.x, unit.x, this.mapWidth) <= 1 && Math.abs(u.y - unit.y) <= 1,
-        );
-        if (adjArmy) return { type: 'LOAD', unitId: adjArmy.id, transportId: unit.id };
-      }
-
-      // ── STEP 2: Delivering — navigate to contested island and drop armies ─────
-      if (unit.cargo.length > 0) {
-        // Best delivery target: nearest visible enemy city, then any contested city,
-        // then last-known attack/expansion target (persisted across turns even when out of view).
-        const contestedCities = [...obs.myCities, ...obs.visibleEnemyCities].filter(
-          (c) => isContested(c.x, c.y),
-        );
-        const deliveryTarget =
-          this.nearestCity(obs.visibleEnemyCities, unit) ??
-          this.nearestCity(contestedCities, unit) ??
-          this.expansionTarget ??
-          this.attackTarget;
-
-        // Unload if we're next to contested land and cargo armies have moves.
-        const cargoUnit = obs.myUnits.find((u) => u.id === unit.cargo[0]);
-        if (cargoUnit && cargoUnit.movesLeft > 0) {
-          const adjLand = this.getAdjacentLandToward(obs, unit, deliveryTarget);
-          if (adjLand && isContested(adjLand.x, adjLand.y)) {
-            return { type: 'UNLOAD', unitId: unit.cargo[0], to: adjLand };
-          }
-        }
-
-        // Keep moving toward the delivery target regardless of cargo move state.
-        if (deliveryTarget) {
-          const move = this.moveToward(obs, unit, deliveryTarget);
-          if (move) return move;
-        }
-
-        // No known target at all — explore until we find one.
-        return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
-      }
-
-      // ── STEP 3: Empty — return to a MINE island, pick up armies ─────────────
-      const mineArmies = obs.myUnits.filter(
-        (u) => u.type === UnitType.Army && u.carriedBy === null && isMine(u.x, u.y),
-      );
-      const mineCoastal = obs.myCities.filter((c) => c.coastal && isMine(c.x, c.y));
-
-      // Pick the mine coastal city with the most waiting armies within radius 4.
-      let pickupPort: Coord | null = null;
-      let bestCount = -1;
-      for (const city of mineCoastal) {
-        const count = mineArmies.filter(
-          (u) => wrappedDistX(u.x, city.x, this.mapWidth) <= 4 && Math.abs(u.y - city.y) <= 4,
-        ).length;
-        if (count > bestCount) { bestCount = count; pickupPort = city; }
-      }
-      // No armies near coast yet — park at the nearest mine coastal city and wait.
-      if (!pickupPort || bestCount === 0) {
-        pickupPort = this.nearestCity(mineCoastal, unit);
-      }
-
-      if (pickupPort) {
-        const portMove = this.moveToward(obs, unit, pickupPort);
-        if (portMove) return portMove;
-        return { type: 'SKIP', unitId: unit.id };
-      }
-
-      // No mine ports (game just started or all islands contested) — explore.
-      return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
-    }
-
-    // ── Battleship: coastal bombardment takes priority over naval hunting ───────
-    if (unit.type === UnitType.Battleship) {
-      // Role 1 — Coastal bombardment.
-      // Target the enemy coastal city with the most land defenders within reach.
-      // "Within reach" = we know about it (visible or last-known attack target).
-      const bombardTarget = obs.visibleEnemyCities
-        .filter((c) => c.owner !== null && c.coastal)
-        .map((c) => ({
-          city: c,
-          defenders: obs.visibleEnemyUnits.filter(
-            (u) => u.x === c.x && u.y === c.y && UNIT_STATS[u.type].domain === UnitDomain.Land,
-          ).length,
-          dist: this.wrappedDist(c, unit),
-        }))
-        .filter((e) => e.defenders > 0)
-        .sort((a, b) => a.dist - b.dist)[0];   // nearest defended coastal city
-
-      if (bombardTarget) {
-        const m = this.moveToward(obs, unit, bombardTarget.city);
-        if (m) return m;
-      }
-
-      // Role 2 — Naval hunting: Transport → Destroyer → Carrier → Battleship
-      for (const prey of [UnitType.Transport, UnitType.Destroyer, UnitType.Carrier, UnitType.Battleship] as UnitType[]) {
-        const candidates = obs.visibleEnemyUnits.filter((e) => e.type === prey);
-        const t = this.nearestEnemy(candidates, unit);
-        if (t) {
-          const m = this.moveToward(obs, unit, t);
-          if (m) return m;
-        }
-      }
-
-      // No visible targets — explore toward last known objective or scout ocean
-      const objective = this.attackTarget ?? this.expansionTarget;
-      if (objective) { const m = this.moveToward(obs, unit, objective); if (m) return m; }
-      return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
-    }
-
-    // ── Destroyer: hunt submarines and transports ────────────────────────────
-    if (unit.type === UnitType.Destroyer) {
-      for (const prey of [UnitType.Submarine, UnitType.Transport] as UnitType[]) {
-        const t = this.nearestEnemy(obs.visibleEnemyUnits.filter((u) => u.type === prey), unit);
-        if (t) { const m = this.moveToward(obs, unit, t); if (m) return m; }
-      }
-      const seaTarget = this.nearestEnemy(
-        obs.visibleEnemyUnits.filter((u) => UNIT_STATS[u.type].domain === UnitDomain.Sea), unit,
-      );
-      if (seaTarget) return this.moveToward(obs, unit, seaTarget);
-      const target = this.attackTarget ?? this.expansionTarget;
-      if (target) { const m = this.moveToward(obs, unit, target); if (m) return m; }
-      return this.moveTowardExploration(obs, unit);
-    }
-
-    // ── Submarine: hunt transports and carriers ──────────────────────────────
-    if (unit.type === UnitType.Submarine) {
-      for (const prey of [UnitType.Transport, UnitType.Carrier] as UnitType[]) {
-        const t = this.nearestEnemy(obs.visibleEnemyUnits.filter((u) => u.type === prey), unit);
-        if (t) { const m = this.moveToward(obs, unit, t); if (m) return m; }
-      }
-      const seaTarget = this.nearestEnemy(
-        obs.visibleEnemyUnits.filter((u) => UNIT_STATS[u.type].domain === UnitDomain.Sea), unit,
-      );
-      if (seaTarget) return this.moveToward(obs, unit, seaTarget);
-      return this.moveTowardExploration(obs, unit);
-    }
-
-    // ── Carrier: mobile fighter base — load fighters, patrol, unload to strike ─
-    if (unit.type === UnitType.Carrier) {
-      const cap  = UNIT_STATS[UnitType.Carrier].cargoCapacity;
-      const fMov = UNIT_STATS[UnitType.Fighter].movesPerTurn;
-
-      // Load any adjacent idle fighter when not full.
-      if (unit.cargo.length < cap) {
-        const adjFighter = obs.myUnits.find(
-          (u) =>
-            u.type === UnitType.Fighter && u.carriedBy === null && u.movesLeft > 0 &&
-            wrappedDistX(u.x, unit.x, this.mapWidth) <= 1 && Math.abs(u.y - unit.y) <= 1,
-        );
-        if (adjFighter) return { type: 'LOAD', unitId: adjFighter.id, transportId: unit.id };
-      }
-
-      if (unit.cargo.length > 0) {
-        // If a sub or transport is within fighter strike range, unload one fighter toward it.
-        const strikeTarget = obs.visibleEnemyUnits.find(
-          (e) =>
-            (e.type === UnitType.Submarine || e.type === UnitType.Transport) &&
-            this.wrappedDist(e, unit) <= fMov,
-        );
-        if (strikeTarget) {
-          const launchTile = this.getAdjacentAirTileToward(unit, strikeTarget);
-          if (launchTile) {
-            return { type: 'UNLOAD', unitId: unit.cargo[0], to: launchTile };
-          }
-        }
-
-        // Patrol toward the objective (midpoint between us and the enemy front).
-        const objective = this.attackTarget ?? this.expansionTarget;
-        if (objective) {
-          const m = this.moveToward(obs, unit, objective);
-          if (m) return m;
-        }
-        return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
-      }
-
-      // Empty: return to nearest friendly city to reload fighters.
-      const homeCity = this.nearestCity(obs.myCities, unit);
-      if (homeCity) { const m = this.moveToward(obs, unit, homeCity); if (m) return m; }
-      return this.moveTowardExploration(obs, unit) ?? { type: 'SKIP', unitId: unit.id };
-    }
-
-    // Generic sea unit fallback
-    const target = this.attackTarget ?? this.expansionTarget;
-    if (target) { const m = this.moveToward(obs, unit, target); if (m) return m; }
-    return this.moveTowardExploration(obs, unit);
-  }
-
-  private decideAirUnit(obs: AgentObservation, unit: UnitView): AgentAction | null {
-    // Always refuel first if low
-    if (unit.fuel !== undefined) {
-      const carrier = obs.myUnits.find((u) => u.type === UnitType.Carrier);
-      const refuelBase = carrier
-        ? this.nearestUnit([carrier], unit) ?? this.nearestCity(obs.myCities, unit)
-        : this.nearestCity(obs.myCities, unit);
-      if (refuelBase) {
-        const distToRefuel = this.wrappedDist(unit, refuelBase);
-        // Head home if we can't safely advance further (keep 1-turn buffer)
-        if (unit.fuel <= distToRefuel + 1) {
-          return this.moveToward(obs, unit, refuelBase);
-        }
-      }
-    }
-
-    // ── Bomber ──────────────────────────────────────────────────────────────
-    if (unit.type === UnitType.Bomber) {
-      const bomberMoves = UNIT_STATS[UnitType.Bomber].movesPerTurn;
-      const blastR = obs.myBomberBlastRadius;
-
-      // Return to nearest friendly city if fuel is too low to make a strike.
-      if ((unit.fuel ?? bomberMoves) < bomberMoves) {
-        const city = obs.myCities.reduce<CityView | null>((best, c) => {
-          const d = this.wrappedDist(c, unit);
-          return !best || d < this.wrappedDist(best, unit) ? c : best;
-        }, null);
-        if (city) { const m = this.moveToward(obs, unit, city); if (m) return m; }
-        return { type: 'SKIP', unitId: unit.id };
-      }
-
-      // Attack any visible high-value target.
-      const target = this.findBestBomberTarget(obs, unit, blastR);
-      if (target) {
-        const m = this.moveToward(obs, unit, target);
-        if (m) return m;
-      }
-
-      // No visible target — position at a conflict city: a city we own that is within
-      // 15 tiles of any visible enemy city or unit. From there we can strike immediately
-      // when targets come into view.
-      const CONFLICT_RADIUS = 15;
-      const conflictCities = obs.myCities.filter((c) =>
-        obs.visibleEnemyCities.some((e) => e.owner !== null && this.wrappedDist(c, e) <= CONFLICT_RADIUS) ||
-        obs.visibleEnemyUnits.some((e) => this.wrappedDist(c, e) <= CONFLICT_RADIUS),
-      );
-
-      // Already at a conflict city — hold and wait for targets.
-      if (conflictCities.some((c) => c.x === unit.x && c.y === unit.y)) {
-        return { type: 'SKIP', unitId: unit.id };
-      }
-
-      // Fly to the nearest conflict city.
-      const nearestConflict = this.nearestCity(conflictCities, unit);
-      if (nearestConflict) {
-        const m = this.moveToward(obs, unit, nearestConflict);
-        if (m) return m;
-      }
-
-      // No conflict cities visible yet — fly toward the last known objective.
-      const objective = this.attackTarget ?? this.expansionTarget;
-      if (objective) {
-        const m = this.moveToward(obs, unit, objective);
-        if (m) return m;
-      }
-    }
-
-    // ── Fighter ──────────────────────────────────────────────────────────────
-    if (unit.type === UnitType.Fighter) {
-      const fMoves = UNIT_STATS[UnitType.Fighter].movesPerTurn;
-
-      // Contested cities: our cities that have enemy units or enemy cities within combat range.
-      const combatR = Math.min(10, Math.floor(this.mapWidth / 5));
-      const contestedOwnCities = obs.myCities.filter((c) =>
-        obs.visibleEnemyUnits.some((e) => this.wrappedDist(e, c) <= combatR) ||
-        obs.visibleEnemyCities.some((e) => e.owner !== null && this.wrappedDist(e, c) <= combatR),
-      );
-
-      // Rule 3: City under immediate threat — enemy land unit within 1 tile of our city.
-      for (const city of obs.myCities) {
-        const threat = obs.visibleEnemyUnits.find(
-          (e) => UNIT_STATS[e.type].domain === UnitDomain.Land && this.wrappedDist(e, city) <= 1,
-        );
-        if (threat && this.wrappedDist(unit, city) <= fMoves) {
-          // Attack the threatening unit directly if we can reach it.
-          const m = this.moveToward(obs, unit, threat);
-          if (m) return m;
-        }
-        if (threat) {
-          // Fly to the city to defend it.
-          const m = this.moveToward(obs, unit, city);
-          if (m) return m;
-        }
-      }
-
-      // Rule 1: Park in a contested city that has no fighter guard yet.
-      // If already stationed at a contested city, guard it and strike from there.
-      const atContested = contestedOwnCities.find((c) => c.x === unit.x && c.y === unit.y);
-      if (atContested) {
-        // Rule 2: Strike valuable targets within range from this city.
-        // Priority: enemy armies threatening any friendly city, then transports, then submarines.
-        for (const city of obs.myCities) {
-          const armyThreat = obs.visibleEnemyUnits.find(
-            (e) => e.type === UnitType.Army && this.wrappedDist(e, city) <= 2 &&
-              this.wrappedDist(e, unit) <= fMoves,
-          );
-          if (armyThreat) { const m = this.moveToward(obs, unit, armyThreat); if (m) return m; }
-        }
-        for (const prey of [UnitType.Transport, UnitType.Submarine, UnitType.Bomber] as UnitType[]) {
-          const t = obs.visibleEnemyUnits.find(
-            (e) => e.type === prey && this.wrappedDist(e, unit) <= fMoves,
-          );
-          if (t) { const m = this.moveToward(obs, unit, t); if (m) return m; }
-        }
-        // No nearby target — hold position.
-        return { type: 'SKIP', unitId: unit.id };
-      }
-
-      // Not yet at a contested city — find one that needs a fighter.
-      const unguarded = contestedOwnCities.find(
-        (c) => !obs.myUnits.some(
-          (u) => u.id !== unit.id && u.type === UnitType.Fighter && u.x === c.x && u.y === c.y,
-        ),
-      );
-      if (unguarded) {
-        const m = this.moveToward(obs, unit, unguarded);
-        if (m) return m;
-      }
-
-      // All contested cities already guarded — board a carrier that needs fighters.
-      const needyCarrier = obs.myUnits.find(
-        (u) => u.type === UnitType.Carrier &&
-          u.cargo.length < UNIT_STATS[UnitType.Carrier].cargoCapacity,
-      );
-      if (needyCarrier) {
-        const m = this.moveToward(obs, unit, needyCarrier);
-        if (m) return m;
-      }
-
-      // Support the nearest contested city.
-      const nearest = this.nearestCity(contestedOwnCities, unit);
-      if (nearest) { const m = this.moveToward(obs, unit, nearest); if (m) return m; }
-    }
-
-    // Generic fallback: attack nearest visible enemy, or scout
-    const enemy = this.nearestEnemy(obs.visibleEnemyUnits, unit);
-    if (enemy) return this.moveToward(obs, unit, enemy);
-
-    return this.moveTowardExploration(obs, unit);
-  }
-
-  // ── Helpers ──────────────────────────────────────────────
-
   /**
-   * Returns the highest-priority bomb target for the given bomber, or null if none found.
-   * Priority:
-   *   1. Enemy city that has enemy units on/near it AND a friendly army within 2 tiles.
-   *   2. Battleship; loaded transport (cargo > 0).
-   *   3. Enemy unit cluster whose total production cost (buildTime) within blastR >= 30.
+   * Determine the move for a Fighter unit according to rules.json.
+   * Evaluate conditions top-to-bottom, first match executes.
+   * If no conditions match, perform wait (SKIP).
    */
-  private findBestBomberTarget(obs: AgentObservation, unit: UnitView, blastR: number): Coord | null {
-    // P1: enemy city defended by enemy units with a friendly army within 2 tiles
-    for (const city of obs.visibleEnemyCities) {
-      if (city.owner === null) continue;
-      const hasDefender = obs.visibleEnemyUnits.some((e) => e.x === city.x && e.y === city.y);
-      if (!hasDefender) continue;
-      const friendlyNear = obs.myUnits.some(
-        (u) => u.type === UnitType.Army && this.wrappedDist(u, city) <= 2,
-      );
-      if (friendlyNear) return { x: city.x, y: city.y };
+  private determineMoveForFighter(
+    obs: AgentObservation,
+    unit: UnitView,
+    mineIndices: Set<number>,
+    islandOf: Map<string, number>,
+  ): AgentAction | null {
+    const fMov = UNIT_STATS[UnitType.Fighter].movesPerTurn;
+
+    // Rule 1: Enemy transport in range with at least one unit onboard -> Attack
+    for (const target of obs.visibleEnemyUnits) {
+      if (target.type === UnitType.Transport && target.cargo.length > 0 && this.wrappedDist(target, unit) <= fMov) {
+        const move = this.moveToward(obs, unit, target);
+        if (move) return move;
+      }
     }
 
-    // P2: battleships first, then loaded transports
-    for (const preyType of [UnitType.Battleship, UnitType.Transport] as UnitType[]) {
-      const candidates = obs.visibleEnemyUnits.filter((e) => {
-        if (e.type !== preyType) return false;
-        if (preyType === UnitType.Transport) return (e.cargo?.length ?? 0) > 0;
-        return true;
-      });
-      const t = this.nearestEnemy(candidates, unit);
-      if (t) return { x: t.x, y: t.y };
+    // Rule 2: Enemy submarine in range -> Attack
+    for (const target of obs.visibleEnemyUnits) {
+      if (target.type === UnitType.Submarine && this.wrappedDist(target, unit) <= fMov) {
+        const move = this.moveToward(obs, unit, target);
+        if (move) return move;
+      }
     }
 
-    // P3: enemy unit cluster with total production cost >= 30 within blast radius
-    // Evaluate every visible enemy unit as a potential bomb center.
-    let bestCoord: Coord | null = null;
-    let bestCost = 29; // must exceed threshold to qualify
-    for (const center of obs.visibleEnemyUnits) {
-      let cost = 0;
-      for (const e of obs.visibleEnemyUnits) {
-        const dx = wrappedDistX(e.x, center.x, this.mapWidth);
-        const dy = Math.abs(e.y - center.y);
-        if (Math.max(dx, dy) <= blastR) {
-          cost += UNIT_STATS[e.type].buildTime;
+    // Rule 3: Friendly city under attack (enemy army within 3 squares) -> Fly to friendly city, stay there
+    const citiesUnderAttack = obs.myCities.filter((c) =>
+      obs.visibleEnemyUnits.some(
+        (e) => e.type === UnitType.Army && this.wrappedDist(e, c) <= 3,
+      ),
+    );
+    if (citiesUnderAttack.length > 0) {
+      // Find nearest city under attack
+      const nearestCityUnderAttack = this.nearestCity(citiesUnderAttack, unit);
+      if (nearestCityUnderAttack) {
+        const move = this.moveToward(obs, unit, nearestCityUnderAttack);
+        if (move) return move;
+        // If already at the city, hold position
+        if (unit.x === nearestCityUnderAttack.x && unit.y === nearestCityUnderAttack.y) {
+          return { type: 'SKIP', unitId: unit.id };
         }
       }
-      if (cost > bestCost) {
-        bestCost = cost;
-        bestCoord = { x: center.x, y: center.y };
-      }
     }
-    return bestCoord;
+
+    // Rule 4: Board a carrier if available
+    const needyCarrier = obs.myUnits.find(
+      (u) => u.type === UnitType.Carrier && u.cargo.length < UNIT_STATS[UnitType.Carrier].cargoCapacity,
+    );
+    if (needyCarrier) {
+      const move = this.moveToward(obs, unit, needyCarrier);
+      if (move) return move;
+    }
+
+    // Rule 5: Move to nearest unexplored sea zone (explore)
+    const unexplored = this.nearestUnexploredTile(obs, unit);
+    if (unexplored) {
+      const step = this.bestStepToward(obs, unit, unexplored);
+      if (step) return { type: 'MOVE', unitId: unit.id, to: step };
+    }
+
+    return null;
   }
 
-  private findAdjacentEnemy(obs: AgentObservation, unit: UnitView): UnitView | undefined {
-    return obs.visibleEnemyUnits.find((e) => {
-      const dx = wrappedDistX(e.x, unit.x, this.mapWidth);
-      const dy = Math.abs(e.y - unit.y);
-      return dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
-    });
-  }
+  // ── Shared Movement Helpers ─────────────────────────────────────────────────
+
 
   private moveToward(obs: AgentObservation, unit: UnitView, target: Coord): AgentAction | null {
     const best = this.bestStepToward(obs, unit, target);
@@ -1017,6 +1535,17 @@ export class BasicAgent implements Agent {
     return best;
   }
 
+  /** Returns all adjacent ocean tiles. */
+  private getAdjacentOceanTiles(obs: AgentObservation, x: number, y: number): Coord | null {
+    const adj = this.getAdjacentTiles(x, y);
+    for (const c of adj) {
+      if (c.y <= 0 || c.y >= this.mapHeight - 1) continue;
+      const tile = obs.tiles[c.y]?.[c.x];
+      if (tile && tile.terrain === Terrain.Ocean) return c;
+    }
+    return null;
+  }
+
   private getAdjacentLandToward(obs: AgentObservation, unit: UnitView, toward: Coord | null): Coord | null {
     const adj = this.getAdjacentTiles(unit.x, unit.y);
     let best: Coord | null = null;
@@ -1029,6 +1558,64 @@ export class BasicAgent implements Agent {
       if (d < bestDist) { bestDist = d; best = c; }
     }
     return best;
+  }
+
+  /** Returns the nearest unexplored tile (Hidden) from `unit` position. */
+  private nearestUnexploredTile(obs: AgentObservation, unit: UnitView): Coord | null {
+    const stats = UNIT_STATS[unit.type];
+    const canEnter = (x: number, y: number): boolean => {
+      if (y <= 0 || y >= this.mapHeight - 1) return false;
+      const tile = obs.tiles[y]?.[x];
+      if (!tile) return false;
+      if (stats.domain === UnitDomain.Land) return tile.terrain === Terrain.Land;
+      if (stats.domain === UnitDomain.Sea) return tile.terrain === Terrain.Ocean;
+      return true; // air
+    };
+
+    const key = (x: number, y: number) => `${x},${y}`;
+    const visited = new Set<string>();
+    visited.add(key(unit.x, unit.y));
+    const queue: Array<{ x: number; y: number; dist: number }> = [
+      { x: unit.x, y: unit.y, dist: 0 },
+    ];
+
+    const dirs = [
+      { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+      { x: -1, y: 0 },                    { x: 1, y: 0 },
+      { x: -1, y: 1 },  { x: 0, y: 1 },  { x: 1, y: 1 },
+    ];
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      for (const d of dirs) {
+        const nx = wrapX(cur.x + d.x, this.mapWidth);
+        const ny = cur.y + d.y;
+        const k = key(nx, ny);
+        if (visited.has(k)) continue;
+        visited.add(k);
+
+        const tile = obs.tiles[ny]?.[nx];
+        if (!tile || !canEnter(nx, ny)) continue;
+
+        if (tile.visibility === TileVisibility.Hidden) {
+          return { x: nx, y: ny };
+        }
+
+        queue.push({ x: nx, y: ny, dist: cur.dist + 1 });
+      }
+    }
+
+    return null;
+  }
+
+  /** Returns all adjacent land tiles. */
+  private getAdjacentLandTiles(obs: AgentObservation, x: number, y: number): Coord[] {
+    const adj = this.getAdjacentTiles(x, y);
+    return adj.filter((c) => {
+      if (c.y <= 0 || c.y >= this.mapHeight - 1) return false;
+      const tile = obs.tiles[c.y]?.[c.x];
+      return !!tile && tile.terrain === Terrain.Land;
+    });
   }
 
   private nearestCity(
@@ -1072,16 +1659,19 @@ export class BasicAgent implements Agent {
    * Flood-fill obs.tiles to find connected land regions, then classify each:
    *   MINE       — island where every visible city is owned by us (safe staging area)
    *   CONTESTED  — island with ≥1 neutral/enemy city, OR land with no visible cities
+   *   EXPLORED   — island where all land tiles are visible (not Hidden)
    *
    * Returns:
    *   islandOf       "x,y" → island index
    *   mineIndices    set of "mine" island indices
    *   contestedIndices set of "contested" island indices
+   *   exploredIslands set of "explored" island indices
    */
   private classifyIslands(obs: AgentObservation): {
     islandOf: Map<string, number>;
     mineIndices: Set<number>;
     contestedIndices: Set<number>;
+    exploredIslands: Set<number>;
   } {
     const tiles = obs.tiles;
     const h = tiles.length;
@@ -1138,6 +1728,7 @@ export class BasicAgent implements Agent {
 
     const mineIndices = new Set<number>();
     const contestedIndices = new Set<number>();
+    const exploredIslands = new Set<number>();
 
     for (let i = 0; i < islandCount; i++) {
       const cities = citiesOnIsland.get(i);
@@ -1151,8 +1742,27 @@ export class BasicAgent implements Agent {
         // At least one neutral or enemy city
         contestedIndices.add(i);
       }
+
+      // Check if island is fully explored
+      let islandIsExplored = true;
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = islandOf.get(`${x},${y}`);
+          if (idx === i) {
+            const tile = tiles[y]?.[x];
+            if (!tile || tile.terrain !== Terrain.Land) continue;
+            if (tile.visibility === TileVisibility.Hidden) {
+              islandIsExplored = false;
+              break;
+            }
+          }
+        }
+      }
+      if (islandIsExplored) {
+        exploredIslands.add(i);
+      }
     }
 
-    return { islandOf, mineIndices, contestedIndices };
+    return { islandOf, mineIndices, contestedIndices, exploredIslands };
   }
 }
