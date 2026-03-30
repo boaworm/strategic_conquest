@@ -91,7 +91,7 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
       const size = WORLD_SIZES[mainWorldSize];
       // Map AI player name to type and pass to server
       const aiType = 'ai' as const;
-      const result = await createGame(size.width, size.height, 'pve', 'human', aiType, undefined, aiPlayer as 'adam' | 'basic' | 'gunair');
+      const result = await createGame(size.width, size.height, 'pve', 'human', aiType, undefined, aiPlayer as 'basic' | 'gunair');
       // Automatically join as player 1 (AI joins automatically via server)
       console.log('Created AI game, joining as player 1...');
       joinGame(result.p1Token);

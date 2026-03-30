@@ -4,7 +4,7 @@
  * Each completed game is written directly as a JSON file to REPLAY_DIR.
  *
  * P1_AGENT / P2_AGENT — agent name for each player (default: basicAgent).
- * Supported values: basicAgent, gunAirAgent, adamAI
+ * Supported values: basicAgent, gunAirAgent
  */
 import fs from 'fs';
 import path from 'path';
@@ -15,7 +15,6 @@ import {
   getPlayerView,
   BasicAgent,
   GunAirAgent,
-  AdamAI,
 } from '@sc/shared';
 import type { Agent, AgentAction } from '@sc/shared';
 import { snapshotGame, type ReplayMeta } from './replayUtils.js';
@@ -38,9 +37,6 @@ function makeAgent(name: string): Agent {
     case 'gunairagent':
     case 'gunair':
       return new GunAirAgent();
-    case 'adamai':
-    case 'adam':
-      return new AdamAI();
     case 'basicagent':
     case 'basic':
     default:

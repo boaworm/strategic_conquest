@@ -1,7 +1,6 @@
 export * from './types.js';
 export * from './agent.js';
 export * from './basicAgent.js';
-export { AdamAI } from './adamAI.js';
 export { GunAirAgent } from './gunAirAgent.js';
 export { createGameState, generateMap } from './engine/map.js';
 export { applyAction, getPlayerView, isCityCoastal } from './engine/game.js';

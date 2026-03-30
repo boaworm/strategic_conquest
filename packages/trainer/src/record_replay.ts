@@ -8,7 +8,7 @@
  *   NUM_GAMES=50 WORKERS=8 npm run record
  *   NUM_GAMES=20 MAX_TURNS=300 P1_AGENT=basicAgent P2_AGENT=gunAirAgent npm run record
  *
- * Agent names (case-insensitive): basicAgent, gunAirAgent, adamAI
+ * Agent names (case-insensitive): basicAgent, gunAirAgent
  */
 import fs from 'fs';
 import os from 'os';

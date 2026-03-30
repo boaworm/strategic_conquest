@@ -1,0 +1,70 @@
+{
+  "implementation_instructions": {
+    "production": "Evaluate phases in order. Within each phase, evaluate rules top to bottom, executing the first matching rule. Re-evaluate every time a city finishes producing a unit.",
+    "shared_functions": "Use existing shared functions where applicable"
+  },
+
+  "phases": {
+    "Explore": "Fully explore starting island and take all cities on it",
+    "Expand":  "Home island secure — build transports, push armies to other islands",
+    "Combat":  "First enemy contact made — full warfare production",
+    "transitions": ["Explore → Expand (or directly to Combat)", "Expand → Combat"]
+  },
+
+  "production": {
+    "Explore": [
+      {
+        "conditions": [],
+        "produce": "Army"
+      }
+    ],
+
+    "Expand": [
+      {
+        "conditions": [
+          "City has access to water",
+          "active_transports < max(1, ceil(army_producing_cities_on_this_island / 3))"
+        ],
+        "produce": "Transport",
+        "note": "1 transport per 3 army-producing cities on this island"
+      },
+      {
+        "produce": "Army"
+      }
+    ],
+
+    "Combat": [
+      {
+        "conditions": ["Enemy city is reachable by land from this city"],
+        "produce": "Army"
+      },
+      {
+        "conditions": ["City has no access to water"],
+        "produce": "balance(Fighter, Bomber)",
+        "note": "Pick whichever of Fighter/Bomber we have fewer of (alive + in production). Random tiebreak."
+      },
+      {
+        "conditions": ["City has access to water"],
+        "produce": "lowest_score(Transport, Battleship, Submarine, Destroyer, Fighter, Bomber)",
+        "note": "score = (alive + in_production) * buildTime / scalingFactor",
+        "scaling_factors": {
+          "Transport":  1,
+          "Battleship": 2,
+          "Submarine":  2,
+          "Destroyer":  1,
+          "Fighter":    1,
+          "Bomber":     1
+        }
+      }
+    ]
+  },
+
+  "shared_functions": {
+    "active_transports": "Count of Transport units currently alive",
+    "army_producing_cities_on_this_island": "Count of our cities on the same island currently producing Army (excluding this city)",
+    "enemy_reachable_by_land": "BFS over land tiles only — true if any visible enemy-owned city is connected to this city without crossing ocean",
+    "has_water_access": "True if any of the 8 tiles adjacent to the city is ocean",
+    "balance(a, b)": "Return whichever unit type has fewer (alive + in_production). Random if equal.",
+    "lowest_score(...)": "For each listed unit type, compute (alive + in_production) * buildTime / scalingFactor. Return the type with the lowest score."
+  }
+}
