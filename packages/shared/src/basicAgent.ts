@@ -83,11 +83,8 @@ export class BasicAgent implements Agent {
   private mapWidth!: number;
   private mapHeight!: number;
 
-  // Current strategic phase (recomputed each act() call).
+  // Current strategic phase
   private phase: 1 | 2 | 3 = 1;
-  // Turn numbers when phases first advanced (undefined = not yet reached).
-  private phase2Turn: number | undefined = undefined;
-  private phase3Turn: number | undefined = undefined;
 
   // Patrol direction for destroyers (persistent across turns)
   private destroyerPatrolDir: { x: number; y: number } | null = null;
@@ -119,10 +116,8 @@ export class BasicAgent implements Agent {
     this.mapHeight = config.mapHeight;
     // Reset patrol direction on new game
     this.destroyerPatrolDir = null;
-    // Reset phase transitions on new game
+    // Reset on new game
     this.phase = 1;
-    this.phase2Turn = undefined;
-    this.phase3Turn = undefined;
     this.homeIslandIdx = undefined;
     // Initialize movement engine with rules from JSON
     this.movementEngine = new MovementRulesEngine(MOVEMENT_RULES, config.mapWidth, config.mapHeight);
@@ -130,20 +125,18 @@ export class BasicAgent implements Agent {
   }
 
   /**
-   * Determine current strategic phase from observable signals:
-   *  1 — Expand: Explore starting island and take all cities
-   *  2 — Explore: Move to other islands once home is fully explored
-   *  3 — Combat: Encountered enemy, prioritize combat
-   *
-   * Phase transitions are one-way: 1 → 2 → 3, never back.
+   * Determine current strategic phase.
+   * Phase 3: Enemy contact → stay in combat
+   * Phase 2: Home island fully explored → explore other islands
+   * Phase 1: Default → expand home island
    */
   private computePhase(obs: AgentObservation): 1 | 2 | 3 {
-    // If already in combat, stay in phase 3
+    // Phase 3: Already in combat or enemy contact
     if (this.phase === 3) return 3;
 
-    const { islandOf, mineIndices, exploredIslands } = this.classifyIslands(obs);
+    const { islandOf, exploredIslands } = this.classifyIslands(obs);
 
-    // Set home island index on first turn if not already set
+    // Set home island on first turn
     if (this.homeIslandIdx === undefined && obs.myCities.length > 0) {
       const cityIdx = islandOf.get(`${obs.myCities[0].x},${obs.myCities[0].y}`);
       if (cityIdx !== undefined) {
@@ -151,23 +144,18 @@ export class BasicAgent implements Agent {
       }
     }
 
-    // Phase 1 → 2: Home island is fully explored
-    if (this.phase === 1 && this.homeIslandIdx !== undefined) {
-      if (this.isIslandExplored(this.homeIslandIdx, exploredIslands)) {
-        return 2;
-      }
+    // Enemy contact → phase 3
+    if (obs.visibleEnemyCities.some((c) => c.owner !== null) || obs.visibleEnemyUnits.length > 0) {
+      this.phase = 3;
+      return 3;
     }
 
-    // Phase 2 → 3 or Phase 1 → 3: Enemy contact anywhere (enemy city with owner, or any enemy unit)
-    const hasEnemyContact = obs.visibleEnemyCities.some((c) => c.owner !== null) ||
-                            obs.visibleEnemyUnits.length > 0;
-    if (hasEnemyContact) return 3;
+    // Home island fully explored → phase 2
+    if (this.phase === 1 && this.homeIslandIdx !== undefined && this.isIslandExplored(this.homeIslandIdx, exploredIslands)) {
+      this.phase = 2;
+    }
 
-    return 1;
-  }
-
-  getPhaseTransitions(): { phase2Turn: number | undefined; phase3Turn: number | undefined } {
-    return { phase2Turn: this.phase2Turn, phase3Turn: this.phase3Turn };
+    return this.phase;
   }
 
   getPhase(): 1 | 2 | 3 {
@@ -175,12 +163,7 @@ export class BasicAgent implements Agent {
   }
 
   act(obs: AgentObservation): AgentAction {
-    const newPhase = this.computePhase(obs);
-    if (newPhase > this.phase) {
-      if (newPhase === 2) this.phase2Turn = obs.turn;
-      if (newPhase === 3) this.phase3Turn = obs.turn;
-    }
-    this.phase = newPhase;
+    this.computePhase(obs);
 
     // Sea units first so transports can LOAD armies before armies burn their moves on SKIP.
     // In attack mode, override with attack priority (bombers/fighters/battleships lead).

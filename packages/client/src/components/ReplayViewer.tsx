@@ -20,10 +20,6 @@ interface ReplayMeta {
   mapWidth: number;
   mapHeight: number;
   frames: number;
-  p1Phase2Turn?: number;
-  p1Phase3Turn?: number;
-  p2Phase2Turn?: number;
-  p2Phase3Turn?: number;
 }
 
 interface ReplayFrame {
@@ -32,8 +28,7 @@ interface ReplayFrame {
   cities: City[];
   units: Unit[];
   winner: string | null;
-  p1Phase?: number;
-  p2Phase?: number;
+  phases?: Record<string, number>;
 }
 
 interface ReplayData {
@@ -418,61 +413,28 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
 // ── Phase track bars component (renders bars only, no label) ───
 
 interface PhaseTrackBarsProps {
-  totalFrames: number;
-  phase2Turn?: number;
-  phase3Turn?: number;
+  frames: ReplayFrame[];
+  playerId: string;
   color: string;
 }
 
-function PhaseTrackBars({ totalFrames, phase2Turn, phase3Turn, color }: PhaseTrackBarsProps) {
-  if (totalFrames === 0) return null;
-
-  const p2T = phase2Turn ?? totalFrames;
-  const p3T = phase3Turn ?? totalFrames;
-
-  const t1 = 0;
-  const t2 = Math.min(p2T, p3T);
-  const t3 = p3T;
+function PhaseTrackBars({ frames, playerId, color }: PhaseTrackBarsProps) {
+  if (frames.length === 0) return null;
 
   const bars: React.ReactNode[] = [];
+  const segmentWidth = 100 / frames.length;
 
-  if (t2 > 0) {
+  for (let i = 0; i < frames.length; i++) {
+    const phase = frames[i].phases?.[playerId] ?? 1;
+    const bg = phase === 3 ? COL_PHASE3 : phase === 2 ? COL_PHASE2 : COL_PHASE1;
     bars.push(
       <div
-        key="p1"
+        key={i}
         className="absolute top-0 bottom-0"
         style={{
-          left: `${(t1 / totalFrames) * 100}%`,
-          width: `${((t2 - t1) / totalFrames) * 100}%`,
-          backgroundColor: COL_PHASE1,
-        }}
-      />
-    );
-  }
-
-  if (t3 > t2) {
-    bars.push(
-      <div
-        key="p2"
-        className="absolute top-0 bottom-0"
-        style={{
-          left: `${(t2 / totalFrames) * 100}%`,
-          width: `${((t3 - t2) / totalFrames) * 100}%`,
-          backgroundColor: COL_PHASE2,
-        }}
-      />
-    );
-  }
-
-  if (totalFrames > t3) {
-    bars.push(
-      <div
-        key="p3"
-        className="absolute top-0 bottom-0"
-        style={{
-          left: `${(t3 / totalFrames) * 100}%`,
-          width: `${((totalFrames - t3) / totalFrames) * 100}%`,
-          backgroundColor: COL_PHASE3,
+          left: `${i * segmentWidth}%`,
+          width: `${segmentWidth}%`,
+          backgroundColor: bg,
         }}
       />
     );
@@ -659,12 +621,7 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
                   <td className="text-xs font-bold align-top" style={{ color: COL_P1 }}>Player 1</td>
                   <td className="p-0 align-top">
                     <div className="w-full h-2 bg-gray-800 relative overflow-hidden">
-                      <PhaseTrackBars
-                        totalFrames={total}
-                        phase2Turn={replay.meta.p1Phase2Turn}
-                        phase3Turn={replay.meta.p1Phase3Turn}
-                        color={COL_P1}
-                      />
+                      <PhaseTrackBars frames={replay.frames} playerId="player1" color={COL_P1} />
                     </div>
                   </td>
                   <td></td>
@@ -673,12 +630,7 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
                   <td className="text-xs font-bold align-top" style={{ color: COL_P2 }}>Player 2</td>
                   <td className="p-0 align-top">
                     <div className="w-full h-2 bg-gray-800 relative overflow-hidden">
-                      <PhaseTrackBars
-                        totalFrames={total}
-                        phase2Turn={replay.meta.p2Phase2Turn}
-                        phase3Turn={replay.meta.p2Phase3Turn}
-                        color={COL_P2}
-                      />
+                      <PhaseTrackBars frames={replay.frames} playerId="player2" color={COL_P2} />
                     </div>
                   </td>
                   <td></td>

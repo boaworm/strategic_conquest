@@ -120,6 +120,8 @@ export interface MovementHelpers {
   contestedIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>): number | null;
   /** Get island index for a position, handling ocean tiles by checking adjacent land */
   getSeaUnitIslandIdx(x: number, y: number, islandOf: Map<string, number>): number | undefined;
+  /** Get all ocean tiles adjacent to an island */
+  getOceanTilesAdjacentToIsland(obs: AgentObservation, islandOf: Map<string, number>, islandIdx: number, mapWidth: number, mapHeight: number): Coord[];
 }
 
 export interface MovementContext {
@@ -811,14 +813,16 @@ export class MovementRulesEngine {
           ctx.obs, targetIsland, mineIndices, islandOf, ctx.mapWidth,
         );
         if (targetCity) {
-          const coastalOcean = ctx.helpers.getAdjacentOceanTiles(
-            ctx.obs, targetCity.x, targetCity.y, ctx.mapWidth,
-          );
+          const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
+            ctx.obs, islandOf, targetIsland, ctx.mapWidth, ctx.mapHeight,
+          ).find(tile => ctx.helpers.wrappedDist(tile, targetCity) <= 1);
           if (coastalOcean) {
             const step = ctx.helpers.bestStepToward(
               ctx.obs, ctx.unit, coastalOcean, ctx.mapWidth, ctx.mapHeight,
             );
-            if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+            if (step && ctx.obs.tiles[step.y]?.[step.x]?.terrain === Terrain.Ocean) {
+              return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+            }
           }
         }
       }
@@ -849,14 +853,16 @@ export class MovementRulesEngine {
           ctx.obs, targetIsland, mineIndices, islandOf, ctx.mapWidth,
         );
         if (targetCity) {
-          const coastalOcean = ctx.helpers.getAdjacentOceanTiles(
-            ctx.obs, targetCity.x, targetCity.y, ctx.mapWidth,
-          );
+          const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
+            ctx.obs, islandOf, targetIsland, ctx.mapWidth, ctx.mapHeight,
+          ).find(tile => ctx.helpers.wrappedDist(tile, targetCity) <= 1);
           if (coastalOcean) {
             const step = ctx.helpers.bestStepToward(
               ctx.obs, ctx.unit, coastalOcean, ctx.mapWidth, ctx.mapHeight,
             );
-            if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+            if (step && ctx.obs.tiles[step.y]?.[step.x]?.terrain === Terrain.Ocean) {
+              return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+            }
           }
         }
       }
@@ -938,10 +944,15 @@ export class MovementRulesEngine {
           ctx.obs, islandOf, transportIslandIdx, ctx.mapWidth, ctx.mapHeight,
         );
         if (targetLand) {
-          const step = ctx.helpers.bestStepToward(
-            ctx.obs, ctx.unit, targetLand, ctx.mapWidth, ctx.mapHeight,
-          );
-          if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+          const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
+            ctx.obs, islandOf, transportIslandIdx, ctx.mapWidth, ctx.mapHeight,
+          ).find(tile => ctx.helpers.wrappedDist(tile, targetLand) <= 1);
+          if (coastalOcean) {
+            const step = ctx.helpers.bestStepToward(
+              ctx.obs, ctx.unit, coastalOcean, ctx.mapWidth, ctx.mapHeight,
+            );
+            if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+          }
         }
       }
       return { type: 'SKIP', unitId: ctx.unit.id };
@@ -1284,19 +1295,31 @@ export class MovementRulesEngine {
           ctx.obs, islandOf, targetIsland, ctx.mapWidth, ctx.mapHeight,
         );
         if (targetLand) {
-          const step = ctx.helpers.bestStepToward(
-            ctx.obs, ctx.unit, targetLand, ctx.mapWidth, ctx.mapHeight,
-          );
-          if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+          const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
+            ctx.obs, islandOf, targetIsland, ctx.mapWidth, ctx.mapHeight,
+          ).find(tile => ctx.helpers.wrappedDist(tile, targetLand) <= 1);
+          if (coastalOcean) {
+            const step = ctx.helpers.bestStepToward(
+              ctx.obs, ctx.unit, coastalOcean, ctx.mapWidth, ctx.mapHeight,
+            );
+            if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+          }
         }
         const targetCity = ctx.helpers.findCoastalCityOnIsland(
           ctx.obs, targetIsland, ctx.helpers.classifyIslands(ctx.obs).mineIndices, islandOf, ctx.mapWidth,
         );
         if (targetCity) {
-          const step = ctx.helpers.bestStepToward(
-            ctx.obs, ctx.unit, targetCity, ctx.mapWidth, ctx.mapHeight,
-          );
-          if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+          const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
+            ctx.obs, islandOf, targetIsland, ctx.mapWidth, ctx.mapHeight,
+          ).find(tile => ctx.helpers.wrappedDist(tile, targetCity) <= 1);
+          if (coastalOcean) {
+            const step = ctx.helpers.bestStepToward(
+              ctx.obs, ctx.unit, coastalOcean, ctx.mapWidth, ctx.mapHeight,
+            );
+            if (step && ctx.obs.tiles[step.y]?.[step.x]?.terrain === Terrain.Ocean) {
+              return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+            }
+          }
         }
       }
       return { type: 'SKIP', unitId: ctx.unit.id };
@@ -1314,19 +1337,31 @@ export class MovementRulesEngine {
           ctx.obs, targetIsland, mineIndices, islandOf, ctx.mapWidth,
         );
         if (targetCity) {
-          const step = ctx.helpers.bestStepToward(
-            ctx.obs, ctx.unit, targetCity, ctx.mapWidth, ctx.mapHeight,
-          );
-          if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+          const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
+            ctx.obs, islandOf, targetIsland, ctx.mapWidth, ctx.mapHeight,
+          ).find(tile => ctx.helpers.wrappedDist(tile, targetCity) <= 1);
+          if (coastalOcean) {
+            const step = ctx.helpers.bestStepToward(
+              ctx.obs, ctx.unit, coastalOcean, ctx.mapWidth, ctx.mapHeight,
+            );
+            if (step && ctx.obs.tiles[step.y]?.[step.x]?.terrain === Terrain.Ocean) {
+              return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+            }
+          }
         }
         const targetLand = ctx.helpers.findAnyLandOnIsland(
           ctx.obs, islandOf, targetIsland, ctx.mapWidth, ctx.mapHeight,
         );
         if (targetLand) {
-          const step = ctx.helpers.bestStepToward(
-            ctx.obs, ctx.unit, targetLand, ctx.mapWidth, ctx.mapHeight,
+          const coastalOcean = ctx.helpers.getAdjacentOceanTiles(
+            ctx.obs, targetLand.x, targetLand.y, ctx.mapWidth,
           );
-          if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+          if (coastalOcean) {
+            const step = ctx.helpers.bestStepToward(
+              ctx.obs, ctx.unit, coastalOcean, ctx.mapWidth, ctx.mapHeight,
+            );
+            if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+          }
         }
       }
       return { type: 'SKIP', unitId: ctx.unit.id };

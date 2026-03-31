@@ -15,10 +15,6 @@ export interface ReplayMeta {
   frames: number;
   p1Agent?: string;
   p2Agent?: string;
-  p1Phase2Turn?: number;
-  p1Phase3Turn?: number;
-  p2Phase2Turn?: number;
-  p2Phase3Turn?: number;
 }
 
 export interface ReplayFrame {
@@ -27,8 +23,7 @@ export interface ReplayFrame {
   cities: City[];
   units: Unit[];
   winner: string | null;
-  p1Phase?: number;
-  p2Phase?: number;
+  phases?: Record<string, number>;
 }
 
 export interface ReplayFile {
@@ -48,12 +43,14 @@ export function snapshotGame(state: GameState, agents?: Record<string, Agent>): 
   };
 
   if (agents) {
+    const phases: Record<string, number> = {};
     for (const pid of ['player1', 'player2'] as const) {
       const agent = agents[pid];
       if (agent instanceof BasicAgent) {
-        frame[pid === 'player1' ? 'p1Phase' : 'p2Phase'] = agent.getPhase();
+        phases[pid] = agent.getPhase();
       }
     }
+    if (Object.keys(phases).length > 0) frame.phases = phases;
   }
 
   return frame;

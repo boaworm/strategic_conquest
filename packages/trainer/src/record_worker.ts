@@ -74,7 +74,7 @@ for (let g = 0; g < numGames; g++) {
   agents.player1.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
   agents.player2.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
 
-  const frames: ReturnType<typeof snapshotGame>[] = [snapshotGame(state, agents)];
+  const frames: ReturnType<typeof snapshotGame>[] = [];
   let prevTurn = state.turn;
   let actionsThisTurn = 0;
   let prevPlayer = state.currentPlayer;
@@ -116,12 +116,6 @@ for (let g = 0; g < numGames; g++) {
 
   const id = randomUUID();
 
-  // Get phase transitions from agents
-  const p1Phase2Turn = agents.player1 instanceof BasicAgent ? agents.player1.getPhaseTransitions().phase2Turn : undefined;
-  const p1Phase3Turn = agents.player1 instanceof BasicAgent ? agents.player1.getPhaseTransitions().phase3Turn : undefined;
-  const p2Phase2Turn = agents.player2 instanceof BasicAgent ? agents.player2.getPhaseTransitions().phase2Turn : undefined;
-  const p2Phase3Turn = agents.player2 instanceof BasicAgent ? agents.player2.getPhaseTransitions().phase3Turn : undefined;
-
   const meta: ReplayMeta = {
     id,
     gameNum: gameNum + g,
@@ -136,28 +130,14 @@ for (let g = 0; g < numGames; g++) {
     frames: frames.length,
     p1Agent: p1AgentName,
     p2Agent: p2AgentName,
-    p1Phase2Turn,
-    p1Phase3Turn,
-    p2Phase2Turn,
-    p2Phase3Turn,
   };
 
   fs.writeFileSync(path.join(replayDir, `${id}.json`), JSON.stringify({ meta, tiles: state.tiles, frames }));
   completed++;
 
-  const phaseTag = (agent: Agent, prefix: string): string => {
-    if (!(agent instanceof BasicAgent)) return '';
-    const { phase2Turn, phase3Turn } = agent.getPhaseTransitions();
-    return [
-      phase2Turn !== undefined ? `${prefix}ph2=${phase2Turn}` : '',
-      phase3Turn !== undefined ? `${prefix}ph3=${phase3Turn}` : '',
-    ].filter(Boolean).join(' ');
-  };
-  const phaseParts = [phaseTag(agents.player1, 'p1'), phaseTag(agents.player2, 'p2')].filter(Boolean).join(' ');
-
   process.stderr.write(
     `[W${workerId}] game ${gameNum + g}: [${id.slice(0, 8)}] turns=${state.turn} winner=${state.winner ?? 'draw'} ` +
-    `p1=${p1Cities} p2=${p2Cities} neutral=${neutral}${phaseParts ? ' ' + phaseParts : ''}\n`,
+    `p1=${p1Cities} p2=${p2Cities} neutral=${neutral}\n`,
   );
 
   if (g === 0 || (g + 1) % 10 === 0 || g === numGames - 1) {
