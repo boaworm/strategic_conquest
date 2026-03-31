@@ -16,11 +16,7 @@ Anchor Strategy: When using edit_file, use the smallest possible old_str that is
 
 Verification: You MUST run grep -F (fixed strings) on your intended old_str before calling edit_file to ensure a match exists.
 
-Fallback to Patch: If an edit_file call fails once, DO NOT try again with the same tool. Instead, generate a Unified Diff and use the bash tool to apply it:
-cat << 'EOF' > change.patch
-[DIFF CONTENT]
-EOF
-patch path/to/file change.patch
+Generate patches that are patch/diff compatible. That way we can avoid issues with things like newlines or extra spaces etc.
 
 ## Temporary files, data, scripts
 Keep all things like this in a tmp/ directory in the root level. 

@@ -61,6 +61,7 @@ type MovementHelpers = {
   friendlyIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>): number | null;
   contestedIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>): number | null;
   getSeaUnitIslandIdx(x: number, y: number, islandOf: Map<string, number>): number | undefined;
+  getOceanTilesAdjacentToIsland(obs: AgentObservation, islandOf: Map<string, number>, islandIdx: number, mapWidth: number, mapHeight: number): Coord[];
 };
 
 // The production_rules.json file contains extra metadata (phases, shared_functions)
@@ -157,9 +158,9 @@ export class BasicAgent implements Agent {
       }
     }
 
-    // Phase 2 → 3 or Phase 1 → 3: Enemy contact anywhere
+    // Phase 2 → 3 or Phase 1 → 3: Enemy contact anywhere (enemy city with owner, or any enemy unit)
     const hasEnemyContact = obs.visibleEnemyCities.some((c) => c.owner !== null) ||
-                            obs.visibleEnemyUnits.some((u) => u.type === UnitType.Army);
+                            obs.visibleEnemyUnits.length > 0;
     if (hasEnemyContact) return 3;
 
     return 1;
@@ -279,6 +280,7 @@ export class BasicAgent implements Agent {
       friendlyIslandWithMostArmies: (obs, islandOf, mineIndices) => this.friendlyIslandWithMostArmies(obs, islandOf, mineIndices),
       contestedIslandWithMostArmies: (obs, islandOf) => this.contestedIslandWithMostArmies(obs, islandOf),
       getSeaUnitIslandIdx: (x, y, islandOf) => this.getSeaUnitIslandIdx(x, y, islandOf),
+      getOceanTilesAdjacentToIsland: (obs, islandOf, islandIdx) => this.getOceanTilesAdjacentToIsland(obs, islandOf, islandIdx, this.mapWidth, this.mapHeight),
     };
   }
 
@@ -1297,5 +1299,42 @@ export class BasicAgent implements Agent {
       }
     }
     return maxIdx;
+  }
+
+  /**
+   * Get all ocean tiles adjacent to a given island.
+   * Returns an array of coordinates, or empty array if island not found.
+   */
+  private getOceanTilesAdjacentToIsland(obs: AgentObservation, islandOf: Map<string, number>, islandIdx: number, mapWidth: number, mapHeight: number): Coord[] {
+    const tiles = obs.tiles;
+    const h = tiles.length;
+    const w = tiles[0]?.length ?? 0;
+
+    const result: Coord[] = [];
+    const seen = new Set<string>();
+
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 0; x < w; x++) {
+        const tile = tiles[y]?.[x];
+        // Check if this is an ocean tile
+        if (!tile || tile.terrain !== Terrain.Ocean) continue;
+
+        // Check if this ocean tile is adjacent to the target island
+        const adj = this.getAdjacentTiles(x, y, mapWidth);
+        for (const adjTile of adj) {
+          if (adjTile.y <= 0 || adjTile.y >= mapHeight - 1) continue;
+          const adjIsland = islandOf.get(`${adjTile.x},${adjTile.y}`);
+          if (adjIsland === islandIdx) {
+            const key = `${x},${y}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              result.push({ x, y });
+            }
+          }
+        }
+      }
+    }
+
+    return result;
   }
 }

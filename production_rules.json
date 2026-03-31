@@ -14,13 +14,6 @@
   "production": {
     "Explore": [
       {
-        "conditions": [
-          "City has access to water",
-          "active_transports < 1"
-        ],
-        "produce": "Transport"
-      },
-      {
         "conditions": [],
         "produce": "Army"
       }
