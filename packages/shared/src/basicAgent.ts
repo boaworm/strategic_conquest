@@ -183,7 +183,50 @@ export class BasicAgent implements Agent {
     const units = [...obs.myUnits].sort((a, b) => attackOrder(a) - attackOrder(b));
 
     for (const unit of units) {
-      if (unit.carriedBy !== null) continue;
+      // Handle carried units (ARMY on transport, fighter on carrier)
+      if (unit.carriedBy !== null) {
+        // Army on transport: check adjacent 8 tiles for land on non-friendly island
+        if (unit.type === UnitType.Army && unit.movesLeft > 0) {
+          const { islandOf, mineIndices } = this.classifyIslands(obs);
+          const adj = this.getAdjacentTiles(unit.x, unit.y, this.mapWidth);
+
+          const clearCandidates: Coord[] = [];
+          const attackCandidates: Coord[] = [];
+
+          for (const tile of adj) {
+            // Check if this is a land tile (not ice cap)
+            if (tile.y <= 0 || tile.y >= this.mapHeight - 1) continue;
+            const t = obs.tiles[tile.y]?.[tile.x];
+            if (!t || t.terrain !== Terrain.Land) continue;
+
+            // Check if it's on a non-friendly island
+            const islandIdx = islandOf.get(`${tile.x},${tile.y}`);
+            if (islandIdx === undefined || mineIndices.has(islandIdx)) continue;
+
+            // Check if tile has enemy units
+            const hasEnemy = obs.myUnits.some(u =>
+              u.x === tile.x && u.y === tile.y && u.owner !== obs.myPlayerId
+            );
+
+            if (hasEnemy) {
+              attackCandidates.push(tile);
+            } else {
+              clearCandidates.push(tile);
+            }
+          }
+
+          // Prefer clear landing, only attack if necessary
+          const target = clearCandidates.length > 0 ? clearCandidates[0] :
+                         attackCandidates.length > 0 ? attackCandidates[0] : null;
+
+          if (target) {
+            return { type: 'MOVE', unitId: unit.id, to: target };
+          }
+          continue; // No valid land to disembark to, skip
+        } else {
+          continue; // Non-army or no moves, skip
+        }
+      }
 
       if (unit.sleeping) {
         if (unit.movesLeft > 0) return { type: 'WAKE', unitId: unit.id };

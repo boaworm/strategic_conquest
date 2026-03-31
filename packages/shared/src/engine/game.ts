@@ -58,8 +58,6 @@ export function applyAction(
       return handleMove(state, action.unitId, action.to, playerId);
     case 'LOAD':
       return handleLoad(state, action.unitId, action.transportId, playerId);
-    case 'UNLOAD':
-      return handleUnload(state, action.unitId, action.to, playerId);
     case 'END_TURN':
       return handleEndTurn(state, playerId);
     default:
@@ -76,10 +74,79 @@ function handleMove(
   const unit = state.units.find((u) => u.id === unitId);
   if (!unit) return { success: false, error: 'Unit not found' };
   if (unit.owner !== playerId) return { success: false, error: 'Not your unit' };
-  if (unit.carriedBy !== null) return { success: false, error: 'Unit is being carried' };
 
   // Normalize target for cylindrical wrapping
   const target = normalizeCoord(to, state.mapWidth);
+
+  // Army disembarkation: army on transport can move to adjacent land tile
+  if (unit.carriedBy !== null && unit.type === UnitType.Army && unit.movesLeft > 0) {
+    const transport = state.units.find((u) => u.id === unit.carriedBy);
+    if (!transport) return { success: false, error: 'Transport not found' };
+
+    // Must be adjacent to transport
+    const dx = wrappedDistX(unit.x, target.x, state.mapWidth);
+    const dy = Math.abs(unit.y - target.y);
+    if (dx > 1 || dy > 1 || (dx === 0 && dy === 0)) {
+      return { success: false, error: 'Can only move to adjacent tile' };
+    }
+
+    // Target must be land (not ice cap)
+    if (target.y <= 0 || target.y >= state.mapHeight - 1) {
+      return { success: false, error: 'Cannot move there' };
+    }
+    const terrain = state.tiles[target.y]?.[target.x];
+    if (terrain !== Terrain.Land) {
+      return { success: false, error: 'Can only disembark to land' };
+    }
+
+    // Disembark from transport
+    unit.carriedBy = null;
+    transport.cargo = transport.cargo.filter((id) => id !== unit.id);
+
+    // Handle enemy units at target
+    const enemiesAtTarget = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
+    if (enemiesAtTarget.length > 0) {
+      if (unit.hasAttacked) {
+        // Re-attach and fail
+        unit.carriedBy = transport.id;
+        transport.cargo.push(unit.id);
+        return { success: false, error: 'Already attacked this turn' };
+      }
+      const defender = enemiesAtTarget[Math.floor(Math.random() * enemiesAtTarget.length)];
+      const combat = resolveCombat(state, unit, defender);
+      removeDestroyedUnits(state);
+      if (combat.attackerDestroyed) {
+        checkWinCondition(state);
+        return { success: true, combat };
+      }
+      const remaining = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
+      if (remaining.length > 0) {
+        // Attack failed, re-attach
+        unit.carriedBy = transport.id;
+        transport.cargo.push(unit.id);
+        unit.movesLeft--;
+        unit.hasAttacked = true;
+        checkWinCondition(state);
+        return { success: true, combat };
+      }
+      // Enemy destroyed, land the unit
+      unit.x = target.x;
+      unit.y = target.y;
+      unit.movesLeft--;
+      unit.hasAttacked = true;
+      checkWinCondition(state);
+      return { success: true, combat };
+    }
+
+    // No enemies - land the unit
+    unit.x = target.x;
+    unit.y = target.y;
+    unit.movesLeft--;
+    checkWinCondition(state);
+    return { success: true };
+  }
+
+  if (unit.carriedBy !== null) return { success: false, error: 'Unit is being carried' };
 
   // Shore bombardment: Battleship can attack land units on adjacent non-ocean tiles (including cities)
   if (unit.type === UnitType.Battleship) {

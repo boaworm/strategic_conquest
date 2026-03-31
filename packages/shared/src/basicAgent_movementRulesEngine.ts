@@ -1163,11 +1163,16 @@ export class MovementRulesEngine {
         transport, ctx.obs, islandOf, mineIndices, exploredIslands,
       );
       if (disembarkIslandIdx !== null) {
-        const targetLand = ctx.helpers.findAnyLandOnIsland(
-          ctx.obs, islandOf, disembarkIslandIdx, ctx.mapWidth, ctx.mapHeight,
-        );
-        if (targetLand) {
-          return { type: 'UNLOAD', unitId: ctx.unit.id, to: targetLand };
+        // Find adjacent land tile on the target island (not any land on the island)
+        const adj = ctx.helpers.getAdjacentTiles(transport.x, transport.y, ctx.mapWidth);
+        for (const tile of adj) {
+          if (tile.y <= 0 || tile.y >= ctx.mapHeight - 1) continue;
+          const t = ctx.obs.tiles[tile.y]?.[tile.x];
+          if (!t || t.terrain !== Terrain.Land) continue;
+          const idx = islandOf.get(`${tile.x},${tile.y}`);
+          if (idx === disembarkIslandIdx) {
+            return { type: 'MOVE', unitId: ctx.unit.id, to: tile };
+          }
         }
       }
       return { type: 'SKIP', unitId: ctx.unit.id };
