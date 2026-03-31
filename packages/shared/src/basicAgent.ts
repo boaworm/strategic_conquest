@@ -37,7 +37,9 @@ type MovementHelpers = {
   getAdjacentTiles(x: number, y: number, mapWidth: number): Coord[];
   getAdjacentLandTiles(obs: AgentObservation, x: number, y: number, mapWidth: number): Coord[];
   getAdjacentOceanTiles(obs: AgentObservation, x: number, y: number, mapWidth: number): Coord | null;
+  getAdjacentCoastalOcean(obs: AgentObservation, x: number, y: number, mapWidth: number, mapHeight: number): Coord[];
   bestStepToward(obs: AgentObservation, unit: UnitView, target: Coord, mapWidth: number, mapHeight: number): Coord | null;
+  farthestStepToward(obs: AgentObservation, unit: UnitView, target: Coord, mapWidth: number, mapHeight: number): Coord | null;
   isIslandFriendly(islandIdx: number | undefined, mineIndices: Set<number>): boolean;
   isIslandExplored(islandIdx: number | undefined, exploredIslands: Set<number>): boolean;
   isIslandContested(islandIdx: number | undefined, obs: AgentObservation, islandOf: Map<string, number>): boolean;
@@ -62,6 +64,10 @@ type MovementHelpers = {
   contestedIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>): number | null;
   getSeaUnitIslandIdx(x: number, y: number, islandOf: Map<string, number>): number | undefined;
   getOceanTilesAdjacentToIsland(obs: AgentObservation, islandOf: Map<string, number>, islandIdx: number, mapWidth: number, mapHeight: number): Coord[];
+  getNearestUnexploredLand(obs: AgentObservation, from: Coord, mapWidth: number, mapHeight: number): Coord | null;
+  getNearestHiddenLand(obs: AgentObservation, from: Coord, mapWidth: number, mapHeight: number): Coord | null;
+  getNearestUnexploredOcean(obs: AgentObservation, from: Coord, mapWidth: number, mapHeight: number): Coord | null;
+  getNearestHiddenOcean(obs: AgentObservation, from: Coord, mapWidth: number, mapHeight: number): Coord | null;
 };
 
 // The production_rules.json file contains extra metadata (phases, shared_functions)
@@ -88,6 +94,9 @@ export class BasicAgent implements Agent {
 
   // Patrol direction for destroyers (persistent across turns)
   private destroyerPatrolDir: { x: number; y: number } | null = null;
+
+  // Current transport target (persistent across turns)
+  private transportTarget: Coord | null = null;
 
   private readonly productionEngine = new ProductionRulesEngine(PRODUCTION_RULES);
   private movementEngine!: MovementRulesEngine;
@@ -116,6 +125,8 @@ export class BasicAgent implements Agent {
     this.mapHeight = config.mapHeight;
     // Reset patrol direction on new game
     this.destroyerPatrolDir = null;
+    // Reset transport target on new game
+    this.transportTarget = null;
     // Reset on new game
     this.phase = 1;
     this.homeIslandIdx = undefined;
@@ -243,8 +254,15 @@ export class BasicAgent implements Agent {
         helpers: this.movementHelpers,
         mapWidth: this.mapWidth,
         mapHeight: this.mapHeight,
+        transportTarget: this.transportTarget,
       });
-      if (action) return action;
+      if (action) {
+        // For transport MOVE actions, set the target for continued movement
+        if (unit.type === UnitType.Transport && action.type === 'MOVE') {
+          this.transportTarget = action.to;
+        }
+        return action;
+      }
 
       // Blocked — exhaust moves to prevent infinite re-evaluation.
       return { type: 'SKIP', unitId: unit.id };
@@ -281,6 +299,7 @@ export class BasicAgent implements Agent {
       getAdjacentLandTiles: (obs, x, y) => this.getAdjacentLandTiles(obs, x, y, this.mapWidth),
       getAdjacentOceanTiles: (obs, x, y) => this.getAdjacentOceanTiles(obs, x, y, this.mapWidth),
       bestStepToward: (obs, unit, target) => this.bestStepToward(obs, unit, target, this.mapWidth, this.mapHeight),
+      farthestStepToward: (obs, unit, target) => this.farthestStepToward(obs, unit, target, this.mapWidth, this.mapHeight),
       isIslandFriendly: (islandIdx, mineIndices) => this.isIslandFriendly(islandIdx, mineIndices),
       isIslandExplored: (islandIdx, exploredIslands) => this.isIslandExplored(islandIdx, exploredIslands),
       isIslandContested: (islandIdx, obs, islandOf) => this.isIslandContested(islandIdx, obs, islandOf),
@@ -307,6 +326,11 @@ export class BasicAgent implements Agent {
       contestedIslandWithMostArmies: (obs, islandOf) => this.contestedIslandWithMostArmies(obs, islandOf),
       getSeaUnitIslandIdx: (x, y, islandOf) => this.getSeaUnitIslandIdx(x, y, islandOf),
       getOceanTilesAdjacentToIsland: (obs, islandOf, islandIdx) => this.getOceanTilesAdjacentToIsland(obs, islandOf, islandIdx, this.mapWidth, this.mapHeight),
+      getNearestUnexploredLand: (obs, from) => this.getNearestUnexploredLand(obs, from, this.mapWidth, this.mapHeight),
+      getNearestHiddenLand: (obs, from) => this.getNearestHiddenLand(obs, from, this.mapWidth, this.mapHeight),
+      getNearestUnexploredOcean: (obs, from) => this.getNearestUnexploredOcean(obs, from, this.mapWidth, this.mapHeight),
+      getNearestHiddenOcean: (obs, from) => this.getNearestHiddenOcean(obs, from, this.mapWidth, this.mapHeight),
+      getAdjacentCoastalOcean: (obs, x, y) => this.getAdjacentCoastalOcean(obs, x, y, this.mapWidth, this.mapHeight),
     };
   }
 
@@ -695,9 +719,17 @@ export class BasicAgent implements Agent {
     const MAX_VISITED = this.mapWidth * this.mapHeight;
     while (queue.length > 0 && visited.size < MAX_VISITED) {
       const cur = queue.shift()!;
-      for (const d of dirs) {
-        const nx = wrapX(cur.x + d.x, this.mapWidth);
-        const ny = cur.y + d.y;
+
+      // Sort neighbors by distance to target to prioritize moving toward the goal
+      const neighbors = dirs.map(d => ({
+        x: wrapX(cur.x + d.x, this.mapWidth),
+        y: cur.y + d.y,
+      })).filter(n => n.y > 0 && n.y < this.mapHeight - 1)
+       .sort((a, b) => this.wrappedDist(a, target) - this.wrappedDist(b, target));
+
+      for (const n of neighbors) {
+        const nx = n.x;
+        const ny = n.y;
         const k = key(nx, ny);
         if (visited.has(k)) continue;
         visited.add(k);
@@ -719,6 +751,79 @@ export class BasicAgent implements Agent {
     }
 
     return null;
+  }
+
+  /**
+   * Find the farthest tile toward target within movesLeft steps.
+   * Uses BFS to find the path, then returns the tile closest to target
+   * that is reachable within the unit's movement range.
+   */
+  private farthestStepToward(obs: AgentObservation, unit: UnitView, target: Coord, mapWidth: number, mapHeight: number): Coord | null {
+    const stats = UNIT_STATS[unit.type];
+
+    // Sea units can only enter friendly cities (ports); enemy/neutral cities are blocked.
+    const canEnter = (x: number, y: number): boolean => {
+      if (y <= 0 || y >= this.mapHeight - 1) return false; // ice caps
+      const tile = obs.tiles[y]?.[x];
+      if (stats.domain === UnitDomain.Land) return !!tile && tile.terrain === Terrain.Land;
+      if (stats.domain === UnitDomain.Sea) {
+        if (!tile) return true; // unexplored — assume navigable ocean
+        if (tile.terrain === Terrain.Ocean) return true;
+        return obs.myCities.some((c) => c.x === x && c.y === y); // friendly port only
+      }
+      if (!tile) return false;
+      return true; // air
+    };
+
+    const key = (x: number, y: number) => `${x},${y}`;
+    const visited = new Set<string>();
+    visited.add(key(unit.x, unit.y));
+
+    const queue: Array<{ x: number; y: number; dist: number; path: Coord[] }> = [
+      { x: unit.x, y: unit.y, dist: 0, path: [] },
+    ];
+
+    const dirs = [
+      { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+      { x: -1, y: 0 },                    { x: 1, y: 0 },
+      { x: -1, y: 1 },  { x: 0, y: 1 },  { x: 1, y: 1 },
+    ];
+
+    let bestStep: Coord | null = null;
+    let bestDistToTarget = this.wrappedDist(unit, target);
+
+    const MAX_VISITED = this.mapWidth * this.mapHeight;
+    while (queue.length > 0 && visited.size < MAX_VISITED) {
+      const cur = queue.shift()!;
+
+      // Check if this tile is closer to target than our best
+      const distToTarget = this.wrappedDist(cur, target);
+      if (distToTarget < bestDistToTarget) {
+        bestDistToTarget = distToTarget;
+        // Use the last step in the path (farthest from start)
+        if (cur.path.length > 0) {
+          bestStep = cur.path[cur.path.length - 1];
+        }
+      }
+
+      // Don't exceed movesLeft
+      if (cur.dist >= unit.movesLeft) continue;
+
+      for (const d of dirs) {
+        const nx = wrapX(cur.x + d.x, this.mapWidth);
+        const ny = cur.y + d.y;
+        const k = key(nx, ny);
+        if (visited.has(k)) continue;
+        visited.add(k);
+
+        if (!canEnter(nx, ny)) continue;
+
+        const newPath = [...cur.path, { x: nx, y: ny }];
+        queue.push({ x: nx, y: ny, dist: cur.dist + 1, path: newPath });
+      }
+    }
+
+    return bestStep;
   }
 
   /** BFS over known land tiles; returns true if any adjacent tile is null (never mapped). */
@@ -829,15 +934,65 @@ export class BasicAgent implements Agent {
     return best;
   }
 
-  /** Returns all adjacent ocean tiles. */
+  /** Returns an adjacent coastal ocean tile (preferred) or any adjacent ocean tile. */
   private getAdjacentOceanTiles(obs: AgentObservation, x: number, y: number, mapWidth: number): Coord | null {
     const adj = this.getAdjacentTiles(x, y, mapWidth);
+    let anyOcean: Coord | null = null;
     for (const c of adj) {
       if (c.y <= 0 || c.y >= this.mapHeight - 1) continue;
       const tile = obs.tiles[c.y]?.[c.x];
-      if (tile && tile.terrain === Terrain.Ocean) return c;
+      if (!tile || tile.terrain !== Terrain.Ocean) continue;
+      if (anyOcean === null) anyOcean = c;
+      if (this.isCoastalOcean(obs, c.x, c.y, mapWidth, this.mapHeight)) return c;
     }
-    return null;
+    return anyOcean;
+  }
+
+  /**
+   * Check if a tile is coastal ocean (ocean with at least one land neighbor).
+   */
+  private isCoastalOcean(obs: AgentObservation, x: number, y: number, mapWidth: number, mapHeight: number): boolean {
+    const tile = obs.tiles[y]?.[x];
+    if (!tile || tile.terrain !== Terrain.Ocean) return false;
+
+    const adj = this.getAdjacentTiles(x, y, mapWidth);
+    for (const c of adj) {
+      if (c.y <= 0 || c.y >= mapHeight - 1) continue;
+      const adjTile = obs.tiles[c.y]?.[c.x];
+      if (adjTile && adjTile.terrain === Terrain.Land) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Check if a tile is deep ocean (all 8 neighbors are ocean).
+   */
+  private isDeepOcean(obs: AgentObservation, x: number, y: number, mapWidth: number, mapHeight: number): boolean {
+    const tile = obs.tiles[y]?.[x];
+    if (!tile || tile.terrain !== Terrain.Ocean) return false;
+
+    const adj = this.getAdjacentTiles(x, y, mapWidth);
+    for (const c of adj) {
+      if (c.y <= 0 || c.y >= mapHeight - 1) return false;
+      const adjTile = obs.tiles[c.y]?.[c.x];
+      if (!adjTile || adjTile.terrain !== Terrain.Ocean) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Get adjacent coastal ocean tiles (ocean tiles adjacent to land).
+   */
+  private getAdjacentCoastalOcean(obs: AgentObservation, x: number, y: number, mapWidth: number, mapHeight: number): Coord[] {
+    const adj = this.getAdjacentTiles(x, y, mapWidth);
+    const result: Coord[] = [];
+    for (const c of adj) {
+      if (c.y <= 0 || c.y >= mapHeight - 1) continue;
+      if (this.isCoastalOcean(obs, c.x, c.y, mapWidth, mapHeight)) {
+        result.push(c);
+      }
+    }
+    return result;
   }
 
   private getAdjacentLandToward(obs: AgentObservation, unit: UnitView, toward: Coord | null): Coord | null {
@@ -1362,5 +1517,68 @@ export class BasicAgent implements Agent {
     }
 
     return result;
+  }
+
+  /**
+   * Get nearest unexplored land tile (Hidden = never seen).
+   */
+  private getNearestUnexploredLand(obs: AgentObservation, from: Coord, mapWidth: number, mapHeight: number): Coord | null {
+    return this.findNearestTile(obs, from, mapWidth, mapHeight, Terrain.Land, TileVisibility.Hidden);
+  }
+
+  /**
+   * Get nearest Hidden land tile (same as unexplored for land).
+   */
+  private getNearestHiddenLand(obs: AgentObservation, from: Coord, mapWidth: number, mapHeight: number): Coord | null {
+    return this.findNearestTile(obs, from, mapWidth, mapHeight, Terrain.Land, TileVisibility.Hidden);
+  }
+
+  /**
+   * Get nearest unexplored ocean tile (Hidden = never seen).
+   */
+  private getNearestUnexploredOcean(obs: AgentObservation, from: Coord, mapWidth: number, mapHeight: number): Coord | null {
+    return this.findNearestTile(obs, from, mapWidth, mapHeight, Terrain.Ocean, TileVisibility.Hidden);
+  }
+
+  /**
+   * Get nearest Hidden ocean tile (same as unexplored for ocean).
+   */
+  private getNearestHiddenOcean(obs: AgentObservation, from: Coord, mapWidth: number, mapHeight: number): Coord | null {
+    return this.findNearestTile(obs, from, mapWidth, mapHeight, Terrain.Ocean, TileVisibility.Hidden);
+  }
+
+  /**
+   * Find nearest tile matching terrain and visibility criteria.
+   */
+  private findNearestTile(
+    obs: AgentObservation,
+    from: Coord,
+    mapWidth: number,
+    mapHeight: number,
+    terrain: Terrain,
+    visibility: TileVisibility
+  ): Coord | null {
+    const tiles = obs.tiles;
+    const h = tiles.length;
+    const w = tiles[0]?.length ?? 0;
+
+    let closest: Coord | null = null;
+    let closestDist = Infinity;
+
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 0; x < w; x++) {
+        const tile = tiles[y]?.[x];
+        if (!tile || tile.terrain !== terrain) continue;
+        if (tile.visibility !== visibility) continue;
+
+        const dist = this.wrappedDist(from, { x, y });
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = { x, y };
+        }
+      }
+    }
+
+    return closest;
   }
 }

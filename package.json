@@ -17,6 +17,7 @@
     "test": "npm test --workspaces --if-present",
     "record": "npm run record --workspace=packages/trainer",
     "replay": "npm run replay --workspace=packages/trainer",
-    "profile": "npm run profile --workspace=packages/testing"
+    "profile": "npm run profile --workspace=packages/testing",
+    "test_replay": "npm run test_replay --workspace=packages/trainer"
   }
 }

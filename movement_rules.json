@@ -24,7 +24,14 @@
         },
         {
           "conditions": ["Island not fully explored"],
-          "action": "Move to unexplored area"
+          "action": "Move to nearest unexplored area on island"
+        },
+        {
+          "conditions": [
+            "Island is friendly and explored",
+            "Transport at coastal tile on same island"
+          ],
+          "action": "Move to nearest transport at coastal and board"
         },
         {
           "conditions": [
@@ -46,10 +53,6 @@
           "action": "Move to enemy city and take it"
         },
         {
-          "conditions": ["Island not fully explored"],
-          "action": "Move to unexplored area"
-        },
-        {
           "conditions": [
             "Onboard transport",
             "Can disembark to unexplored or contested island"
@@ -59,14 +62,20 @@
         {
           "conditions": [
             "Island is friendly and explored",
-            "Adjacent to transport with room"
+            "Transport at coastal tile on same island"
           ],
-          "action": "Move to transport and board"
+          "action": "Move to nearest transport at coastal and board"
+        },
+        {
+          "conditions": [
+            "Island not fully explored"
+          ],
+          "action": "Move to nearest unexplored area on island"
         },
         {
           "conditions": [
             "Island is friendly and explored",
-            "No transport nearby"
+            "No transport on island"
           ],
           "action": "Move to nearest coastal city and wait"
         }
@@ -83,7 +92,7 @@
         },
         {
           "conditions": ["Island not fully explored"],
-          "action": "Move to unexplored area"
+          "action": "Move to nearest unexplored area on island"
         },
         {
           "conditions": [
@@ -102,7 +111,14 @@
         {
           "conditions": [
             "Island is friendly and explored",
-            "No transport nearby"
+            "Waiting transport on island"
+          ],
+          "action": "Move to waiting transport and board"
+        },
+        {
+          "conditions": [
+            "Island is friendly and explored",
+            "No transport on island"
           ],
           "action": "Move to nearest coastal city and wait"
         }
@@ -110,29 +126,15 @@
     },
 
     "transport": {
-      "Explore": [
+      "Explore": [],
+
+
+      "Expand": [
         {
           "conditions": [
-            "No units onboard",
-            "Not at friendly island",
-            "Adjacent to friendly island"
+            "Has active target"
           ],
-          "action": "Sail to nearest friendly island, park at coastal ocean square"
-        },
-        {
-          "conditions": [
-            "Units onboard",
-            "Transport capacity at max"
-          ],
-          "action": "Sail to unexplored island"
-        },
-        {
-          "conditions": [
-            "Units onboard",
-            "Transport capacity not at max",
-            "Another transport with equal or fewer armies onboard"
-          ],
-          "action": "Sail to unexplored island"
+          "action": "Continue toward target"
         },
         {
           "conditions": [
@@ -144,23 +146,64 @@
         {
           "conditions": [
             "No units onboard",
+            "Transport parked at coastal"
+          ],
+          "action": "Wait at current position"
+        },
+        {
+          "conditions": [
+            "No units onboard",
+            "Adjacent to friendly island"
+          ],
+          "action": "Sail to nearest friendly island, park at coastal"
+        },
+
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity at max",
+            "Unexplored islands available"
+          ],
+          "action": "Sail to unexplored island"
+        },
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity at max"
+          ],
+          "action": "Sail in random direction"
+        },
+
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity not at max",
+            "Another transport with equal or fewer armies onboard",
+            "Unexplored islands available"
+          ],
+          "action": "Sail to unexplored island"
+        },
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity not at max",
+            "Another transport with equal or fewer armies onboard"
+          ],
+          "action": "Sail in random direction"
+        },
+
+        {
+          "conditions": [
+            "No units onboard",
             "Transport at friendly island with most armies"
           ],
           "action": "Wait at current position"
         },
         {
           "conditions": [
-            "No units onboard",
-            "Transport at friendly island, not most armies"
+            "No units onboard"
           ],
           "action": "Move to friendly island with most armies"
-        },
-        {
-          "conditions": [
-            "No units onboard",
-            "Transport at contested island with most armies"
-          ],
-          "action": "Wait at current position"
         },
         {
           "conditions": [
@@ -168,108 +211,28 @@
             "Transport approaching unexplored island"
           ],
           "action": "Move to coastal ocean adjacent to unexplored island"
-        }
-      ],
-
-      "Expand": [
-        {
-          "conditions": [
-            "No units onboard",
-            "Not at friendly island",
-            "Adjacent to friendly island"
-          ],
-          "action": "Sail to nearest friendly island, park at coastal ocean square"
         },
         {
           "conditions": [
-            "Units onboard",
-            "Transport capacity at max"
+            "Units onboard"
           ],
-          "action": "Sail to unexplored island"
-        },
-        {
-          "conditions": [
-            "Units onboard",
-            "Transport capacity not at max",
-            "Another transport with equal or fewer armies onboard"
-          ],
-          "action": "Sail to unexplored island"
-        },
-        {
-          "conditions": [
-            "Units onboard",
-            "Transport capacity not at max",
-            "Unexplored islands available"
-          ],
-          "action": "Sail to unexplored island"
-        },
-        {
-          "conditions": [
-            "Units onboard",
-            "Contested islands available"
-          ],
-          "action": "Sail to contested island"
-        },
-        {
-          "conditions": [
-            "No units onboard",
-            "Transport in city"
-          ],
-          "action": "Move to adjacent ocean and wait"
-        },
-        {
-          "conditions": [
-            "No units onboard",
-            "Transport at friendly island with most armies"
-          ],
-          "action": "Wait at current position"
-        },
-        {
-          "conditions": [
-            "No units onboard",
-            "Transport at friendly island, not most armies"
-          ],
-          "action": "Move to friendly island with most armies"
-        },
-        {
-          "conditions": [
-            "No units onboard",
-            "Transport at contested island with most armies"
-          ],
-          "action": "Wait at current position"
-        },
-        {
-          "conditions": [
-            "Transport should depart",
-            "Unexplored islands available"
-          ],
-          "action": "Move to nearest unexplored island"
-        },
-        {
-          "conditions": [
-            "Transport should depart",
-            "Contested islands available"
-          ],
-          "action": "Move to nearest contested island"
-        },
-                {
-          "conditions": [
-            "No units onboard",
-            "Not at friendly island",
-            "In combat phase"
-          ],
-          "action": "Return to friendly island for resupply"
+          "action": "Sail in random direction"
         }
       ],
 
       "Combat": [
         {
           "conditions": [
+            "Has active target"
+          ],
+          "action": "Continue toward target"
+        },
+        {
+          "conditions": [
             "No units onboard",
-            "Not at friendly island",
             "Adjacent to friendly island"
           ],
-          "action": "Sail to nearest friendly island, park at coastal ocean square"
+          "action": "Sail to nearest friendly island, park at coastal"
         },
         {
           "conditions": [
@@ -293,27 +256,13 @@
           ],
           "action": "Move to adjacent ocean and wait"
         },
-        {
-          "conditions": [
-            "Transport should depart",
-            "Unexplored islands available"
-          ],
-          "action": "Move to nearest unexplored island"
-        },
-        {
-          "conditions": [
-            "Transport should depart",
-            "Contested islands available"
-          ],
-          "action": "Move to nearest contested island"
-        },
-                {
+		{
           "conditions": [
             "No units onboard",
             "Not at friendly island",
             "In combat phase"
           ],
-          "action": "Return to friendly island for resupply"
+          "action": "Sail to nearest friendly island, park at coastal"
         }
       ]
     },
