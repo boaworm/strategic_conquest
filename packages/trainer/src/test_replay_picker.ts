@@ -52,7 +52,7 @@ interface TestReplayMeta {
 function loadTestReplayMetas(): TestReplayMeta[] {
   const replayDir = path.isAbsolute(TEST_REPLAY_DIR) ? TEST_REPLAY_DIR : path.resolve(__dirname, TEST_REPLAY_DIR);
   if (!fs.existsSync(replayDir)) return [];
-  const files = fs.readdirSync(replayDir).filter((f) => f.startsWith('test-army') && f.endsWith('.json'));
+  const files = fs.readdirSync(replayDir).filter((f) => f.startsWith('test-') && f.endsWith('.json'));
   const metas: TestReplayMeta[] = [];
   for (const f of files) {
     try {
@@ -67,7 +67,7 @@ function loadTestReplayMetas(): TestReplayMeta[] {
 
 const replayDir = path.isAbsolute(TEST_REPLAY_DIR) ? TEST_REPLAY_DIR : path.resolve(__dirname, TEST_REPLAY_DIR);
 if (fs.existsSync(replayDir)) {
-  const oldTestReplays = fs.readdirSync(replayDir).filter((f) => f.startsWith('test-army') && f.endsWith('.json'));
+  const oldTestReplays = fs.readdirSync(replayDir).filter((f) => f.startsWith('test-') && f.endsWith('.json'));
   for (const f of oldTestReplays) {
     fs.unlinkSync(path.join(replayDir, f));
   }
@@ -77,6 +77,7 @@ console.log('Running test generators...\n');
 try {
   execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_armyMoveToCoastAndBoardTransport.ts')}`, { stdio: 'inherit' });
   execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_armyMoveToCoastAndBoardTransport_2.ts')}`, { stdio: 'inherit' });
+  execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_exploreAndExpand_3.ts')}`, { stdio: 'inherit' });
   console.log('\n');
 } catch (err) {
   console.log('Some tests failed, continuing anyway...\n');
@@ -132,7 +133,7 @@ function startServerAndOpen(replayId: string) {
     }
 
     // GET /api/test-replays/:id — serve replay file (with or without .json)
-    const replayMatch = pathname.match(/^\/api\/test-replays\/([\w-]+)(\.json)?$/);
+    const replayMatch = pathname.match(/^\/api\/test-replays\/(.+?)(\.json)?$/);
     if (replayMatch) {
       const id = replayMatch[1];
       const filepath = path.join(TEST_REPLAY_DIR, `${id}.json`);

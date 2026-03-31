@@ -488,7 +488,10 @@ function tryCaptureCity(
   if (city.owner === playerId) return { captured: null };
 
   const isNeutral = city.owner === null;
-  const winChance = isNeutral ? 0.7 : 0.5;
+  const baseWinChance = isNeutral ? 0.7 : 0.5;
+
+  // Use test override if available
+  const winChance = state.testOptions?.cityCaptureSuccessRate ?? baseWinChance;
 
   if (Math.random() >= winChance) {
     // City defense succeeds (attack fails). Army is destroyed.

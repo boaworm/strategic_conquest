@@ -237,6 +237,11 @@ export interface GameState {
   bombersProduced: Record<PlayerId, number>;
   /** Enemy unit snapshots seen this turn (persists until end of turn) */
   seenEnemies: Record<PlayerId, { id: string; type: UnitType; owner: PlayerId; x: number; y: number }[]>;
+  /** Test options - only used in test mode */
+  testOptions?: {
+    /** Override city capture success rate (1 = 100% success) */
+    cityCaptureSuccessRate?: number;
+  };
 }
 
 // ── Fog of War views (sent to clients) ──────────────────────

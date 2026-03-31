@@ -585,8 +585,16 @@ export function TestReplayViewer() {
   }
 
   const { meta, tiles, frames } = data;
-  const frame = frames[frameIdx];
-  const totalFrames = frames.length;
+
+  // Deduplicate frames by turn - keep last frame of each turn
+  const turnMap = new Map<number, TestReplayFrame>();
+  for (const frame of frames) {
+    turnMap.set(frame.turn, frame);
+  }
+  const turnFrames = Array.from(turnMap.values()).sort((a, b) => a.turn - b.turn);
+  const totalTurns = turnFrames.length;
+
+  const frame = turnFrames[frameIdx];
 
   // Compute explored sets for current frame
   const p1Explored = new Set(frame.p1Explored ?? []);
@@ -645,11 +653,11 @@ export function TestReplayViewer() {
 
       <div style={{ marginBottom: 20, flexShrink: 0 }}>
         <label>
-          Frame {frameIdx + 1} / {totalFrames} (Turn {frame.turn})
+          Turn {frameIdx + 1} / {totalTurns}
           <input
             type="range"
             min={0}
-            max={totalFrames - 1}
+            max={totalTurns - 1}
             value={frameIdx}
             onChange={(e) => setFrameIdx(Number(e.target.value))}
             style={{ width: '80%', margin: '8px 0' }}

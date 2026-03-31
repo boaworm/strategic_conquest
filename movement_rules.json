@@ -178,6 +178,15 @@
           "conditions": [
             "Units onboard",
             "Transport capacity not at max",
+            "Unexplored islands available"
+          ],
+          "action": "Sail to unexplored island"
+        },
+
+        {
+          "conditions": [
+            "Units onboard",
+            "Transport capacity not at max",
             "Another transport with equal or fewer armies onboard",
             "Unexplored islands available"
           ],

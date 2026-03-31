@@ -260,6 +260,9 @@ export class BasicAgent implements Agent {
         // For transport MOVE actions, set the target for continued movement
         if (unit.type === UnitType.Transport && action.type === 'MOVE') {
           this.transportTarget = action.to;
+        } else if (unit.type === UnitType.Transport && action.type === 'SKIP') {
+          // Clear target when transport can't move (reached target or blocked)
+          this.transportTarget = null;
         }
         return action;
       }
@@ -791,6 +794,7 @@ export class BasicAgent implements Agent {
 
     let bestStep: Coord | null = null;
     let bestDistToTarget = this.wrappedDist(unit, target);
+    let bestPathLen = 0;
 
     const MAX_VISITED = this.mapWidth * this.mapHeight;
     while (queue.length > 0 && visited.size < MAX_VISITED) {
@@ -800,9 +804,10 @@ export class BasicAgent implements Agent {
       const distToTarget = this.wrappedDist(cur, target);
       if (distToTarget < bestDistToTarget) {
         bestDistToTarget = distToTarget;
-        // Use the last step in the path (farthest from start)
+        // Use the FIRST step in the path (adjacent to start) - game engine only allows 1-tile moves
         if (cur.path.length > 0) {
-          bestStep = cur.path[cur.path.length - 1];
+          bestStep = cur.path[0];
+          bestPathLen = cur.path.length;
         }
       }
 
