@@ -45,9 +45,10 @@ Eliminate all enemy cities and units. The last player with cities standing wins.
 ### Unit Commands
 - **Move**: click destination or use directional input
 - **Sleep**: unit stays put, skips future turns until woken
-- **Sentry / Patrol**: unit auto-attacks enemies in range
+- **Wake**: wake a sleeping unit
+- **Skip**: defer this unit for now
 - **Load / Unload**: armies board/disembark transports
-- **Skip turn**: defer this unit for now
+- **End Turn**: finish all actions
 
 ---
 
@@ -88,14 +89,15 @@ If enemy Fighters are anywhere inside the blast area, they intercept the Bomber 
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/) for UI chrome
 
 ### Game Logic
-- Pure TypeScript, framework-agnostic — lives in `src/engine/`
+- Pure TypeScript, framework-agnostic — lives in `packages/shared/src/engine/`
 - Fully deterministic and unit-testable
 - Communicates with React via Zustand store
 
 ### AI
-- Single-player AI implemented in TypeScript in `src/engine/ai/`
-- Start with a basic greedy AI (expand to nearest neutral city, attack enemy units of opportunity)
-- Designed to be replaceable/upgradeable
+- Single-player AI implemented in TypeScript in `packages/shared/src/` and `packages/trainer/src/agents/`
+- `BasicAgent` — full-featured greedy agent with expansion, combat, and naval/air logic
+- `GunAirAgent` — skeleton agent for benchmarking
+- `EvolvedAgent` — genome-driven agent from genetic training
 
 ### Training Runner
 - **Runtime**: Node.js with TypeScript (same server package, separate entry point)
@@ -119,22 +121,29 @@ If enemy Fighters are anywhere inside the blast area, they intercept the Bomber 
 
 ## Project Structure
 
-Monorepo with three packages:
+Monorepo with five packages:
 
 ```
 strategic_conquest/
 ├── StrategicConquest.md
+├── CLAUDE.md
+├── Quickstart.md
+├── NN_Agent.md
 ├── package.json               ← workspace root (npm workspaces)
 ├── packages/
 │   ├── shared/                ← Shared TypeScript types & pure engine logic
 │   │   ├── src/
 │   │   │   ├── types.ts       ← Tile, Unit, City, GameState, Player, Token, socket events
+│   │   │   ├── agent.ts       ← Agent interface + AgentAction type
+│   │   │   ├── basicAgent.ts  ← BasicAgent implementation
+│   │   │   ├── gunAirAgent.ts ← GunAirAgent skeleton
 │   │   │   ├── engine/
 │   │   │   │   ├── map.ts
 │   │   │   │   ├── game.ts
 │   │   │   │   ├── combat.ts
 │   │   │   │   ├── movement.ts
-│   │   │   │   └── production.ts
+│   │   │   │   ├── production.ts
+│   │   │   │   └── tensorUtils.ts
 │   │   │   └── index.ts
 │   │   └── package.json
 │   │
@@ -152,35 +161,46 @@ strategic_conquest/
 │   │       │   ├── CityDialog.tsx
 │   │       │   ├── HUD.tsx
 │   │       │   ├── MainMenu.tsx
-│   │       │   └── MultiplayerLobby.tsx
-│   │       └── assets/
-│   │           └── tiles/
+│   │       │   └── ReplayViewer.tsx
+│   │       └── sounds.ts
 │   │
-  ├── server/                ← Node.js multiplayer server
-  │   ├── src/
-  │   │   ├── index.ts       ← Express + Socket.IO entry point
-  │   │   ├── gameManager.ts ← In-memory registry of active games
-  │   │   ├── gameSession.ts ← Per-game state: tokens, players, engine instance
-  │   │   ├── tokenAuth.ts   ← Token generation and validation middleware
-  │   │   └── routes/
-  │   │       └── game.ts    ← REST: POST /game/create, GET /game/:id/state
-  │   └── package.json
-  │
-  └── trainer/               ← Headless AI training runner
-      ├── src/
-      │   ├── index.ts       ← CLI entry point (npx trainer --pop 200 --gens 500)
-      │   ├── runner.ts      ← Headless game loop (engine only, no I/O)
-      │   ├── tournament.ts  ← Round-robin / Swiss ranking across a population
-      │   ├── worker.ts      ← Worker thread: evaluates one game, returns fitness
-      │   ├── genetics/
-      │   │   ├── population.ts  ← Init, select, reproduce, mutate
-      │   │   ├── genome.ts      ← Agent genome definition (weights / program tree)
-      │   │   ├── fitness.ts     ← Fitness function(s)
-      │   │   └── crossover.ts   ← Crossover operators
-      │   └── agents/
-      │       ├── agentInterface.ts  ← The contract every AI agent must implement
-      │       ├── basicAgent.ts      ← Baseline greedy agent
-      │       └── evolvedAgent.ts    ← Agent driven by a genome
+│   ├── server/                ← Node.js multiplayer server
+│   │   ├── src/
+│   │   │   ├── index.ts       ← Express + Socket.IO entry point
+│   │   │   ├── gameManager.ts ← GameManager class: session registry, tokens, turns
+│   │   │   ├── tokenAuth.ts   ← Token generation and validation
+│   │   │   ├── aiPlayer.ts    ← Spawns AI agents as Socket.IO clients
+│   │   │   └── routes/
+│   │   │       ├── game.ts    ← REST: POST /api/games
+│   │   │       ├── training.ts
+│   │   │       └── replay.ts
+│   │   └── package.json
+│   │
+│   ├── trainer/               ← Headless AI training runner
+│   │   ├── src/
+│   │   │   ├── index.ts       ← CLI entry point (npx tsx src/index.ts --pop 200 --gens 500)
+│   │   │   ├── genetics/
+│   │   │   │   ├── genome.ts      ← Genome (28-weight vector), feature names
+│   │   │   │   ├── population.ts  ← initPopulation, nextGeneration, tournament selection
+│   │   │   │   ├── fitness.ts     ← computeFitness with configurable weights
+│   │   │   │   └── crossover.ts   ← crossover + mutation operators
+│   │   │   ├── tournament.ts  ← runTournament population evaluation
+│   │   │   ├── parallel.ts    ← worker thread pool for parallel evaluation
+│   │   │   ├── runner.ts      ← re-exports runGame() from @sc/testing
+│   │   │   ├── agents/
+│   │   │   │   ├── basicAgent.ts
+│   │   │   │   └── evolvedAgent.ts
+│   │   │   ├── collect_data.ts  ← parallel data collection coordinator
+│   │   │   ├── collect_worker.ts
+│   │   │   ├── record_replay.ts ← replay recording coordinator
+│   │   │   ├── record_worker.ts
+│   │   │   └── replayUtils.ts   ← snapshotGame for replay frames
+│   │   └── package.json
+│   │
+│   └── testing/               ← Testing utilities
+│       ├── src/
+│       │   ├── runGame.ts     ← runGame() helper: headless game between two agents
+│       │   └── profile_game.ts
 │       └── package.json
 ```
 
@@ -192,7 +212,7 @@ strategic_conquest/
 The game map can be large (60×40 = 2400 tiles). Rendering each tile as a DOM element would be slow. **Canvas** gives us full control, good performance, and the classic pixel-art aesthetic of the original.
 
 ### Pure engine layer
-By keeping all game logic in `src/engine/` with no React dependencies, we can:
+By keeping all game logic in `packages/shared/src/engine/` with no React dependencies, we can:
 - Unit test the engine in isolation
 - Later swap the frontend (e.g. a terminal interface, or a different renderer)
 - Run the AI server-side if multiplayer is added
@@ -231,7 +251,7 @@ The look matches the classic Strategic Conquest aesthetic as closely as possible
 - **Cities**: filled coloured square with a contrasting "★" icon
 - **Selected unit**: bright yellow highlight border, pulsing
 - **Fog of war**: unexplored tiles are solid black; previously-seen tiles are dimmed
-- **Zoom**: mouse wheel (or pinch on trackpad) zooms in/out from 8px to 64px per tile. Default tile size is 24px
+- **Zoom**: mouse wheel (or pinch on trackpad) zooms in/out from 8px to 64px per tile. Default tile size is 32px
 - **Viewport**: the camera is centered on the player's starting city when the game begins. Pan by dragging, arrow keys, or moving the mouse to the screen edges. The viewport wraps seamlessly east/west matching the cylindrical map topology
 - Minimal UI chrome — the map dominates the screen
 - Keyboard shortcuts mirroring the original where possible (arrow keys, letter commands)
@@ -240,10 +260,10 @@ The look matches the classic Strategic Conquest aesthetic as closely as possible
 
 ## AI Agent Interface
 
-Every AI agent — whether a hardcoded baseline or a genome-driven evolved agent — implements the same TypeScript interface defined in `packages/shared`:
+Every AI agent — whether a hardcoded baseline or a genome-driven evolved agent — implements the same TypeScript interface defined in `packages/shared/src/agent.ts`:
 
 ```typescript
-// packages/shared/src/agentInterface.ts
+// packages/shared/src/agent.ts
 
 export interface AgentObservation {
   /** Fog-of-war filtered view of the map (same format the human client receives) */
@@ -254,6 +274,8 @@ export interface AgentObservation {
   visibleEnemyCities: CityView[];
   turn: number;
   myPlayerId: PlayerId;
+  /** Total bombers produced by this player (determines blast radius: 0/1/2) */
+  myBomberBlastRadius: number;
 }
 
 export type AgentAction =
@@ -262,6 +284,8 @@ export type AgentAction =
   | { type: 'LOAD';            unitId: string; transportId: string }
   | { type: 'UNLOAD';          unitId: string; to: Coord }
   | { type: 'SLEEP';           unitId: string }
+  | { type: 'WAKE';            unitId: string }
+  | { type: 'SKIP';            unitId: string }
   | { type: 'END_TURN' };
 
 export interface Agent {
@@ -288,23 +312,41 @@ This contract means:
 
 ### Genome Representation
 
-Two approaches are worth evaluating (start with weights, graduate to GP trees if needed):
+Weight vector over hand-crafted strategic features (28 genes):
 
 | Approach | Description | Pros | Cons |
 |---|---|---|---|
 | **Weight vector** | A fixed neural-network-like scoring function over hand-crafted features | Simple to implement, fast to evaluate | Expressiveness limited by feature design |
-| **Program tree (GP)** | A tree of primitive operations (IF, ADD, MOVE-TOWARD, ATTACK-NEAREST) evolved as a program | Can discover novel strategies | Larger search space, bloat without pruning |
 
-**Initial choice**: weight vector over a set of strategic features. This is faster to get working and already capable of non-trivial play. A GP tree representation can be layered on later.
+**Current implementation**: weight vector over a set of strategic features. This is fast to get working and already capable of non-trivial play.
 
-### Feature Examples (for weight vector)
-- Ratio of my cities to enemy cities
-- Number of my units vs. enemy units
-- Distance from each army to nearest neutral city
-- Distance from each army to nearest enemy city
-- Number of unloaded armies on transports
-- Production queue completions remaining this turn
-- Map control % (tiles visible to me vs. total)
+### Feature Examples (28 genes)
+
+**Unit-level features (per-unit scoring for move targets):**
+- `distToNearestNeutralCity`
+- `distToNearestEnemyCity`
+- `distToNearestEnemy`
+- `distToNearestFriendly`
+- `adjacentEnemyCount`
+- `adjacentFriendlyCount`
+- `hiddenTilesNearby`
+- `healthRatio`
+- `movesLeftRatio`
+- `onFriendlyCity`
+
+**Global strategic features (for production decisions):**
+- `myCityCount`
+- `enemyCityCount`
+- `myUnitCount`
+- `enemyUnitCount`
+- `myArmyRatio`
+- `myNavalRatio`
+- `turnNumber`
+- `mapControlEstimate`
+
+**Production weights per unit type:**
+- `prodArmy`, `prodFighter`, `prodBomber`, `prodTransport`
+- `prodDestroyer`, `prodSubmarine`, `prodCarrier`, `prodBattleship`
 
 ### Fitness Function
 
@@ -318,7 +360,9 @@ fitness = W_win  * didWin
         - W_loss * didLose
 ```
 
-Weights `W_*` are tunable hyperparameters. Playing against a random baseline first, then progressively tougher opponents (previous generation champion).
+Default weights: `win=10`, `turnSpeed=2`, `cityRatio=3`, `unitRatio=1`, `loss=-5`.
+
+Playing against a random baseline first, then progressively tougher opponents (previous generation champion).
 
 ### Evolutionary Loop
 
@@ -330,7 +374,7 @@ Weights `W_*` are tunable hyperparameters. Playing against a random baseline fir
    c. Select top M agents (elitism) — they survive unchanged
    d. Fill remainder via:
         - Crossover: mix two parent genomes
-        - Mutation: perturb random weights / swap subtrees
+        - Mutation: perturb random weights
    e. Log generation stats (best fitness, mean fitness, best agent genome)
 3. Export champion genome as JSON → usable immediately as the in-game AI
 ```
@@ -346,13 +390,13 @@ Training is embarrassingly parallel at the game level. The runner uses Node.js `
 
 ```bash
 # Run 500 generations, population of 200, 8 parallel workers
-npx trainer --pop 200 --gens 500 --workers 8 --out champion.json
+npx tsx packages/trainer/src/index.ts --pop 200 --gens 500 --workers 8 --out champion.json
 
 # Resume from a checkpoint
-npx trainer --resume checkpoint_gen_250.json --gens 500
+npx tsx packages/trainer/src/index.ts --resume checkpoint_gen_250.json --gens 500
 
-# Watch mode: render one game per generation in the browser
-npx trainer --pop 200 --gens 500 --watch
+# See all options
+npx tsx packages/trainer/src/index.ts --help
 ```
 
 ### Champion Export
@@ -367,7 +411,7 @@ All trainer commands are run from `packages/trainer/`. The `collect` and `record
 
 ### Game Recording (`npm run record`)
 
-Records agent-vs-agent games and saves each as a JSON replay file. Runs across multiple parallel worker processes — defaults to one worker per logical CPU.
+Records agent-vs-agent games and saves each as a JSON replay file. Runs across multiple parallel child processes — defaults to one worker per logical CPU.
 
 ```bash
 # Record 5 games (default), auto-detect CPU count for workers
@@ -380,7 +424,7 @@ NUM_GAMES=100 WORKERS=8 npm run record
 NUM_GAMES=50 MAP_WIDTH=60 MAP_HEIGHT=40 REPLAY_DIR=./replays npm run record
 
 # Pit two different agents against each other
-NUM_GAMES=20 MAX_TURNS=300 P1AGENT=basicAgent P2AGENT=gunAirAgent npm run record
+NUM_GAMES=20 MAX_TURNS=300 P1_AGENT=basicAgent P2_AGENT=gunAirAgent npm run record
 ```
 
 **Environment variables:**
@@ -393,16 +437,15 @@ NUM_GAMES=20 MAX_TURNS=300 P1AGENT=basicAgent P2AGENT=gunAirAgent npm run record
 | `MAP_HEIGHT`| `20`            | Map height in tiles (playable rows; ice caps add 2 more) |
 | `MAX_TURNS` | `500`           | Maximum turns before declaring a draw                    |
 | `REPLAY_DIR`| `../../tmp`     | Directory to write replay JSON files into                |
-| `P1AGENT`   | `basicAgent`    | Agent for player 1 (see agent names below)               |
-| `P2AGENT`   | `basicAgent`    | Agent for player 2 (see agent names below)               |
+| `P1_AGENT`  | `basicAgent`    | Agent for player 1 (see agent names below)               |
+| `P2_AGENT`  | `basicAgent`    | Agent for player 2 (see agent names below)               |
 
-**Agent names** (case-insensitive, underscore form `P1_AGENT` also accepted):
+**Agent names** (case-insensitive):
 
 | Name          | Class         | Description                                      |
 |---------------|--------------|--------------------------------------------------|
 | `basicAgent`  | `BasicAgent`  | Full-featured greedy agent with expansion, combat, and naval/air logic |
 | `gunAirAgent` | `GunAirAgent` | Skeleton agent — random army moves, random production; easy benchmark  |
-| `adamAI`      | `AdamAI`      | Genetic-algorithm evolved agent                  |
 
 The agent name is stored in each replay's metadata and shown in `npm run replay` listings so matchups are always visible.
 
@@ -426,7 +469,7 @@ Reads all `.json` files from `REPLAY_DIR`, displays a list sorted by date, and l
 Records game states and agent actions for neural network training. Writes a binary tensor file (`states.bin`), action labels (`actions.jsonl`), and metadata (`meta.json`).
 
 ```bash
-# Collect 50 000 games across 8 workers into ./data
+# Collect 50,000 games across 8 workers into ./data
 NUM_GAMES=50000 WORKERS=8 OUTPUT_DIR=./data npm run collect
 
 # Smaller test run
@@ -465,7 +508,7 @@ Both `record` and `collect` use the same pattern:
 ```
 Client                          Server
   |                               |
-  |-- POST /game/create --------> |
+  |-- POST /api/games ----------> |
   |                               |  Generate game ID
   |                               |  Generate 3 tokens (crypto random)
   |                               |  Register game session (state: WAITING)
@@ -531,50 +574,50 @@ The server does not limit simultaneous connections per token. If conflicting act
 ## Milestones
 
 ### M1 — Map & Rendering
-- [ ] Project scaffolding (Vite + React + TypeScript)
-- [ ] Core types defined
-- [ ] Procedural map generation (land/ocean/cities)
-- [ ] Canvas renderer: draw tiles, fog of war, cities, units
+- [x] Project scaffolding (Vite + React + TypeScript)
+- [x] Core types defined
+- [x] Procedural map generation (land/ocean/cities)
+- [x] Canvas renderer: draw tiles, fog of war, cities, units
 
 ### M2 — Core Game Loop
-- [ ] Turn management
-- [ ] Unit movement (click-to-move, keyboard)
-- [ ] City production UI
-- [ ] Fog of war updates per turn
+- [x] Turn management
+- [x] Unit movement (click-to-move, keyboard)
+- [x] City production UI
+- [x] Fog of war updates per turn
 
 ### M3 — Combat & Win Condition
-- [ ] Combat resolution
-- [ ] City capture
-- [ ] Win/lose detection
+- [x] Combat resolution
+- [x] City capture
+- [x] Win/lose detection
 
 ### M4 — AI Opponent (Baseline)
-- [ ] `Agent` interface defined in `packages/shared`
-- [ ] Basic greedy agent (expand to nearest neutral city, attack on opportunity)
-- [ ] Wired into single-player game as the opponent
+- [x] `Agent` interface defined in `packages/shared`
+- [x] Basic greedy agent (expand to nearest neutral city, attack on opportunity)
+- [x] Wired into single-player game as the opponent
 
 ### M5 — Headless Training Runner
-- [ ] `packages/trainer` scaffolded
-- [ ] Headless game loop (engine only, no rendering, no I/O)
-- [ ] Worker-thread parallelism for concurrent game evaluation
-- [ ] Weight-vector genome + feature extractor
-- [ ] Fitness function
-- [ ] Selection, crossover, mutation operators
-- [ ] Tournament / round-robin evaluator
-- [ ] CLI interface (`--pop`, `--gens`, `--workers`, `--out`)
-- [ ] Checkpoint save/resume
-- [ ] Champion export to `champion.json` and hot-swap into in-game AI
+- [x] `packages/trainer` scaffolded
+- [x] Headless game loop (engine only, no rendering, no I/O)
+- [x] Worker-thread parallelism for concurrent game evaluation
+- [x] Weight-vector genome + feature extractor
+- [x] Fitness function
+- [x] Selection, crossover, mutation operators
+- [x] Tournament / round-robin evaluator
+- [x] CLI interface (`--pop`, `--gens`, `--workers`, `--out`)
+- [x] Checkpoint save/resume
+- [x] Champion export to `champion.json` and hot-swap into in-game AI
 
 ### M6 — Multiplayer Server
-- [ ] Node.js + Express + Socket.IO server scaffolding
-- [ ] `POST /game/create` → generates gameId + 3 tokens
-- [ ] Token authentication middleware
-- [ ] Player join flow and game start handshake
-- [ ] Server-authoritative turn loop with fog-of-war per player
-- [ ] Disconnection / reconnection handling
-- [ ] Client multiplayer lobby UI (enter token → join game)
+- [x] Node.js + Express + Socket.IO server scaffolding
+- [x] `POST /api/games` → generates gameId + 3 tokens
+- [x] Token authentication middleware
+- [x] Player join flow and game start handshake
+- [x] Server-authoritative turn loop with fog-of-war per player
+- [x] Disconnection / reconnection handling
+- [x] Client multiplayer lobby UI (enter token → join game)
 
 ### M7 — Polish
-- [ ] Sound effects
+- [x] Sound effects
 - [ ] Unit animations
 - [ ] Save / load game state (localStorage for single-player; server-side for multiplayer)
 - [ ] Configurable map size and difficulty
@@ -588,7 +631,6 @@ The server does not limit simultaneous connections per token. If conflicting act
 - Should the initial map always be symmetric (fair starts) or fully random?
 - Fuel mechanic for air units: hard limit or just a strong incentive to stay near cities/carriers?
 - How faithful to the original unit stats should we be vs. rebalancing for fun?
-- Genome representation: start with weight vector only, or build the GP tree representation in parallel?
 - Fitness function balance: should winning quickly be rewarded heavily, or is win/loss sufficient for early generations?
 - Co-evolution strategy: should the training population always play against the current-generation champion, or should we maintain a hall-of-fame of past champions to prevent strategy collapse?
 - Should the trainer be able to expose a WebSocket feed so the browser client can spectate a training run live ("watch mode")?

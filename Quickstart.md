@@ -12,11 +12,11 @@ npx tsx packages/shared/src/test_transportEarlyDeparture.ts
 ### View test replays
 
 ```bash
-# Run all tests and open the most recent replay
+# Run test suite and open the most recent replay
 npm run test_replay
 
 # View specific replay
-npx tsx packages/trainer/src/replay.ts tmp/test-*.json
+npx tsx packages/trainer/src/replay_picker.ts tmp/test-*.json
 ```
 
 ### Adding a new test
@@ -25,31 +25,6 @@ npx tsx packages/trainer/src/replay.ts tmp/test-*.json
 2. Use the `runTest()` helper from `testRunner.ts`
 3. Define a `victoryCondition` that checks the expected outcome
 4. Add the test to `packages/trainer/src/test_replay_picker.ts`
-
-Example:
-```typescript
-import { runTest } from './testRunner.js';
-import { UnitType, Terrain } from './index.js';
-
-async function main() {
-  const result = await runTest(
-    {
-      testName: 'My Test',
-      mapConfig: { /* ... */ },
-      cities: [ /* ... */ ],
-      units: [ /* ... */ ],
-      maxTurns: 50,
-      exploredTiles: [ /* ... */ ],
-      victoryCondition: (state) => {
-        // Return true when test passes
-        return state.units.some(u => u.type === UnitType.Army);
-      },
-    },
-    { verbose: true, saveReplay: true, agentPlayer: 'player1' },
-  );
-  process.exit(result.passed ? 0 : 1);
-}
-```
 
 ## Prerequisites
 
@@ -101,4 +76,23 @@ npx tsx packages/trainer/src/index.ts --pop 200 --gens 500 --out champion.json
 
 # See all options
 npx tsx packages/trainer/src/index.ts --help
+```
+
+## Record games
+
+```bash
+# Record 5 games (default)
+npm run record
+
+# Record 100 games across 8 workers
+NUM_GAMES=100 WORKERS=8 npm run record
+
+# Custom map size and agent matchup
+NUM_GAMES=50 P1_AGENT=basicAgent P2_AGENT=gunAirAgent npm run record
+```
+
+## View replays
+
+```bash
+npm run replay
 ```
