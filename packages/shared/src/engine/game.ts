@@ -921,7 +921,7 @@ export function getPlayerView(
           ? TileVisibility.Seen
           : TileVisibility.Hidden;
       return {
-        terrain: state.tiles[y][x],
+        terrain: vis === TileVisibility.Hidden ? Terrain.Unknown : state.tiles[y][x],
         visibility: vis,
         x,
         y,

@@ -5,6 +5,10 @@ src/**/*.js
 src/**/*.js.map
 src/**/*.d.ts
 src/**/*.d.ts.map
+packages/**/src/**/*.js
+packages/**/src/**/*.js.map
+packages/**/src/**/*.d.ts
+packages/**/src/**/*.d.ts.map
 packages/server/public/assets/
 packages/server/public/units/
 node.pid
@@ -12,4 +16,9 @@ package-lock.json
 packages/trainer/data/
 packages/trainer/tmp/
 packages/trainer/packages/
+packages/trainer/*.js
+packages/trainer/*.js.map
+packages/trainer/*.d.ts
+packages/trainer/*.d.ts.map
 tmp/
+tmp_logs/

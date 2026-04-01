@@ -889,9 +889,13 @@ export class MapQuery {
       if (y <= 0 || y >= this.mapHeight - 1) return false;
       if (enemyPositions?.has(`${x},${y}`)) return false;
       const tile = obs.tiles[y]?.[x];
-      if (stats.domain === UnitDomain.Land) return !!tile && tile.terrain === Terrain.Land;
+      if (stats.domain === UnitDomain.Land) {
+        return !!tile && tile.visibility !== TileVisibility.Hidden && tile.terrain === Terrain.Land;
+      }
       if (stats.domain === UnitDomain.Sea) {
-        if (!tile) return true; // unexplored — assume navigable ocean
+        if (!tile || tile.visibility === TileVisibility.Hidden || tile.terrain === Terrain.Unknown) {
+          return true; // unexplored — assume navigable ocean
+        }
         if (tile.terrain === Terrain.Ocean) return true;
         return obs.myCities.some((c) => c.x === x && c.y === y); // friendly port
       }

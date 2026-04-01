@@ -35,6 +35,7 @@ export type PlayerType = 'human' | 'ai';
 export enum Terrain {
   Ocean = 'ocean',
   Land = 'land',
+  Unknown = 'unknown',
 }
 
 // ── Unit types ───────────────────────────────────────────────
@@ -235,7 +236,7 @@ export interface GameState {
   explored: Record<PlayerId, Set<string>>;
   /** Total bombers produced per player (for blast radius upgrades) */
   bombersProduced: Record<PlayerId, number>;
-  /** Enemy unit snapshots seen this turn (persists until end of turn) */
+  /** Enemy unit snapshots at last known positions (persists across turns). */
   seenEnemies: Record<PlayerId, { id: string; type: UnitType; owner: PlayerId; x: number; y: number }[]>;
   /** Test options - only used in test mode */
   testOptions?: {
@@ -255,6 +256,7 @@ export enum TileVisibility {
 }
 
 export interface TileView {
+  /** Hidden tiles use Terrain.Unknown to avoid leaking full map topology. */
   terrain: Terrain;
   visibility: TileVisibility;
   x: number;

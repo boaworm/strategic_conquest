@@ -28,6 +28,29 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPLAY_DIR = process.env.REPLAY_DIR ?? path.resolve(__dirname, '..', '..', '..', 'tmp');
 
+function resolveReplayDir(): string {
+  const configured = path.isAbsolute(REPLAY_DIR)
+    ? REPLAY_DIR
+    : path.resolve(__dirname, REPLAY_DIR);
+
+  try {
+    if (fs.existsSync(configured)) {
+      if (fs.statSync(configured).isDirectory()) {
+        return configured;
+      }
+    } else {
+      fs.mkdirSync(configured, { recursive: true });
+      return configured;
+    }
+  } catch {
+    // Fall through to tmp_logs fallback.
+  }
+
+  const fallback = path.resolve(__dirname, '..', '..', '..', 'tmp_logs');
+  fs.mkdirSync(fallback, { recursive: true });
+  return fallback;
+}
+
 /**
  * After END_TURN, override any city production that isn't in the allowed list.
  * The agent is free to request whatever it wants; the test engine silently corrects it.
@@ -431,8 +454,7 @@ export function saveReplayFile(
   state: GameState,
   frames: GameSnapshot[],
 ): string {
-  const replayDir = path.resolve(__dirname, REPLAY_DIR);
-  fs.mkdirSync(replayDir, { recursive: true });
+  const replayDir = resolveReplayDir();
 
   const id = `test-${testName.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}`;
   const replay: ReplayFile = {
