@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug record_replay (1 game)",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/tsx",
+      "args": ["src/record_replay.ts"],
+      "cwd": "${workspaceFolder}/packages/trainer",
+      "env": {
+        "NUM_GAMES": "1",
+        "MAX_TURNS": "200"
+      },
+      "skipFiles": ["<node_internals>/**"],
+      "sourceMaps": true,
+      "console": "integratedTerminal"
+    }
+  ]
+}
