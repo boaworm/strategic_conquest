@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import {
   type Agent,
   type AgentObservation,
@@ -15,6 +16,13 @@ export interface RunGameOptions {
   mapHeight?: number;
   mapSeed?: number;
   maxTurns?: number;
+  profilePhases?: {
+    init: number;
+    turnLoop: number;
+    getPlayerView: number;
+    applyAction: number;
+    agentAct: number;
+  };
 }
 
 export interface GameResult {
@@ -56,8 +64,10 @@ export function runGame(
     mapHeight = 20,
     mapSeed,
     maxTurns = 200,
+    profilePhases,
   } = opts;
 
+  const t0 = performance.now();
   const state = createGameState({
     width: mapWidth,
     height: mapHeight,
@@ -65,6 +75,7 @@ export function runGame(
     landRatio: 0.35,
     cityCount: 10,
   });
+  if (profilePhases) profilePhases.init += performance.now() - t0;
 
   // Init agents
   agent1.init({ playerId: 'player1', mapWidth, mapHeight });
@@ -77,11 +88,15 @@ export function runGame(
 
   // Main game loop
   while (state.phase === GamePhase.Active && state.turn <= maxTurns) {
+    const loopStart = performance.now();
     const currentPlayer = state.currentPlayer;
     const agent = agents[currentPlayer];
 
     // Build observation from fog-of-war view
+    const tView1 = performance.now();
     const view = getPlayerView(state, currentPlayer);
+    if (profilePhases) profilePhases.getPlayerView += performance.now() - tView1;
+
     const obs: AgentObservation = {
       tiles: view.tiles,
       myUnits: view.myUnits,
@@ -96,16 +111,22 @@ export function runGame(
     // Let agent take actions until it ends its turn
     let actionCount = 0;
     while (actionCount < MAX_ACTIONS_PER_TURN) {
+      const tAct = performance.now();
       const action = agent.act(obs);
+      if (profilePhases) profilePhases.agentAct += performance.now() - tAct;
       actionCount++;
 
       if (action.type === 'END_TURN') {
+        const tApply = performance.now();
         applyAction(state, { type: 'END_TURN' }, currentPlayer);
+        if (profilePhases) profilePhases.applyAction += performance.now() - tApply;
         break;
       }
 
       // Apply action to state
+      const tApply2 = performance.now();
       const result = applyAction(state, action as GameAction, currentPlayer);
+      if (profilePhases) profilePhases.applyAction += performance.now() - tApply2;
 
       if (!result.success) {
         // Agent made invalid move — skip it, try again
@@ -118,7 +139,9 @@ export function runGame(
       }
 
       // Refresh observation after successful action
+      const tView2 = performance.now();
       const updatedView = getPlayerView(state, currentPlayer);
+      if (profilePhases) profilePhases.getPlayerView += performance.now() - tView2;
       obs.tiles = updatedView.tiles;
       obs.myUnits = updatedView.myUnits;
       obs.myCities = updatedView.myCities;
@@ -130,6 +153,7 @@ export function runGame(
       if (state.phase !== GamePhase.Active) break;
     }
 
+    if (profilePhases) profilePhases.turnLoop += performance.now() - loopStart;
     if (state.phase !== GamePhase.Active) break;
   }
 

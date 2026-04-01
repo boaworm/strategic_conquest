@@ -167,7 +167,10 @@ export function getVisibleTiles(
   state: GameState,
   playerId: string,
 ): Set<string> {
-  const visible = new Set<string>();
+  // Use boolean grid for faster computation, then convert to Set
+  const grid = Array.from({ length: state.mapHeight }, () =>
+    new Array(state.mapWidth).fill(false)
+  );
 
   for (const unit of state.units) {
     if (unit.owner !== playerId) continue;
@@ -179,12 +182,11 @@ export function getVisibleTiles(
     const range = (unit.type === UnitType.Fighter || unit.type === UnitType.Bomber) ? 3 : 2;
 
     for (let dy = -range; dy <= range; dy++) {
+      const ny = unit.y + dy;
+      if (ny < 0 || ny >= state.mapHeight) continue;
       for (let dx = -range; dx <= range; dx++) {
         const nx = wrapX(unit.x + dx, state.mapWidth);
-        const ny = unit.y + dy;
-        if (ny >= 0 && ny < state.mapHeight) {
-          visible.add(`${nx},${ny}`);
-        }
+        grid[ny][nx] = true;
       }
     }
   }
@@ -193,13 +195,20 @@ export function getVisibleTiles(
   for (const city of state.cities) {
     if (city.owner !== playerId) continue;
     for (let dy = -2; dy <= 2; dy++) {
+      const ny = city.y + dy;
+      if (ny < 0 || ny >= state.mapHeight) continue;
       for (let dx = -2; dx <= 2; dx++) {
         const nx = wrapX(city.x + dx, state.mapWidth);
-        const ny = city.y + dy;
-        if (ny >= 0 && ny < state.mapHeight) {
-          visible.add(`${nx},${ny}`);
-        }
+        grid[ny][nx] = true;
       }
+    }
+  }
+
+  // Convert grid to Set for return
+  const visible = new Set<string>();
+  for (let y = 0; y < state.mapHeight; y++) {
+    for (let x = 0; x < state.mapWidth; x++) {
+      if (grid[y][x]) visible.add(`${x},${y}`);
     }
   }
 
