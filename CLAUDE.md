@@ -63,7 +63,7 @@ npm run nn-sim                         # NN agent vs BasicAgent over Unix domain
 ### Data collection (imitation learning)
 ```bash
 # Collect (state, action) pairs for NN training
-DATA_DIR=./data NUM_GAMES=50000 WORKERS=8 npm run collect
+DATA_DIR=/Volumes/500G/Training NUM_GAMES=1500 MAX_SAMPLES_PER_GAME=3000 WORKERS=8 MAX_TURNS=300 npm run collect
 
 # Output: DATA_DIR/training/states.bin, actions.jsonl, meta.json
 ```

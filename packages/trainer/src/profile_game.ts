@@ -7,6 +7,7 @@ import { performance } from 'node:perf_hooks';
 import { BasicAgent } from '@sc/shared';
 import { runGame } from '@sc/testing';
 import fs from 'fs';
+import path from 'path';
 
 const NUM_GAMES = parseInt(process.env.NUM_GAMES ?? '1');
 const MAX_TURNS = parseInt(process.env.MAX_TURNS ?? '300');
