@@ -893,7 +893,7 @@ export class MapQuery {
         return !!tile && tile.visibility !== TileVisibility.Hidden && tile.terrain === Terrain.Land;
       }
       if (stats.domain === UnitDomain.Sea) {
-        if (!tile || tile.visibility === TileVisibility.Hidden || tile.terrain === Terrain.Unknown) {
+        if (!tile || tile.visibility === TileVisibility.Hidden) {
           return true; // unexplored — assume navigable ocean
         }
         if (tile.terrain === Terrain.Ocean) return true;

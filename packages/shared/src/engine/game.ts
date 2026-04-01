@@ -898,10 +898,14 @@ function getTilesInRadius(
 
 /**
  * Generate a fog-of-war filtered view for a specific player.
+ * @param hideUnexploredTerrain  When true, hidden tiles use Terrain.Unknown
+ *   instead of the real terrain, preventing map-topology leaks to clients.
+ *   Server-side agents should pass false so pathfinding still works.
  */
 export function getPlayerView(
   state: GameState,
   playerId: PlayerId,
+  hideUnexploredTerrain = false,
 ): PlayerView {
   const visible = getVisibleTiles(state, playerId);
 
@@ -921,7 +925,7 @@ export function getPlayerView(
           ? TileVisibility.Seen
           : TileVisibility.Hidden;
       return {
-        terrain: vis === TileVisibility.Hidden ? Terrain.Unknown : state.tiles[y][x],
+        terrain: (hideUnexploredTerrain && vis === TileVisibility.Hidden) ? Terrain.Unknown : state.tiles[y][x],
         visibility: vis,
         x,
         y,

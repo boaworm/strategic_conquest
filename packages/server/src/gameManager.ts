@@ -215,7 +215,7 @@ export class GameManager {
   }
 
   getPlayerView(session: GameSession, playerId: PlayerId): PlayerView {
-    return getPlayerView(session.state, playerId);
+    return getPlayerView(session.state, playerId, true);
   }
 
   getGame(id: string): GameSession | undefined {
