@@ -260,6 +260,12 @@
         },
         {
           "conditions": [
+            "Units onboard"
+          ],
+          "action": "Sail to contested island"
+        },
+        {
+          "conditions": [
             "No units onboard",
             "Transport in city"
           ],

@@ -10,6 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Direct Answers.** If I ask a question, lead with the answer. Skip the "introductory paragraph."
 - **NEVER USE ANY OF THESE**: timeout wait sleep
 
+# GIT
+I do all git commit, push, pull, add, delete, rename/mv
+
+You can use it for diff
+
 ## Patching rules
 Precision Editing Protocol
 Anchor Strategy: When using edit_file, use the smallest possible old_str that is still unique. Avoid including more than 1 line of unchanged context.

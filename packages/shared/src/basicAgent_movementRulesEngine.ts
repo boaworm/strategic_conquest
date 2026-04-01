@@ -111,7 +111,7 @@ export interface MovementHelpers {
   /** Find any land on island */
   findAnyLandOnIsland(obs: AgentObservation, islandOf: Map<string, number>, islandIdx: number, mapWidth: number, mapHeight: number): Coord | null;
   /** Find coastal city on island */
-  findCoastalCityOnIsland(obs: AgentObservation, islandIdx: number, friendlyIndices: Set<number>, islandOf: Map<string, number>, mapWidth: number): Coord | null;
+  findCoastalCityOnIsland(obs: AgentObservation, islandIdx: number, friendlyIndices: Set<number>, islandOf: Map<string, number>, mapWidth: number, findAnyCity: boolean): Coord | null;
   /** Get islands by explored state */
   getIslandsByExploredState(obs: AgentObservation, islandOf: Map<string, number>, exploredIslands: Set<number>, isExplored: boolean): number[];
   /** Get islands by friendly state */
@@ -475,6 +475,11 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     return false;
   });
 
+  map.set('Waiting transport on island', (ctx) => {
+    if (ctx.unit.type !== UnitType.Army) return false;
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    return ctx.helpers.findWaitingTransport(ctx.unit, ctx.obs, islandOf, friendlyIndices, ctx.mapWidth) !== null;
+  });
 
   map.set('No armies to load', (ctx) => {
     if (ctx.unit.type !== UnitType.Transport) return false;
@@ -823,7 +828,7 @@ export class MovementRulesEngine {
       }
       return { type: 'SKIP', unitId: ctx.unit.id };
     }
-    if (action === 'Move to transport and board') {
+    if (action === 'Move to transport and board' || action === 'Move to waiting transport and board') {
       const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
       const waitingTransport = ctx.helpers.findWaitingTransport(
         ctx.unit, ctx.obs, islandOf, friendlyIndices, ctx.mapWidth,
@@ -971,7 +976,7 @@ export class MovementRulesEngine {
           }
         }
         const targetCity = ctx.helpers.findCoastalCityOnIsland(
-          ctx.obs, targetIsland, friendlyIndices, islandOf, ctx.mapWidth,
+          ctx.obs, targetIsland, friendlyIndices, islandOf, ctx.mapWidth, false,
         );
         if (targetCity) {
           const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
@@ -1011,7 +1016,7 @@ export class MovementRulesEngine {
           }
         }
         const targetCity = ctx.helpers.findCoastalCityOnIsland(
-          ctx.obs, targetIsland, friendlyIndices, islandOf, ctx.mapWidth,
+          ctx.obs, targetIsland, friendlyIndices, islandOf, ctx.mapWidth, false,
         );
         if (targetCity) {
           const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
@@ -1234,7 +1239,7 @@ export class MovementRulesEngine {
       const unexploredIslands = ctx.helpers.getIslandsByExploredState(ctx.obs, islandOf, exploredIslands, false);
       if (unexploredIslands.length > 0) {
         const targetIsland = unexploredIslands[0];
-        const targetCity = ctx.helpers.findCoastalCityOnIsland(ctx.obs, targetIsland, ctx.helpers.classifyIslands(ctx.obs).friendlyIndices, islandOf, ctx.mapWidth);
+        const targetCity = ctx.helpers.findCoastalCityOnIsland(ctx.obs, targetIsland, ctx.helpers.classifyIslands(ctx.obs).friendlyIndices, islandOf, ctx.mapWidth, false);
         if (targetCity) {
           const step = ctx.helpers.farthestStepToward(ctx.obs, ctx.unit, targetCity, ctx.mapWidth, ctx.mapHeight);
           if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
@@ -1554,7 +1559,7 @@ export class MovementRulesEngine {
           }
         }
         const targetCity = ctx.helpers.findCoastalCityOnIsland(
-          ctx.obs, targetIsland, ctx.helpers.classifyIslands(ctx.obs).friendlyIndices, islandOf, ctx.mapWidth,
+          ctx.obs, targetIsland, ctx.helpers.classifyIslands(ctx.obs).friendlyIndices, islandOf, ctx.mapWidth, false,
         );
         if (targetCity) {
           const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
@@ -1582,9 +1587,9 @@ export class MovementRulesEngine {
       if (contestedIslands.length > 0) {
         const targetIsland = contestedIslands[0];
         const targetCity = ctx.helpers.findCoastalCityOnIsland(
-          ctx.obs, targetIsland, friendlyIndices, islandOf, ctx.mapWidth,
+          ctx.obs, targetIsland, friendlyIndices, islandOf, ctx.mapWidth, true, // Find any city (enemy/neutral) on contested island
         );
-        if (targetCity) {
+       if (targetCity) {
           const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
             ctx.obs, islandOf, targetIsland, ctx.mapWidth, ctx.mapHeight,
           ).find(tile => ctx.helpers.wrappedDist(tile, targetCity) <= 1);

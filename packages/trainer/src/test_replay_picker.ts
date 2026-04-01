@@ -79,6 +79,7 @@ try {
   execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_armyMoveToCoastAndBoardTransport_2.ts')}`, { stdio: 'inherit' });
   execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_exploreAndExpand_3.ts')}`, { stdio: 'inherit' });
   execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_transportEarlyDeparture.ts')}`, { stdio: 'inherit' });
+  execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_transportsInCombatPhase.ts')}`, { stdio: 'inherit' });
   console.log('\n');
 } catch (err) {
   console.log('Some tests failed, continuing anyway...\n');

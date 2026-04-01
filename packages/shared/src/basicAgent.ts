@@ -56,7 +56,7 @@ type MovementHelpers = {
   isTransportParked(obs: AgentObservation, unit: UnitView, islandOf: Map<string, number>, friendlyIndices: Set<number>, mapWidth: number): boolean;
   isTransportOnLandAtCity(obs: AgentObservation, unit: UnitView, islandOf: Map<string, number>, friendlyIndices: Set<number>, mapWidth: number): boolean;
   findAnyLandOnIsland(obs: AgentObservation, islandOf: Map<string, number>, islandIdx: number, mapWidth: number, mapHeight: number): Coord | null;
-  findCoastalCityOnIsland(obs: AgentObservation, islandIdx: number, friendlyIndices: Set<number>, islandOf: Map<string, number>, mapWidth: number): Coord | null;
+  findCoastalCityOnIsland(obs: AgentObservation, islandIdx: number, friendlyIndices: Set<number>, islandOf: Map<string, number>, mapWidth: number, findAnyCity: boolean): Coord | null;
   getIslandsByExploredState(obs: AgentObservation, islandOf: Map<string, number>, exploredIslands: Set<number>, isExplored: boolean): number[];
   getIslandsByFriendlyState(obs: AgentObservation, islandOf: Map<string, number>, friendlyIndices: Set<number>, isFriendly: boolean): number[];
   shouldTransportDepart(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, friendlyIndices: Set<number>, mapWidth: number): boolean;
@@ -288,7 +288,7 @@ export class BasicAgent implements Agent {
       isTransportParked: (obs, unit, islandOf, friendlyIndices) => this.isTransportParked(obs, unit, islandOf, friendlyIndices, this.mapWidth),
       isTransportOnLandAtCity: (obs, unit, islandOf, friendlyIndices) => this.isTransportOnLandAtCity(obs, unit, islandOf, friendlyIndices, this.mapWidth),
       findAnyLandOnIsland: (obs, islandOf, islandIdx) => this.findAnyLandOnIsland(obs, islandOf, islandIdx, this.mapWidth, this.mapHeight),
-      findCoastalCityOnIsland: (obs, islandIdx, friendlyIndices, islandOf) => this.findCoastalCityOnIsland(obs, islandIdx, friendlyIndices, islandOf, this.mapWidth),
+      findCoastalCityOnIsland: (obs, islandIdx, friendlyIndices, islandOf, mapWidth, findAnyCity) => this.findCoastalCityOnIsland(obs, islandIdx, friendlyIndices, islandOf, mapWidth, findAnyCity),
       getIslandsByExploredState: (obs, islandOf, exploredIslands, isExplored) => this.getIslandsByExploredState(obs, islandOf, exploredIslands, isExplored),
       getIslandsByFriendlyState: (obs, islandOf, friendlyIndices, isFriendly) => this.getIslandsByFriendlyState(obs, islandOf, friendlyIndices, isFriendly),
       shouldTransportDepart: (transport, obs, islandOf, friendlyIndices) => this.shouldTransportDepart(transport, obs, islandOf, friendlyIndices, this.mapWidth),
@@ -1317,9 +1317,12 @@ export class BasicAgent implements Agent {
 
   /**
    * Find coastal city on an island.
+   * If findAnyCity is true, returns any coastal city (friendly, enemy, or neutral) on the island.
+   * If findAnyCity is false (default), returns only a friendly coastal city.
    */
-  private findCoastalCityOnIsland(obs: AgentObservation, islandIdx: number, friendlyIndices: Set<number>, islandOf: Map<string, number>, mapWidth: number): Coord | null {
-    const coastal = obs.myCities.filter((c) => {
+  private findCoastalCityOnIsland(obs: AgentObservation, islandIdx: number, friendlyIndices: Set<number>, islandOf: Map<string, number>, mapWidth: number, findAnyCity: boolean = false): Coord | null {
+    const allCities = findAnyCity ? [...obs.myCities, ...obs.visibleEnemyCities] : obs.myCities;
+    const coastal = allCities.filter((c) => {
       for (const [dx, dy] of [
         [-1, -1], [0, -1], [1, -1],
         [-1,  0],          [1,  0],
@@ -1336,8 +1339,9 @@ export class BasicAgent implements Agent {
     });
     for (const city of coastal) {
       const idx = islandOf.get(`${city.x},${city.y}`);
-      if (idx === islandIdx && friendlyIndices.has(idx)) {
-        return city;
+      if (idx === islandIdx) {
+        if (findAnyCity) return city;
+        if (friendlyIndices.has(idx)) return city;
       }
     }
     return null;

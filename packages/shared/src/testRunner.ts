@@ -209,12 +209,14 @@ export async function runTest(
   options: {
     verbose?: boolean;
     saveReplay?: boolean;
-    agentPlayer?: PlayerId;
+    agentPlayer1?: boolean;
+    agentPlayer2?: boolean;
   } = {},
 ): Promise<TestResult> {
   const verbose = options.verbose ?? true;
   const saveReplay = options.saveReplay ?? true;
-  const agentPlayer = options.agentPlayer ?? 'player1';
+  const agent1 = options.agentPlayer1 ?? true ? new BasicAgent() : null;
+  const agent2 = options.agentPlayer2 ?? false ? new BasicAgent() : null;
 
   if (verbose) {
     console.log(`\n=== Test: ${config.testName} ===\n`);
@@ -223,7 +225,9 @@ export async function runTest(
   // Create game state
   const state = createGameStateFromConfig(config);
   const agent = new BasicAgent();
-  agent.init({ playerId: agentPlayer, mapWidth: state.mapWidth, mapHeight: state.mapHeight });
+  agent.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
+  agent1?.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
+  agent2?.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
 
   const frames: GameSnapshot[] = [];
   frames.push(snapshotGame(state));
@@ -236,18 +240,20 @@ export async function runTest(
   while (gameTurn < config.maxTurns) {
     gameTurn++;
 
-    // Agent takes actions until it ends turn
+    // Player 1 takes actions
+    let currentPlayer = 'player1' as PlayerId;
     while (true) {
-      const view: PlayerView = getPlayerView(state, agentPlayer);
+      const view: PlayerView = getPlayerView(state, currentPlayer);
+      const currentAgent = agent1 ?? agent;
 
-      const action: AgentAction = agent.act({
+      const action: AgentAction = currentAgent.act({
         ...view,
-        myPlayerId: agentPlayer,
+        myPlayerId: currentPlayer,
         myBomberBlastRadius: 0,
       } as any);
 
       // Apply the agent's action
-      const result = applyAction(state, action, agentPlayer);
+      const result = applyAction(state, action, currentPlayer);
       if (!result.success) {
         break;
       }
@@ -270,18 +276,54 @@ export async function runTest(
       }
     }
 
-    // Reset for next game turn
-    // Advance production first (new units are added to state.units)
-    advanceProduction(state, agentPlayer);
+    // Player 2 takes actions (if agent enabled)
+    if (agent2) {
+      currentPlayer = 'player2';
+      while (true) {
+        const view: PlayerView = getPlayerView(state, currentPlayer);
 
-    for (const unit of state.units) {
-      if (unit.owner === agentPlayer) {
-        const stats = UNIT_STATS[unit.type as keyof typeof UNIT_STATS];
-        unit.movesLeft = stats?.movesPerTurn ?? 3;
-        unit.hasAttacked = false;
+        const action: AgentAction = agent2.act({
+          ...view,
+          myPlayerId: currentPlayer,
+          myBomberBlastRadius: 0,
+        } as any);
+
+        // Apply the agent's action
+        const result = applyAction(state, action, currentPlayer);
+        if (!result.success) {
+          break;
+        }
+
+        // Record state after each action
+        frames.push(snapshotGame(state));
+
+        // Check victory condition
+        if (victoryCondition(state)) {
+          if (verbose) {
+            console.log('TEST PASSED');
+          }
+          const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames) : undefined;
+          return { passed: true, turns: state.turn, message: 'Test passed', replayPath };
+        }
+
+        // Check if agent ended turn
+        if (action.type === 'END_TURN') {
+          break;
+        }
       }
     }
-    state.currentPlayer = agentPlayer;
+
+    // Reset for next game turn
+    // Advance production first (new units are added to state.units)
+    advanceProduction(state, 'player1' as PlayerId);
+    advanceProduction(state, 'player2' as PlayerId);
+
+    for (const unit of state.units) {
+      const stats = UNIT_STATS[unit.type as keyof typeof UNIT_STATS];
+      unit.movesLeft = stats?.movesPerTurn ?? 3;
+      unit.hasAttacked = false;
+    }
+    state.currentPlayer = 'player1';
     state.phase = GamePhase.Active;
     state.turn++;
   }
@@ -326,7 +368,7 @@ export function saveReplayFile(
       mapHeight: state.mapHeight,
       frames: frames.length,
       p1Agent: 'basicAgent',
-      p2Agent: 'none',
+      p2Agent: 'basicAgent',
     },
     tiles: state.tiles,
     frames,

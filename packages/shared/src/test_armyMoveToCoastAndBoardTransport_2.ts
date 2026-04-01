@@ -40,7 +40,7 @@ async function main() {
         return army?.carriedBy === 'transport1';
       },
     },
-    { verbose: true, saveReplay: true, agentPlayer: 'player1' },
+    { verbose: true, saveReplay: true, agentPlayer1: true },
   );
 
   if (!result.passed) {

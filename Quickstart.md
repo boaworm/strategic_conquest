@@ -1,5 +1,56 @@
 # Quickstart
 
+## Test Cases
+
+### Running individual tests
+
+```bash
+npx tsx packages/shared/src/test_exploreAndExpand_3.ts
+npx tsx packages/shared/src/test_transportEarlyDeparture.ts
+```
+
+### View test replays
+
+```bash
+# Run all tests and open the most recent replay
+npm run test_replay
+
+# View specific replay
+npx tsx packages/trainer/src/replay.ts tmp/test-*.json
+```
+
+### Adding a new test
+
+1. Create a new test file in `packages/shared/src/test_*.ts`
+2. Use the `runTest()` helper from `testRunner.ts`
+3. Define a `victoryCondition` that checks the expected outcome
+4. Add the test to `packages/trainer/src/test_replay_picker.ts`
+
+Example:
+```typescript
+import { runTest } from './testRunner.js';
+import { UnitType, Terrain } from './index.js';
+
+async function main() {
+  const result = await runTest(
+    {
+      testName: 'My Test',
+      mapConfig: { /* ... */ },
+      cities: [ /* ... */ ],
+      units: [ /* ... */ ],
+      maxTurns: 50,
+      exploredTiles: [ /* ... */ ],
+      victoryCondition: (state) => {
+        // Return true when test passes
+        return state.units.some(u => u.type === UnitType.Army);
+      },
+    },
+    { verbose: true, saveReplay: true, agentPlayer: 'player1' },
+  );
+  process.exit(result.passed ? 0 : 1);
+}
+```
+
 ## Prerequisites
 
 - Node.js 18+
