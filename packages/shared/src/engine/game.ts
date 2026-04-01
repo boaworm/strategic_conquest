@@ -564,9 +564,8 @@ function tryCaptureCity(
   }
 
   // Attack succeeds. Army is consumed to capture the city.
-  const prevProduction = city.producing;  // Preserve production type
   city.owner = playerId;
-  city.producing = prevProduction;        // Auto-set same production for new owner
+  city.producing = null;
   city.productionTurnsLeft = 0;
   city.productionProgress = 0;
   unit.health = 0;
@@ -841,6 +840,9 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
   if (aircraftCrashed > 0) {
     removeDestroyedUnits(state);
   }
+
+  // Clear seenEnemies for the player ending their turn — ghosts only persist within a turn
+  state.seenEnemies[playerId] = [];
 
   // Switch player
   if (state.currentPlayer === 'player1') {

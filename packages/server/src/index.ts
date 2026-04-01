@@ -108,7 +108,7 @@ const clientDir = path.resolve(__dirname, '..', 'public');
 app.use(express.static(clientDir));
 
 // SPA fallback: any non-API, non-socket route serves index.html
-app.get('*', (_req, res) => {
+app.use((_req, res) => {
   res.sendFile(path.join(clientDir, 'index.html'));
 });
 

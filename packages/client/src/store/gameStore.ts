@@ -9,6 +9,7 @@ import type {
   CreateGameResponse,
   ServerToClientEvents,
   ClientToServerEvents,
+  UnitType,
 } from '@sc/shared';
 
 interface GameStore {
@@ -27,6 +28,9 @@ interface GameStore {
 
   // Socket
   socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
+
+  // Previous production tracking (for auto-repeat)
+  prevProduction: Map<string, UnitType> | null;
 
   // Actions
   createGame: (
@@ -84,6 +88,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   selectedUnitId: null,
   autoEndTurn: true,
   autoSelectNext: true,
+  prevProduction: null,
   tileSize: DEFAULT_TILE_SIZE,
   cameraX: 0,
   cameraY: 0,
@@ -179,8 +184,31 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     socket.on('stateUpdate', (view: PlayerView) => {
       const pid = view.myUnits.length > 0 ? view.myUnits[0].owner : get().playerId;
+      const prev = get().prevProduction;
 
       set({ view, playerId: pid, gamePaused: false });
+
+      // Auto-repeat production: if a city had production last turn and it's now idle,
+      // re-set the same production (player explicitly stopped it by setting to null)
+      if (prev && view.currentPlayer === pid) {
+        for (const city of view.myCities) {
+          const prevProd = prev.get(city.id);
+          if (prevProd && city.producing === null) {
+            // Production completed — auto-restart it
+            const s = get().socket;
+            if (s) s.emit('action', { type: 'SET_PRODUCTION', cityId: city.id, unitType: prevProd });
+          }
+        }
+      }
+
+      // Save current production for auto-repeat next turn
+      const newPrev = new Map<string, UnitType>();
+      for (const city of view.myCities) {
+        if (city.producing !== null) {
+          newPrev.set(city.id, city.producing);
+        }
+      }
+      set({ prevProduction: newPrev });
 
       // Auto-select next moveable unit when current one is done
       if (get().autoSelectNext && view.currentPlayer === pid) {
@@ -258,6 +286,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       gamePaused: false,
       lastEnemyCombat: null,
       selectedUnitId: null,
+      prevProduction: null,
     });
   },
 

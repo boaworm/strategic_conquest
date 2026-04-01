@@ -217,8 +217,8 @@ export function getVisibleTiles(
 
 /**
  * Can the given player detect submarines at (x, y)?
- * Only destroyers and submarines can "see" enemy subs.
- * Returns true if any friendly DD or SS has the tile within vision range.
+ * Only destroyers and submarines can "see" enemy submarines.
+ * Returns true if any friendly destroyer or submarine has the tile within vision range.
  */
 export function canDetectSubmarine(
   state: GameState,

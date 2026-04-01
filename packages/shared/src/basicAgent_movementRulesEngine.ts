@@ -436,13 +436,13 @@ function buildActionResolvers(): Map<string, ActionResolver> {
     if (ctx.unit.type === UnitType.Fighter) {
       const transport = ctx.map.findEnemyTransportWithCargo(ctx.unit, ctx.obs, ctx.unit.movesLeft);
       if (transport) {
-        const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, transport);
-        if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+        // Move directly to the transport's tile to trigger combat
+        return { type: 'MOVE', unitId: ctx.unit.id, to: { x: transport.x, y: transport.y } };
       }
       const sub = ctx.map.findEnemyInRange(ctx.unit, ctx.obs, [UnitType.Submarine]);
       if (sub) {
-        const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, sub);
-        if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+        // Move directly to the submarine's tile to trigger combat
+        return { type: 'MOVE', unitId: ctx.unit.id, to: { x: sub.x, y: sub.y } };
       }
     }
     return null;

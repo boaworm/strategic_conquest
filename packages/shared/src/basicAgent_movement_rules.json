@@ -29,6 +29,10 @@
         {
           "conditions": ["island_friendly_and_explored", "transport_on_island"],
           "action": "move_to_transport_and_board"
+        },
+        {
+          "conditions": ["island_friendly_and_explored"],
+          "action": "move_to_nearest_coastal_city"
         }
       ],
 
