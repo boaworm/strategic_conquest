@@ -509,34 +509,34 @@ export class MapQuery {
 
   /**
    * Hunt for enemy shipping using per-unit priorities:
-   *  1) Loaded transports
-   *  2) Other allowed naval targets for this unit type
+   *
+   * Submarines (hunter-killer):
+   *   Tier 0: Loaded transports
+   *   Tier 1: Carriers, Battleships (high-value capital ships)
+   *   Tier 2: Other submarines
+   *   Tier 3: Destroyers
+   *
+   * Destroyers (ASW):
+   *   Tier 0: Loaded transports
+   *   Tier 1: Enemy submarines (primary ASW target)
+   *   Tier 2: Destroyers (peer engagement)
+   *   Tier 3: Other ships
+   *
    * Within each tier, pick nearest; ties break by higher build value.
    */
   huntForEnemyShipping(unit: UnitView, obs: AgentObservation, maxRange?: number): UnitView | null {
-    const allowed: UnitType[] =
-      unit.type === UnitType.Destroyer
-        ? [UnitType.Transport, UnitType.Submarine, UnitType.Destroyer]
-        : unit.type === UnitType.Submarine
-          ? [UnitType.Transport, UnitType.Carrier, UnitType.Battleship]
-          : unit.type === UnitType.Battleship
-            ? [UnitType.Transport, UnitType.Destroyer, UnitType.Carrier, UnitType.Battleship]
-            : [];
-
-    if (allowed.length === 0) return null;
-
     let best: UnitView | null = null;
     let bestTier = Infinity;
     let bestDist = Infinity;
     let bestValue = -1;
 
     for (const e of obs.visibleEnemyUnits) {
-      if (!allowed.includes(e.type)) continue;
+      const tier = this.getTargetTier(unit.type, e.type, e.cargo.length > 0);
+      if (tier === Infinity) continue; // Not a valid target for this unit type
+
       const dist = this.wrappedDist(unit, e);
       if (maxRange !== undefined && dist > maxRange) continue;
 
-      const isLoadedTransport = e.type === UnitType.Transport && e.cargo.length > 0;
-      const tier = isLoadedTransport ? 0 : 1;
       const value = UNIT_STATS[e.type].buildTime;
 
       const better =
@@ -553,6 +553,43 @@ export class MapQuery {
     }
 
     return best;
+  }
+
+  /**
+   * Get target priority tier for a given unit type vs target.
+   * Returns Infinity if target is not a valid target for this unit type.
+   */
+  private getTargetTier(attacker: UnitType, target: UnitType, targetIsLoaded: boolean): number {
+    if (targetIsLoaded && target === UnitType.Transport) {
+      return 0; // Loaded transports are always top priority
+    }
+
+    switch (attacker) {
+      case UnitType.Submarine:
+        // Hunter-killer: capital ships > other subs > destroyers
+        if (target === UnitType.Carrier || target === UnitType.Battleship) return 1;
+        if (target === UnitType.Submarine) return 2;
+        if (target === UnitType.Destroyer) return 3;
+        return Infinity;
+
+      case UnitType.Destroyer:
+        // ASW: subs > destroyers > other ships > empty transports
+        if (target === UnitType.Submarine) return 1;
+        if (target === UnitType.Destroyer) return 2;
+        if (target === UnitType.Carrier || target === UnitType.Battleship) return 3;
+        if (target === UnitType.Transport) return 4;
+        return Infinity;
+
+      case UnitType.Battleship:
+        // Capital ship: destroyers > carriers > other battleships
+        if (target === UnitType.Destroyer) return 1;
+        if (target === UnitType.Carrier) return 2;
+        if (target === UnitType.Battleship) return 3;
+        return Infinity;
+
+      default:
+        return Infinity;
+    }
   }
 
   /**

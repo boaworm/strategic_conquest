@@ -176,7 +176,19 @@
     "destroyer": {
       "Explore": [
         {
-          "conditions": ["enemy_ship_in_range"],
+          "conditions": ["enemy_loaded_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_submarine_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_destroyer_in_range"],
           "action": "attack_nearest_enemy_ship"
         },
         {
@@ -185,6 +197,22 @@
       ],
 
       "Expand": [
+        {
+          "conditions": ["enemy_loaded_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_submarine_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_destroyer_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
         {
           "conditions": ["enemy_ship_in_range"],
           "action": "attack_nearest_enemy_ship"
@@ -197,6 +225,18 @@
       "Combat": [
         {
           "conditions": ["enemy_loaded_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_submarine_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_destroyer_in_range"],
           "action": "attack_nearest_enemy_ship"
         },
         {
@@ -344,7 +384,15 @@
     "submarine": {
       "Explore": [
         {
-          "conditions": ["enemy_high_value_ship_in_range"],
+          "conditions": ["enemy_loaded_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_capital_ship_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_submarine_in_range"],
           "action": "attack_nearest_enemy_ship"
         },
         {
@@ -354,7 +402,19 @@
 
       "Expand": [
         {
-          "conditions": ["enemy_high_value_ship_in_range"],
+          "conditions": ["enemy_loaded_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_capital_ship_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_submarine_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_destroyer_in_range"],
           "action": "attack_nearest_enemy_ship"
         },
         {
@@ -368,7 +428,15 @@
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_high_value_ship_in_range"],
+          "conditions": ["enemy_capital_ship_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_submarine_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_destroyer_in_range"],
           "action": "attack_nearest_enemy_ship"
         },
         {

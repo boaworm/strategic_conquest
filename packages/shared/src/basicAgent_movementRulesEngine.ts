@@ -174,6 +174,18 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     return ctx.map.findEnemyInRange(ctx.unit, ctx.obs, [UnitType.Submarine]) !== null;
   });
 
+  m.set('enemy_capital_ship_in_range', (ctx) => {
+    return ctx.map.findEnemyInRange(ctx.unit, ctx.obs, [UnitType.Carrier, UnitType.Battleship]) !== null;
+  });
+
+  m.set('enemy_destroyer_in_range', (ctx) => {
+    return ctx.map.findEnemyInRange(ctx.unit, ctx.obs, [UnitType.Destroyer]) !== null;
+  });
+
+  m.set('enemy_transport_in_range', (ctx) => {
+    return ctx.map.findEnemyInRange(ctx.unit, ctx.obs, [UnitType.Transport]) !== null;
+  });
+
   m.set('friendly_city_under_attack', (ctx) => {
     return ctx.map.findCityUnderAttack(ctx.obs, 3) !== null;
   });

@@ -324,10 +324,14 @@ export async function runTest(
         }
         // Set winner to current player
         state.winner = currentPlayer;
-        // Record final state with incremented turn
-        state.turn++;
+        // Record final state (turn N)
         const finalState = snapshotGame(state);
+        finalState.turn = state.turn;
         frames.push(finalState);
+        // Add N+1 frame to show "end state" (same as final, but turn+1)
+        const endState = snapshotGame(state);
+        endState.turn = state.turn + 1;
+        frames.push(endState);
         const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames) : undefined;
         return { passed: true, turns: state.turn, message: 'Test passed', replayPath };
       }
@@ -364,10 +368,14 @@ export async function runTest(
           }
           // Set winner to current player
           state.winner = currentPlayer;
-          // Record final state with incremented turn
-          state.turn++;
+          // Record final state (turn N)
           const finalState = snapshotGame(state);
+          finalState.turn = state.turn;
           frames.push(finalState);
+          // Add N+1 frame to show "end state" (same as final, but turn+1)
+          const endState = snapshotGame(state);
+          endState.turn = state.turn + 1;
+          frames.push(endState);
           const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames) : undefined;
           return { passed: true, turns: state.turn, message: 'Test passed', replayPath };
         }

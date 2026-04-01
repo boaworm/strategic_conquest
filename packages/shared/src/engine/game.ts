@@ -353,6 +353,14 @@ function handleMove(
 
     // Normal combat with the selected defender
     const outcome = resolveCombatFromTable(unit, defender);
+
+    // Set health to 0 for destroyed units so removeDestroyedUnits can remove them
+    if (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) {
+      unit.health = 0;
+    }
+    if (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) {
+      defender.health = 0;
+    }
     removeDestroyedUnits(state);
 
     // Build combat result from outcome
