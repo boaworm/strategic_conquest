@@ -10,13 +10,13 @@
   },
   "dependencies": {
     "@sc/shared": "*",
-    "express": "^4.21.0",
-    "socket.io": "^4.7.5",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
     "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
     "tsx": "^4.19.0",
     "typescript": "^5.5.0"
   }
