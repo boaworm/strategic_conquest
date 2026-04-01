@@ -271,13 +271,13 @@
           ],
           "action": "Move to adjacent ocean and wait"
         },
-		{
+        {
           "conditions": [
             "No units onboard",
             "Not at friendly island",
             "In combat phase"
           ],
-          "action": "Sail to nearest friendly island, park at coastal"
+          "action": "Move to friendly island with most armies"
         }
       ]
     },

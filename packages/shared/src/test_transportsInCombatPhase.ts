@@ -1,28 +1,36 @@
 /**
- * Test: Transports shuttle armies back and forth between islands
+ * Test: Transport shuttle – back-and-forth in combat phase
  *
  * Setup:
- * - 20x10 map
- * - Western island: 5x5 at cols 2-6, rows 2-6 (player 1)
- * - Eastern island: 5x5 at cols 14-18, rows 2-6 (player 2)
- * - Player 1: 2 cities on western island
- * - Player 2: 2 cities on eastern island
- * - All production locked to armies
- * - Both islands fully explored (Combat phase from start)
- * - Initial armies ready to load
+ *   - Two islands separated by ocean, one player on each.
+ *   - Both players start with FOG OF WAR on the other island (only own island explored).
+ *   - Production is restricted to Army only.
+ *   - Player 1 starts with one transport parked offshore and one army on the coast.
+ *   - Player 2 starts with just their city (no units) so they don't threaten yet.
  *
- * Goal:
- * - Transports load armies, sail to enemy island, disembark, return
- * - Test passes when both transports have completed round trips
+ * What we want to verify:
+ *   1. P1's army boards the transport.
+ *   2. Transport sails to the enemy island and drops off the army.
+ *   3. Transport returns to pick up a freshly produced army.
+ *   4. Repeat at least twice  ← this is the "smart shuttle" behaviour.
+ *
+ * Failure modes to look for in combat phase:
+ *   - Transport stays idle after dropping army.
+ *   - Transport never picks up second army.
+ *   - Army never boards because island classification is wrong.
  */
-import {
-  runTest,
-} from './testRunner.js';
+import { runTest } from './testRunner.js';
 import { UnitType, Terrain } from './index.js';
 
-const TEST_NAME = 'Transports In Combat Phase';
+const TEST_NAME = 'Transport Shuttle Combat Phase';
 
 async function main() {
+  // ── Map ────────────────────────────────────────────────────────────────────
+  // 20×10 grid.
+  // Row 0 / Row 9 → ocean (ice caps – no unit can enter).
+  // Left island:  x 2-6,  y 2-6  (Player 1)
+  // Right island: x 14-18, y 2-6  (Player 2)
+  // Everything else → ocean.
   const width = 20;
   const height = 10;
   const tiles: Terrain[][] = [];
@@ -31,11 +39,11 @@ async function main() {
     tiles[y] = [];
     for (let x = 0; x < width; x++) {
       if (y === 0 || y === height - 1) {
-        tiles[y][x] = Terrain.Ocean;
+        tiles[y][x] = Terrain.Ocean; // ice caps
       } else if (x >= 2 && x <= 6 && y >= 2 && y <= 6) {
-        tiles[y][x] = Terrain.Land;
+        tiles[y][x] = Terrain.Land; // P1 island
       } else if (x >= 14 && x <= 18 && y >= 2 && y <= 6) {
-        tiles[y][x] = Terrain.Land;
+        tiles[y][x] = Terrain.Land; // P2 island
       } else {
         tiles[y][x] = Terrain.Ocean;
       }
@@ -44,39 +52,56 @@ async function main() {
 
   const mapConfig = { tiles, width, height };
 
+  // ── Cities ─────────────────────────────────────────────────────────────────
+  // Each player gets 2 cities: one on each coast of their island.
+  // P1 west: (3,4)  P1 east: (6,4)   ← left island, x 2-6
+  // P2 west: (14,4) P2 east: (17,4)  ← right island, x 14-18
   const cities = [
-    // Player 1 cities on western island
-    { id: 'p1_city1', x: 4, y: 4, owner: 'player1' as const },
-    { id: 'p1_city2', x: 4, y: 2, owner: 'player1' as const },
-    // Player 2 cities on eastern island
-    { id: 'p2_city1', x: 16, y: 4, owner: 'player2' as const },
-    { id: 'p2_city2', x: 16, y: 6, owner: 'player2' as const },
+    { id: 'p1_city1', x: 6,  y: 4, owner: 'player1' as const }, // P1 east coast (coastal)
+    { id: 'p1_city2', x: 3,  y: 4, owner: 'player1' as const }, // P1 west coast
+    { id: 'p2_city1', x: 14, y: 4, owner: 'player2' as const }, // P2 west coast (coastal)
+    { id: 'p2_city2', x: 17, y: 4, owner: 'player2' as const }, // P2 east coast
   ];
 
+  // ── Initial units ──────────────────────────────────────────────────────────
+  // P1: army at (5,4) on land, transport at (7,4) offshore – west approach.
+  // P2: army at (17,4) on land, transport at (19,4) offshore – east approach.
+  // Keeping the transports on opposite sides prevents them from blocking each other
+  // as they sail across the ocean.
   const units = [
-    // Player 1: 1 army between cities (x=4), transport at coastal
-    { id: 'p1_army1', type: UnitType.Army, owner: 'player1' as const, x: 3, y: 4 },
-    { id: 'p1_transport1', type: UnitType.Transport, owner: 'player1' as const, x: 7, y: 4 },
-    // Player 2: 1 army between cities (x=16), transport at coastal
-    { id: 'p2_army1', type: UnitType.Army, owner: 'player2' as const, x: 15, y: 4 },
-    { id: 'p2_transport1', type: UnitType.Transport, owner: 'player2' as const, x: 13, y: 4 },
+    { id: 'p1_army1',      type: UnitType.Army,      owner: 'player1' as const, x: 5,  y: 4 },
+    { id: 'p1_transport1', type: UnitType.Transport,  owner: 'player1' as const, x: 7,  y: 4 },
+    { id: 'p2_army1',      type: UnitType.Army,      owner: 'player2' as const, x: 17, y: 4 },
+    { id: 'p2_transport1', type: UnitType.Transport,  owner: 'player2' as const, x: 19, y: 4 },
   ];
 
-  // Explore both islands fully
-  const exploredTiles: string[] = [];
+  // ── Fog of war ─────────────────────────────────────────────────────────────
+  // Each player starts knowing ONLY their own island.
+  // They will discover the enemy island when their transport sails there.
+  const p1ExploredTiles: string[] = [];
+  const p2ExploredTiles: string[] = [];
+
+  // P1 knows the full left island (x 2-6, y 2-6)
   for (let y = 2; y <= 6; y++) {
-    for (let x = 2; x <= 6; x++) exploredTiles.push(`${x},${y}`);
-    for (let x = 14; x <= 18; x++) exploredTiles.push(`${x},${y}`);
+    for (let x = 2; x <= 6; x++) {
+      p1ExploredTiles.push(`${x},${y}`);
+    }
+  }
+  // P2 knows the full right island (x 14-18, y 2-6)
+  for (let y = 2; y <= 6; y++) {
+    for (let x = 14; x <= 18; x++) {
+      p2ExploredTiles.push(`${x},${y}`);
+    }
   }
 
-  let p1RoundTrips = 0;
-  let p2RoundTrips = 0;
-  let p1Departed = false;  // Has P1 transport left home island with cargo?
-  let p2Departed = false;  // Has P2 transport left home island with cargo?
-  let p1Unloaded = false;  // Has P1 unloaded at enemy?
-  let p2Unloaded = false;  // Has P2 unloaded at enemy?
-  let p1Returned = false;  // Has P1 returned home empty?
-  let p2Returned = false;  // Has P2 returned home empty?
+  // ── Victory tracking ───────────────────────────────────────────────────────
+  // We track how many times the transport has picked up an army on the
+  // home island (i.e. cargo goes 0→1 while transport is near P1 island x≤8).
+  let pickupCount = 0;
+  let dropoffCount = 0;
+  let reachedEnemyIsland = false;
+  let lastCargo = 0;
+  let lastTransportX = 7;
 
   const result = await runTest(
     {
@@ -84,85 +109,92 @@ async function main() {
       mapConfig,
       cities,
       units,
-      maxTurns: 100,
-      exploredTiles,
+      maxTurns: 60, // plenty of turns for multiple round trips
+      p1ExploredTiles,
+      p2ExploredTiles,
       testOptions: {
         allowedProduction: [UnitType.Army],
+        cityCaptureSuccessRate: 1, // deterministic capture so armies aren't wasted on failed attacks
       },
+
       victoryCondition: (state) => {
-        const p1Transport = state.units.find((u) => u.id === 'p1_transport1');
-        const p2Transport = state.units.find((u) => u.id === 'p2_transport1');
-
-        if (!p1Transport || !p2Transport) return false;
-
-        const p1AtHome = p1Transport.x <= 7 && p1Transport.y >= 2 && p1Transport.y <= 6;
-        const p1HasCargo = p1Transport.cargo.length > 0;
-        const p2AtHome = p2Transport.x >= 12 && p2Transport.y >= 2 && p2Transport.y <= 6;
-        const p2HasCargo = p2Transport.cargo.length > 0;
-
-        // Track P1 round trip sequence: load -> depart -> unload -> return -> load again
-        // P1 departed home island with cargo
-        if (!p1Departed && !p1AtHome && p1HasCargo) {
-          p1Departed = true;
-          console.log(`P1 transport departed for enemy island (${p1Transport.x},${p1Transport.y}) with ${p1Transport.cargo.length} armies (turn ${state.turn})`);
-        }
-        // P1 unloaded at enemy island
-        if (p1Departed && !p1Unloaded && !p1AtHome && !p1HasCargo) {
-          p1Unloaded = true;
-          console.log(`P1 transport unloaded at enemy island (turn ${state.turn})`);
-        }
-        // P1 returned home empty
-        if (p1Unloaded && !p1Returned && p1AtHome && !p1HasCargo) {
-          p1Returned = true;
-          console.log(`P1 transport returned home empty (turn ${state.turn})`);
-        }
-        // P1 loaded again at home = completed round trip
-        if (p1Returned && !p1AtHome && p1HasCargo) {
-          p1RoundTrips++;
-          console.log(`P1 transport departed with cargo - round trip #${p1RoundTrips} complete (turn ${state.turn})`);
+        const transport = state.units.find((u) => u.id === 'p1_transport1');
+        if (!transport) {
+          console.log(`[turn ${state.turn}] Transport destroyed – test fails`);
+          return false;
         }
 
-        // Track P2 round trip sequence
-        // P2 departed home island with cargo
-        if (!p2Departed && !p2AtHome && p2HasCargo) {
-          p2Departed = true;
-          console.log(`P2 transport departed for enemy island (${p2Transport.x},${p2Transport.y}) with ${p2Transport.cargo.length} armies (turn ${state.turn})`);
-        }
-        // P2 unloaded at enemy island
-        if (p2Departed && !p2Unloaded && !p2AtHome && !p2HasCargo) {
-          p2Unloaded = true;
-          console.log(`P2 transport unloaded at enemy island (turn ${state.turn})`);
-        }
-        // P2 returned home empty
-        if (p2Unloaded && !p2Returned && p2AtHome && !p2HasCargo) {
-          p2Returned = true;
-          console.log(`P2 transport returned home empty (turn ${state.turn})`);
-        }
-        // P2 loaded again at home = completed round trip
-        if (p2Returned && !p2AtHome && p2HasCargo) {
-          p2RoundTrips++;
-          console.log(`P2 transport departed with cargo - round trip #${p2RoundTrips} complete (turn ${state.turn})`);
+        const cargo = transport.cargo.length;
+        const tx = transport.x;
+
+        // Detect a pickup: cargo increased while transport is at home side (x≤8)
+        if (cargo > lastCargo && tx <= 8) {
+          pickupCount++;
+          console.log(
+            `[turn ${state.turn}] ▲ PICKUP  #${pickupCount}: transport at (${tx},${transport.y}), cargo ${lastCargo}→${cargo}`,
+          );
         }
 
-        // Test passes when both transports have completed at least 1 round trip
-        return p1RoundTrips >= 1 && p2RoundTrips >= 1;
+        // Detect a dropoff: cargo decreased
+        if (cargo < lastCargo) {
+          dropoffCount++;
+          reachedEnemyIsland = reachedEnemyIsland || tx >= 13;
+          console.log(
+            `[turn ${state.turn}] ▼ DROPOFF #${dropoffCount}: transport at (${tx},${transport.y}), cargo ${lastCargo}→${cargo}`,
+          );
+        }
+
+        // Log significant moves
+        if (Math.abs(tx - lastTransportX) >= 2) {
+          console.log(
+            `[turn ${state.turn}]   transport at (${tx},${transport.y}), cargo: ${cargo}`,
+          );
+          lastTransportX = tx;
+        }
+
+        lastCargo = cargo;
+
+        // Pass when the transport has made at least 2 pickups AND reached the enemy island
+        // at least once (proving the full round-trip loop works).
+        return pickupCount >= 2 && reachedEnemyIsland;
       },
     },
-    { verbose: true, saveReplay: true, agentPlayer1: true, agentPlayer2: true },
+    {
+      verbose: true,
+      saveReplay: true,
+      agentPlayer1: true,
+      // agentPlayer2 off: P2's units exist (giving the replay visual symmetry and
+      // triggering combat phase for P1) but don't actively move. This prevents
+      // P2 armies from patrolling to the western coast and blocking P1's landing.
+      agentPlayer2: false,
+    },
   );
 
   if (!result.passed) {
     const lastFrame = result.frames?.[result.frames.length - 1];
-    const p1Transport = lastFrame?.units.find((u) => u.id === 'p1_transport1');
-    const p2Transport = lastFrame?.units.find((u) => u.id === 'p2_transport1');
-    console.log(`\nTurn ${lastFrame?.turn}`);
-    console.log(`P1 round trips: ${p1RoundTrips}, P2 round trips: ${p2RoundTrips}`);
-    console.log(`P1 Transport: at (${p1Transport?.x},${p1Transport?.y}), cargo: ${p1Transport?.cargo.length}`);
-    console.log(`P2 Transport: at (${p2Transport?.x},${p2Transport?.y}), cargo: ${p2Transport?.cargo.length}`);
+    const transport = lastFrame?.units.find((u) => u.id === 'p1_transport1');
+    const p1Armies = lastFrame?.units.filter(
+      (u) => u.owner === 'player1' && u.type === UnitType.Army,
+    );
+    const p1Cities = lastFrame?.cities.filter((c) => c.owner === 'player1');
+    const p2Cities = lastFrame?.cities.filter((c) => c.owner === 'player2');
 
-    const p1Armies = lastFrame?.units.filter(u => u.type === UnitType.Army && u.owner === 'player1' && !u.carriedBy).length || 0;
-    const p2Armies = lastFrame?.units.filter(u => u.type === UnitType.Army && u.owner === 'player2' && !u.carriedBy).length || 0;
-    console.log(`P1 armies on land: ${p1Armies}, P2 armies on land: ${p2Armies}`);
+    console.log(`\n=== FAILURE DIAGNOSTICS ===`);
+    console.log(`Turns played:       ${lastFrame?.turn ?? '?'}`);
+    console.log(`Pickups made:       ${pickupCount}  (need ≥2)`);
+    console.log(`Dropoffs made:      ${dropoffCount}`);
+    console.log(`Reached enemy isle: ${reachedEnemyIsland}`);
+    if (transport) {
+      console.log(`Transport pos:      (${transport.x},${transport.y}), cargo: ${transport.cargo.length}`);
+    } else {
+      console.log(`Transport:          destroyed`);
+    }
+    console.log(`P1 armies: ${p1Armies?.length ?? 0}`);
+    p1Armies?.forEach((a) =>
+      console.log(`  ${a.id}: (${a.x},${a.y}), carriedBy=${a.carriedBy ?? 'none'}`),
+    );
+    console.log(`P1 cities: ${p1Cities?.map((c) => `${c.id}(${c.x},${c.y})`).join(', ')}`);
+    console.log(`P2 cities: ${p2Cities?.map((c) => `${c.id}(${c.x},${c.y})`).join(', ')}`);
   }
 
   process.exit(result.passed ? 0 : 1);

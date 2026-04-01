@@ -82,7 +82,9 @@ export interface TestConfig {
   units: UnitConfig[];
   cities: CityConfig[];
   maxTurns: number;
-  exploredTiles?: string[]; // Explicitly explored tiles (x,y format)
+  exploredTiles?: string[]; // Explicitly explored tiles (x,y format) - applies to both players
+  p1ExploredTiles?: string[]; // Per-player explored tiles (overrides exploredTiles for P1)
+  p2ExploredTiles?: string[]; // Per-player explored tiles (overrides exploredTiles for P2)
   victoryCondition?: (state: GameState) => boolean;
   testOptions?: {
     cityCaptureSuccessRate?: number; // 1 = 100% success
@@ -142,20 +144,6 @@ export interface TestResult {
  * Creates a game state from test configuration.
  */
 export function createGameStateFromConfig(config: TestConfig): GameState {
-  const explored = new Set<string>();
-  if (config.exploredTiles) {
-    config.exploredTiles.forEach((tile) => explored.add(tile));
-  } else {
-    // Default: explore all land tiles
-    for (let y = 1; y < config.mapConfig.height - 1; y++) {
-      for (let x = 0; x < config.mapConfig.width; x++) {
-        if (config.mapConfig.tiles[y]?.[x] === Terrain.Land) {
-          explored.add(`${x},${y}`);
-        }
-      }
-    }
-  }
-
   const state: any = {
     tiles: config.mapConfig.tiles,
     mapWidth: config.mapConfig.width,
@@ -188,12 +176,43 @@ export function createGameStateFromConfig(config: TestConfig): GameState {
       carriedBy: u.carriedBy ?? null,
     })),
     explored: {
-      player1: explored,
+      player1: new Set(),
       player2: new Set(),
     },
     bombersProduced: { player1: 0, player2: 0 },
     seenEnemies: { player1: [], player2: [] },
   };
+
+  // Set up per-player explored tiles
+  if (config.p1ExploredTiles) {
+    config.p1ExploredTiles.forEach((tile) => state.explored.player1.add(tile));
+  } else if (config.exploredTiles) {
+    config.exploredTiles.forEach((tile) => state.explored.player1.add(tile));
+  } else {
+    // Default: explore all land tiles
+    for (let y = 1; y < config.mapConfig.height - 1; y++) {
+      for (let x = 0; x < config.mapConfig.width; x++) {
+        if (config.mapConfig.tiles[y]?.[x] === Terrain.Land) {
+          state.explored.player1.add(`${x},${y}`);
+        }
+      }
+    }
+  }
+
+  if (config.p2ExploredTiles) {
+    config.p2ExploredTiles.forEach((tile) => state.explored.player2.add(tile));
+  } else if (config.exploredTiles) {
+    config.exploredTiles.forEach((tile) => state.explored.player2.add(tile));
+  } else {
+    // Default: explore all land tiles
+    for (let y = 1; y < config.mapConfig.height - 1; y++) {
+      for (let x = 0; x < config.mapConfig.width; x++) {
+        if (config.mapConfig.tiles[y]?.[x] === Terrain.Land) {
+          state.explored.player2.add(`${x},${y}`);
+        }
+      }
+    }
+  }
 
   return state;
 }
