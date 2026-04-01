@@ -145,6 +145,13 @@ export function generateMap(opts: MapOptions): {
     // access where none actually exists.
     removeLakes(tiles, width, totalHeight);
 
+    // Force rows adjacent to ice caps (y=1 and y=totalHeight-2) to be ocean.
+    // This creates a clear buffer zone between ice caps and playable land.
+    for (let x = 0; x < width; x++) {
+      tiles[1][x] = Terrain.Ocean;
+      tiles[totalHeight - 2][x] = Terrain.Ocean;
+    }
+
     // Find all islands and remove those too small to support MIN_ISLAND_CITIES cities.
     // This also removes single-tile islands.
     const allIslands = findIslandTiles(tiles, width, totalHeight);
