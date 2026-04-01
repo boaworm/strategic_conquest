@@ -103,6 +103,14 @@ async function main() {
   let lastCargo = 0;
   let lastTransportX = 7;
 
+  // ── Player 2 vision ────────────────────────────────────────────────────────
+  // P2 needs to see P1 island to have a reason to leave their island
+  for (let y = 2; y <= 6; y++) {
+    for (let x = 2; x <= 6; x++) {
+      p2ExploredTiles.push(`${x},${y}`);
+    }
+  }
+
   const result = await runTest(
     {
       testName: TEST_NAME,
@@ -114,59 +122,46 @@ async function main() {
       p2ExploredTiles,
       testOptions: {
         allowedProduction: [UnitType.Army],
-        cityCaptureSuccessRate: 1, // deterministic capture so armies aren't wasted on failed attacks
+        cityCaptureSuccessRate: 1, // deterministic capture
       },
 
       victoryCondition: (state) => {
         const transport = state.units.find((u) => u.id === 'p1_transport1');
-        if (!transport) {
-          console.log(`[turn ${state.turn}] Transport destroyed – test fails`);
-          return false;
-        }
+        if (!transport) return false;
 
         const cargo = transport.cargo.length;
         const tx = transport.x;
 
-        // Detect a pickup: cargo increased while transport is at home side (x≤8)
         if (cargo > lastCargo && tx <= 8) {
           pickupCount++;
-          console.log(
-            `[turn ${state.turn}] ▲ PICKUP  #${pickupCount}: transport at (${tx},${transport.y}), cargo ${lastCargo}→${cargo}`,
-          );
+          console.log(`[turn ${state.turn}] P1 ▲ PICKUP #${pickupCount} at (${tx},${transport.y})`);
         }
 
-        // Detect a dropoff: cargo decreased
         if (cargo < lastCargo) {
           dropoffCount++;
           reachedEnemyIsland = reachedEnemyIsland || tx >= 13;
-          console.log(
-            `[turn ${state.turn}] ▼ DROPOFF #${dropoffCount}: transport at (${tx},${transport.y}), cargo ${lastCargo}→${cargo}`,
-          );
+          console.log(`[turn ${state.turn}] P1 ▼ DROPOFF #${dropoffCount} at (${tx},${transport.y})`);
         }
 
-        // Log significant moves
-        if (Math.abs(tx - lastTransportX) >= 2) {
-          console.log(
-            `[turn ${state.turn}]   transport at (${tx},${transport.y}), cargo: ${cargo}`,
-          );
-          lastTransportX = tx;
+        // Pass when P1 has made 2 pickups AND reached enemy island
+        const p1Pass = pickupCount >= 2 && reachedEnemyIsland;
+
+        // ALSO check P2 for movement as requested by user
+        const p2Transport = state.units.find(u => u.id === 'p2_transport1');
+        const p2Moved = p2Transport && p2Transport.x < 14; 
+        if (p2Moved && !state.units.some(u => u.id === 'p2_moved_logged')) {
+          console.log(`[turn ${state.turn}] P2 transport moving west!`);
+          state.units.push({ id: 'p2_moved_logged' } as any); // hacky flag
         }
 
-        lastCargo = cargo;
-
-        // Pass when the transport has made at least 2 pickups AND reached the enemy island
-        // at least once (proving the full round-trip loop works).
-        return pickupCount >= 2 && reachedEnemyIsland;
+        return p1Pass;
       },
     },
     {
       verbose: true,
       saveReplay: true,
       agentPlayer1: true,
-      // agentPlayer2 off: P2's units exist (giving the replay visual symmetry and
-      // triggering combat phase for P1) but don't actively move. This prevents
-      // P2 armies from patrolling to the western coast and blocking P1's landing.
-      agentPlayer2: false,
+      agentPlayer2: true, // Enable P2 movement as requested!
     },
   );
 

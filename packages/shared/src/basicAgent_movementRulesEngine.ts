@@ -188,8 +188,9 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
   map.set('Island is contested', (ctx) => {
     const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const myIslandIdx = islandOf.get(`${ctx.unit.x},${ctx.unit.y}`);
-    if (myIslandIdx === undefined || !friendlyIndices.has(myIslandIdx)) return false;
-    return ctx.helpers.isIslandContested(myIslandIdx, ctx.obs, islandOf);
+    const result = myIslandIdx !== undefined && friendlyIndices.has(myIslandIdx) && ctx.helpers.isIslandContested(myIslandIdx, ctx.obs, islandOf);
+    console.log(`[DEBUG] Island is contested: unit ${ctx.unit.id} at (${ctx.unit.x},${ctx.unit.y}) island=${myIslandIdx} result=${result}`);
+    return result;
   });
 
   map.set('Island not fully explored', (ctx) => {
@@ -225,9 +226,11 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     const transport = ctx.obs.myUnits.find((u) => u.id === ctx.unit.carriedBy);
     if (!transport || transport.type !== UnitType.Transport) return false;
     const { islandOf, friendlyIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
-    return ctx.helpers.canDisembarkToUnexploredOrContested(
+    const result = ctx.helpers.canDisembarkToUnexploredOrContested(
       transport, ctx.obs, islandOf, friendlyIndices, exploredIslands,
-    ) !== null;
+    );
+    console.log(`[DEBUG] Army ${ctx.unit.id} canDisembark: ${result !== null} (transport at ${transport.x},${transport.y}, result=${result})`);
+    return result !== null;
   });
 
   map.set('Transport is at sea', (ctx) => {
@@ -295,6 +298,24 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
       const adjIsland = islandOf.get(`${tile.x},${tile.y}`);
       if (adjIsland !== undefined && friendlyIndices.has(adjIsland)) {
         return true;
+      }
+    }
+    return false;
+  });
+
+  map.set('At contested island (adjacent to enemy land)', (ctx) => {
+    if (ctx.unit.type !== UnitType.Transport) return false;
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const adjTiles = ctx.helpers.getAdjacentTiles(ctx.unit.x, ctx.unit.y, ctx.mapWidth);
+    for (const tile of adjTiles) {
+      if (tile.y <= 0 || tile.y >= ctx.mapHeight - 1) continue;
+      const tileData = ctx.obs.tiles[tile.y]?.[tile.x];
+      if (tileData?.terrain === Terrain.Land) {
+        const adjIsland = islandOf.get(`${tile.x},${tile.y}`);
+        if (adjIsland !== undefined && !friendlyIndices.has(adjIsland)) {
+          console.log(`[DEBUG] Transport at (${ctx.unit.x},${ctx.unit.y}) adjacent to contested land (${tile.x},${tile.y}) island=${adjIsland}`);
+          return true;
+        }
       }
     }
     return false;
@@ -1562,6 +1583,12 @@ export class MovementRulesEngine {
         }
       }
       return null;
+    }
+
+    // WAIT for units to disembark
+    if (action === 'Wait for units to disembark') {
+      console.log(`[DEBUG ACTION] Transport ${ctx.unit.id} at (${ctx.unit.x},${ctx.unit.y}) waiting for disembark`);
+      return { type: 'SKIP', unitId: ctx.unit.id };
     }
 
     // SAIL to unexplored ocean (fallback for loaded transports when no target islands)

@@ -200,8 +200,10 @@ export class BasicAgent implements Agent {
         // Army on transport: let the rules engine handle disembarkation
         // This allows multiple armies to disembark to the same island
         if (unit.type === UnitType.Army && unit.movesLeft > 0) {
+          console.log(`[DEBUG] Processing army ${unit.id} onboard ${unit.carriedBy} at (${unit.x},${unit.y}) movesLeft=${unit.movesLeft}`);
           // Fall through to rules engine below
         } else {
+          console.log(`[DEBUG] Skipping army ${unit.id} onboard ${unit.carriedBy} type=${unit.type} movesLeft=${unit.movesLeft}`);
           continue; // Non-army or no moves, skip
         }
       }
@@ -423,12 +425,15 @@ export class BasicAgent implements Agent {
    */
   private canDisembarkToUnexploredOrContested(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, friendlyIndices: Set<number>, exploredIslands: Set<number>): number | null {
     const adjacentLand = this.getAdjacentLandTiles(obs, transport.x, transport.y, this.mapWidth);
+    console.log(`[DEBUG] canDisembark: transport at (${transport.x},${transport.y}), adjacentLand=${adjacentLand.length} tiles`);
     const disembarkIslands = new Set<number>();
     for (const land of adjacentLand) {
       const landIdx = islandOf.get(`${land.x},${land.y}`);
+      console.log(`[DEBUG]   land (${land.x},${land.y}) island=${landIdx}`);
       if (landIdx === undefined) continue;
       const notExplored = !this.isIslandExplored(landIdx, exploredIslands);
       const notFriendly = !this.isIslandFriendly(landIdx, friendlyIndices);
+      console.log(`[DEBUG]     notExplored=${notExplored}, notFriendly=${notFriendly}`);
 
       if (notExplored || notFriendly) {
         disembarkIslands.add(landIdx);
@@ -436,8 +441,10 @@ export class BasicAgent implements Agent {
     }
     // Return first disembarkable island (or null if none)
     for (const islandIdx of disembarkIslands) {
+      console.log(`[DEBUG] canDisembark returning island ${islandIdx}`);
       return islandIdx;
     }
+    console.log(`[DEBUG] canDisembark returning null`);
     return null;
   }
 

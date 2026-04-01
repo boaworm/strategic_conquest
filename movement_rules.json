@@ -246,6 +246,19 @@
         {
           "conditions": [
             "Units onboard",
+            "At contested island (adjacent to enemy land)"
+          ],
+          "action": "Wait for units to disembark"
+        },
+        {
+          "conditions": [
+            "Unexplored islands available"
+          ],
+          "action": "Sail to unexplored island"
+        },
+        {
+          "conditions": [
+            "Units onboard",
             "Transport capacity at max"
           ],
           "action": "Sail to contested island"
