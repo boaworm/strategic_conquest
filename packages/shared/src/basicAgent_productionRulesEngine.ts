@@ -28,7 +28,7 @@ export interface ProductionHelpers {
   /** BFS island classification */
   classifyIslands(obs: AgentObservation): {
     islandOf: Map<string, number>;
-    mineIndices: Set<number>;
+    friendlyIndices: Set<number>;
   };
 }
 

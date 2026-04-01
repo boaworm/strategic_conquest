@@ -61,7 +61,7 @@ export interface MovementHelpers {
   /** BFS island classification */
   classifyIslands(obs: AgentObservation): {
     islandOf: Map<string, number>;
-    mineIndices: Set<number>;
+    friendlyIndices: Set<number>;
     exploredIslands: Set<number>;
   };
   /** Distance between two coordinates */
@@ -79,7 +79,7 @@ export interface MovementHelpers {
   /** BFS pathfinding to find farthest step toward target within movesLeft */
   farthestStepToward(obs: AgentObservation, unit: UnitView, target: Coord, mapWidth: number, mapHeight: number): Coord | null;
   /** Check if island is friendly */
-  isIslandFriendly(islandIdx: number | undefined, mineIndices: Set<number>): boolean;
+  isIslandFriendly(islandIdx: number | undefined, friendlyIndices: Set<number>): boolean;
   /** Check if island is fully explored */
   isIslandExplored(islandIdx: number | undefined, exploredIslands: Set<number>): boolean;
   /** Check if island is contested (has enemy cities) */
@@ -89,37 +89,37 @@ export interface MovementHelpers {
   /** Get nearest neutral city reachable from unit */
   getNearestReachableNeutralCity(unit: UnitView, obs: AgentObservation, mapWidth: number, mapHeight: number): CityView | null;
   /** Get nearest reachable enemy city on contested island */
-  getNearestReachableEnemyCity(unit: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number, mapHeight: number): CityView | null;
+  getNearestReachableEnemyCity(unit: UnitView, obs: AgentObservation, islandOf: Map<string, number>, friendlyIndices: Set<number>, mapWidth: number, mapHeight: number): CityView | null;
   /** Get nearest unexplored tile reachable from unit */
   getNearestReachableUnexplored(unit: UnitView, obs: AgentObservation, mapWidth: number, mapHeight: number): Coord | null;
   /** Get nearest coastal city on friendly island */
-  getNearestFriendlyCoastalCity(unit: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number, mapHeight: number): Coord | null;
+  getNearestFriendlyCoastalCity(unit: UnitView, obs: AgentObservation, islandOf: Map<string, number>, friendlyIndices: Set<number>, mapWidth: number, mapHeight: number): Coord | null;
   /** Find waiting transport on friendly island */
-  findWaitingTransport(unit: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number): UnitView | null;
+  findWaitingTransport(unit: UnitView, obs: AgentObservation, islandOf: Map<string, number>, friendlyIndices: Set<number>, mapWidth: number): UnitView | null;
   /** Check if unit is adjacent to transport with room */
   isAdjacentToTransportWithRoom(unit: UnitView, obs: AgentObservation, mapWidth: number): UnitView | null;
   /** Check if unit is onboard a transport */
   isOnboardTransport(unit: UnitView): boolean;
   /** Check if transport can disembark to unexplored/contested island */
-  canDisembarkToUnexploredOrContested(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, exploredIslands: Set<number>): number | null;
+  canDisembarkToUnexploredOrContested(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, friendlyIndices: Set<number>, exploredIslands: Set<number>): number | null;
   /** Check if another transport has equal or fewer armies */
   anotherTransportWithEqualOrFewerArmies(currentTransport: UnitView, obs: AgentObservation, islandOf: Map<string, number>): boolean;
   /** Check if transport is parked */
-  isTransportParked(obs: AgentObservation, unit: UnitView, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number): boolean;
+  isTransportParked(obs: AgentObservation, unit: UnitView, islandOf: Map<string, number>, friendlyIndices: Set<number>, mapWidth: number): boolean;
   /** Check if transport is on land at a friendly city */
-  isTransportOnLandAtCity(obs: AgentObservation, unit: UnitView, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number): boolean;
+  isTransportOnLandAtCity(obs: AgentObservation, unit: UnitView, islandOf: Map<string, number>, friendlyIndices: Set<number>, mapWidth: number): boolean;
   /** Find any land on island */
   findAnyLandOnIsland(obs: AgentObservation, islandOf: Map<string, number>, islandIdx: number, mapWidth: number, mapHeight: number): Coord | null;
   /** Find coastal city on island */
-  findCoastalCityOnIsland(obs: AgentObservation, islandIdx: number, mineIndices: Set<number>, islandOf: Map<string, number>, mapWidth: number): Coord | null;
+  findCoastalCityOnIsland(obs: AgentObservation, islandIdx: number, friendlyIndices: Set<number>, islandOf: Map<string, number>, mapWidth: number): Coord | null;
   /** Get islands by explored state */
   getIslandsByExploredState(obs: AgentObservation, islandOf: Map<string, number>, exploredIslands: Set<number>, isExplored: boolean): number[];
   /** Get islands by friendly state */
-  getIslandsByFriendlyState(obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, isFriendly: boolean): number[];
+  getIslandsByFriendlyState(obs: AgentObservation, islandOf: Map<string, number>, friendlyIndices: Set<number>, isFriendly: boolean): number[];
   /** Check if transport should depart the friendly island */
-  shouldTransportDepart(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>, mapWidth: number): boolean;
+  shouldTransportDepart(transport: UnitView, obs: AgentObservation, islandOf: Map<string, number>, friendlyIndices: Set<number>, mapWidth: number): boolean;
   /** Find friendly island with most armies */
-  friendlyIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>, mineIndices: Set<number>): number | null;
+  friendlyIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>, friendlyIndices: Set<number>): number | null;
   /** Find contested island with most armies */
   contestedIslandWithMostArmies(obs: AgentObservation, islandOf: Map<string, number>): number | null;
   /** Get island index for a position, handling ocean tiles by checking adjacent land */
@@ -186,9 +186,9 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
   });
 
   map.set('Island is contested', (ctx) => {
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const myIslandIdx = islandOf.get(`${ctx.unit.x},${ctx.unit.y}`);
-    if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) return false;
+    if (myIslandIdx === undefined || !friendlyIndices.has(myIslandIdx)) return false;
     return ctx.helpers.isIslandContested(myIslandIdx, ctx.obs, islandOf);
   });
 
@@ -199,9 +199,9 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
   });
 
   map.set('Island is friendly and explored', (ctx) => {
-    const { islandOf, mineIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
     const myIslandIdx = islandOf.get(`${ctx.unit.x},${ctx.unit.y}`);
-    return ctx.helpers.isIslandFriendly(myIslandIdx, mineIndices) &&
+    return ctx.helpers.isIslandFriendly(myIslandIdx, friendlyIndices) &&
            ctx.helpers.isIslandExplored(myIslandIdx, exploredIslands);
   });
 
@@ -224,9 +224,9 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     // Find the transport carrying this unit
     const transport = ctx.obs.myUnits.find((u) => u.id === ctx.unit.carriedBy);
     if (!transport || transport.type !== UnitType.Transport) return false;
-    const { islandOf, mineIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
     return ctx.helpers.canDisembarkToUnexploredOrContested(
-      transport, ctx.obs, islandOf, mineIndices, exploredIslands,
+      transport, ctx.obs, islandOf, friendlyIndices, exploredIslands,
     ) !== null;
   });
 
@@ -238,8 +238,8 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
 
   map.set('Transport is offshore waiting for armies', (ctx) => {
     if (ctx.unit.type !== UnitType.Transport) return false;
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
-    return ctx.helpers.findWaitingTransport(ctx.unit, ctx.obs, islandOf, mineIndices, ctx.mapWidth) !== null;
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    return ctx.helpers.findWaitingTransport(ctx.unit, ctx.obs, islandOf, friendlyIndices, ctx.mapWidth) !== null;
   });
 
   // Transport conditions
@@ -272,9 +272,9 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
   });
 
   map.set('At friendly island', (ctx) => {
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const myIslandIdx = islandOf.get(`${ctx.unit.x},${ctx.unit.y}`);
-    return ctx.helpers.isIslandFriendly(myIslandIdx, mineIndices);
+    return ctx.helpers.isIslandFriendly(myIslandIdx, friendlyIndices);
   });
 
   map.set('On ocean', (ctx) => {
@@ -283,17 +283,17 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
   });
 
   map.set('Not at friendly island', (ctx) => {
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const myIslandIdx = ctx.helpers.getSeaUnitIslandIdx(ctx.unit.x, ctx.unit.y, islandOf);
-    return !ctx.helpers.isIslandFriendly(myIslandIdx, mineIndices);
+    return !ctx.helpers.isIslandFriendly(myIslandIdx, friendlyIndices);
   });
 
   map.set('Adjacent to friendly island', (ctx) => {
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const adjTiles = ctx.helpers.getAdjacentTiles(ctx.unit.x, ctx.unit.y, ctx.mapWidth);
     for (const tile of adjTiles) {
       const adjIsland = islandOf.get(`${tile.x},${tile.y}`);
-      if (adjIsland !== undefined && mineIndices.has(adjIsland)) {
+      if (adjIsland !== undefined && friendlyIndices.has(adjIsland)) {
         return true;
       }
     }
@@ -302,9 +302,9 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
 
   map.set('No transport on island', (ctx) => {
     if (ctx.unit.type !== UnitType.Army) return false;
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const myIslandIdx = islandOf.get(`${ctx.unit.x},${ctx.unit.y}`);
-    if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) {
+    if (myIslandIdx === undefined || !friendlyIndices.has(myIslandIdx)) {
       return false; // Not on friendly island
     }
     const cap = UNIT_STATS[UnitType.Transport].cargoCapacity;
@@ -361,20 +361,20 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
 
   map.set('Transport at friendly island with most armies', (ctx) => {
     if (ctx.unit.type !== UnitType.Transport) return false;
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const transportIslandIdx = ctx.helpers.getSeaUnitIslandIdx(ctx.unit.x, ctx.unit.y, islandOf);
-    if (transportIslandIdx === undefined || !mineIndices.has(transportIslandIdx)) {
+    if (transportIslandIdx === undefined || !friendlyIndices.has(transportIslandIdx)) {
       return false; // Not on friendly island
     }
-    const mostArmiesIdx = ctx.helpers.friendlyIslandWithMostArmies(ctx.obs, islandOf, mineIndices);
+    const mostArmiesIdx = ctx.helpers.friendlyIslandWithMostArmies(ctx.obs, islandOf, friendlyIndices);
     return mostArmiesIdx === transportIslandIdx && mostArmiesIdx !== null;
   });
 
   map.set('Transport at coastal tile on same island', (ctx) => {
     if (ctx.unit.type !== UnitType.Army) return false;
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const myIslandIdx = islandOf.get(`${ctx.unit.x},${ctx.unit.y}`);
-    if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) {
+    if (myIslandIdx === undefined || !friendlyIndices.has(myIslandIdx)) {
       return false;
     }
     const cap = UNIT_STATS[UnitType.Transport].cargoCapacity;
@@ -398,12 +398,12 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
 
   map.set('Transport at friendly island, not most armies', (ctx) => {
     if (ctx.unit.type !== UnitType.Transport) return false;
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const transportIslandIdx = ctx.helpers.getSeaUnitIslandIdx(ctx.unit.x, ctx.unit.y, islandOf);
-    if (transportIslandIdx === undefined || !mineIndices.has(transportIslandIdx)) {
+    if (transportIslandIdx === undefined || !friendlyIndices.has(transportIslandIdx)) {
       return false; // Not on friendly island
     }
-    const mostArmiesIdx = ctx.helpers.friendlyIslandWithMostArmies(ctx.obs, islandOf, mineIndices);
+    const mostArmiesIdx = ctx.helpers.friendlyIslandWithMostArmies(ctx.obs, islandOf, friendlyIndices);
     return mostArmiesIdx !== transportIslandIdx && mostArmiesIdx !== null;
   });
 
@@ -418,9 +418,9 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
 
   map.set('Adjacent to transport with room', (ctx) => {
     if (ctx.unit.type !== UnitType.Army) return false;
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const myIslandIdx = islandOf.get(`${ctx.unit.x},${ctx.unit.y}`);
-    if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) {
+    if (myIslandIdx === undefined || !friendlyIndices.has(myIslandIdx)) {
       return false; // Not on friendly island
     }
     const adjTiles = ctx.helpers.getAdjacentTiles(ctx.unit.x, ctx.unit.y, ctx.mapWidth);
@@ -433,7 +433,7 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
       );
       if (transport) {
         const transportIsland = ctx.helpers.getSeaUnitIslandIdx(transport.x, transport.y, islandOf);
-        if (transportIsland !== undefined && mineIndices.has(transportIsland)) {
+        if (transportIsland !== undefined && friendlyIndices.has(transportIsland)) {
           return true;
         }
       }
@@ -460,7 +460,7 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
 
   map.set('Transport parked at coastal', (ctx) => {
     if (ctx.unit.type !== UnitType.Transport) return false;
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     // Check if transport is on ocean
     const tile = ctx.obs.tiles[ctx.unit.y]?.[ctx.unit.x];
     if (!tile || tile.terrain !== Terrain.Ocean) return false;
@@ -468,7 +468,7 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     const adjTiles = ctx.helpers.getAdjacentTiles(ctx.unit.x, ctx.unit.y, ctx.mapWidth);
     for (const adj of adjTiles) {
       const adjIsland = islandOf.get(`${adj.x},${adj.y}`);
-      if (adjIsland !== undefined && mineIndices.has(adjIsland)) {
+      if (adjIsland !== undefined && friendlyIndices.has(adjIsland)) {
         return true;
       }
     }
@@ -481,7 +481,7 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     // Check if there are any armies adjacent to or at the transport's location
     const adjTiles = ctx.helpers.getAdjacentTiles(ctx.unit.x, ctx.unit.y, ctx.mapWidth);
     const allPositions = [...adjTiles, { x: ctx.unit.x, y: ctx.unit.y }];
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const army = allPositions.map(pos => ctx.obs.myUnits.find(
       (u) => u.type === UnitType.Army && u.x === pos.x && u.y === pos.y && u.carriedBy === null,
     )).find(u => u !== undefined);
@@ -500,9 +500,9 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
 
   map.set('Contested islands available', (ctx) => {
     if (ctx.unit.type !== UnitType.Transport) return false;
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
     const contestedIslands = ctx.helpers.getIslandsByFriendlyState(
-      ctx.obs, islandOf, mineIndices, false,
+      ctx.obs, islandOf, friendlyIndices, false,
     );
     return contestedIslands.length > 0;
   });
@@ -567,8 +567,8 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
 
   map.set('Transport should depart', (ctx) => {
     if (ctx.unit.type !== UnitType.Transport) return false;
-    const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
-    return ctx.helpers.shouldTransportDepart(ctx.unit, ctx.obs, islandOf, mineIndices, ctx.mapWidth);
+    const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
+    return ctx.helpers.shouldTransportDepart(ctx.unit, ctx.obs, islandOf, friendlyIndices, ctx.mapWidth);
   });
 
   // Destroyer conditions
@@ -811,9 +811,9 @@ export class MovementRulesEngine {
       return { type: 'SKIP', unitId: ctx.unit.id };
     }
     if (action === 'Move to enemy city and take it') {
-      const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
       const nearestEnemy = ctx.helpers.getNearestReachableEnemyCity(
-        ctx.unit, ctx.obs, islandOf, mineIndices, ctx.mapWidth, ctx.mapHeight,
+        ctx.unit, ctx.obs, islandOf, friendlyIndices, ctx.mapWidth, ctx.mapHeight,
       );
       if (nearestEnemy) {
         const step = ctx.helpers.bestStepToward(
@@ -824,9 +824,9 @@ export class MovementRulesEngine {
       return { type: 'SKIP', unitId: ctx.unit.id };
     }
     if (action === 'Move to transport and board') {
-      const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
       const waitingTransport = ctx.helpers.findWaitingTransport(
-        ctx.unit, ctx.obs, islandOf, mineIndices, ctx.mapWidth,
+        ctx.unit, ctx.obs, islandOf, friendlyIndices, ctx.mapWidth,
       );
       if (waitingTransport) {
         const adjacentTransport = ctx.helpers.isAdjacentToTransportWithRoom(ctx.unit, ctx.obs, ctx.mapWidth);
@@ -847,9 +847,9 @@ export class MovementRulesEngine {
       return { type: 'SKIP', unitId: ctx.unit.id };
     }
     if (action === 'Move to nearest transport at coastal and board') {
-      const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
       const myIslandIdx = islandOf.get(`${ctx.unit.x},${ctx.unit.y}`);
-      if (myIslandIdx === undefined || !mineIndices.has(myIslandIdx)) {
+      if (myIslandIdx === undefined || !friendlyIndices.has(myIslandIdx)) {
         return { type: 'SKIP', unitId: ctx.unit.id };
       }
       const cap = UNIT_STATS[UnitType.Transport].cargoCapacity;
@@ -950,7 +950,7 @@ export class MovementRulesEngine {
       return { type: 'SKIP', unitId: ctx.unit.id };
     }
     if (action === 'Move to nearest unexplored island') {
-      const { islandOf, mineIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
       const unexploredIslands = ctx.helpers.getIslandsByExploredState(
         ctx.obs, islandOf, exploredIslands, false,
       );
@@ -971,7 +971,7 @@ export class MovementRulesEngine {
           }
         }
         const targetCity = ctx.helpers.findCoastalCityOnIsland(
-          ctx.obs, targetIsland, mineIndices, islandOf, ctx.mapWidth,
+          ctx.obs, targetIsland, friendlyIndices, islandOf, ctx.mapWidth,
         );
         if (targetCity) {
           const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
@@ -990,9 +990,9 @@ export class MovementRulesEngine {
       return { type: 'SKIP', unitId: ctx.unit.id };
     }
     if (action === 'Move to nearest contested island') {
-      const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
       const contestedIslands = ctx.helpers.getIslandsByFriendlyState(
-        ctx.obs, islandOf, mineIndices, false,
+        ctx.obs, islandOf, friendlyIndices, false,
       );
       if (contestedIslands.length > 0) {
         const targetIsland = contestedIslands[0];
@@ -1011,7 +1011,7 @@ export class MovementRulesEngine {
           }
         }
         const targetCity = ctx.helpers.findCoastalCityOnIsland(
-          ctx.obs, targetIsland, mineIndices, islandOf, ctx.mapWidth,
+          ctx.obs, targetIsland, friendlyIndices, islandOf, ctx.mapWidth,
         );
         if (targetCity) {
           const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
@@ -1030,8 +1030,8 @@ export class MovementRulesEngine {
       return { type: 'SKIP', unitId: ctx.unit.id };
     }
     if (action === 'Move to friendly island with most armies') {
-      const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
-      const targetIslandIdx = ctx.helpers.friendlyIslandWithMostArmies(ctx.obs, islandOf, mineIndices);
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      const targetIslandIdx = ctx.helpers.friendlyIslandWithMostArmies(ctx.obs, islandOf, friendlyIndices);
       if (targetIslandIdx !== null) {
         // Find the coastal ocean tile nearest to the transport
         const h = ctx.obs.tiles.length;
@@ -1126,9 +1126,9 @@ export class MovementRulesEngine {
       return { type: 'SKIP', unitId: ctx.unit.id };
     }
     if (action === 'Move to the city') {
-      const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
       const nearestEnemy = ctx.helpers.getNearestReachableEnemyCity(
-        ctx.unit, ctx.obs, islandOf, mineIndices, ctx.mapWidth, ctx.mapHeight,
+        ctx.unit, ctx.obs, islandOf, friendlyIndices, ctx.mapWidth, ctx.mapHeight,
       );
       if (nearestEnemy) {
         const step = ctx.helpers.bestStepToward(
@@ -1139,9 +1139,9 @@ export class MovementRulesEngine {
       return { type: 'SKIP', unitId: ctx.unit.id };
     }
     if (action === 'Move to nearest coastal city and wait') {
-      const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
       const nearestCoastal = ctx.helpers.getNearestFriendlyCoastalCity(
-        ctx.unit, ctx.obs, islandOf, mineIndices, ctx.mapWidth, ctx.mapHeight,
+        ctx.unit, ctx.obs, islandOf, friendlyIndices, ctx.mapWidth, ctx.mapHeight,
       );
       if (nearestCoastal) {
         const step = ctx.helpers.bestStepToward(
@@ -1234,7 +1234,7 @@ export class MovementRulesEngine {
       const unexploredIslands = ctx.helpers.getIslandsByExploredState(ctx.obs, islandOf, exploredIslands, false);
       if (unexploredIslands.length > 0) {
         const targetIsland = unexploredIslands[0];
-        const targetCity = ctx.helpers.findCoastalCityOnIsland(ctx.obs, targetIsland, ctx.helpers.classifyIslands(ctx.obs).mineIndices, islandOf, ctx.mapWidth);
+        const targetCity = ctx.helpers.findCoastalCityOnIsland(ctx.obs, targetIsland, ctx.helpers.classifyIslands(ctx.obs).friendlyIndices, islandOf, ctx.mapWidth);
         if (targetCity) {
           const step = ctx.helpers.farthestStepToward(ctx.obs, ctx.unit, targetCity, ctx.mapWidth, ctx.mapHeight);
           if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
@@ -1312,14 +1312,14 @@ export class MovementRulesEngine {
         if (adjacentTransport) {
           return { type: 'LOAD', unitId: ctx.unit.id, transportId: adjacentTransport.id };
         }
-        const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+        const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
         const transportsWithRoom = ctx.obs.myUnits.filter(
           (u) => u.type === UnitType.Transport &&
                  u.cargo.length < UNIT_STATS[u.type].cargoCapacity,
         );
         const friendlyTransports = transportsWithRoom.filter((t) => {
           const transIsland = ctx.helpers.getSeaUnitIslandIdx(t.x, t.y, islandOf);
-          return transIsland !== undefined && mineIndices.has(transIsland);
+          return transIsland !== undefined && friendlyIndices.has(transIsland);
         });
         if (friendlyTransports.length > 0) {
           let nearest: UnitView | null = null;
@@ -1390,9 +1390,9 @@ export class MovementRulesEngine {
       if (ctx.unit.carriedBy === null) return { type: 'SKIP', unitId: ctx.unit.id };
       const transport = ctx.obs.myUnits.find((u) => u.id === ctx.unit.carriedBy);
       if (!transport) return { type: 'SKIP', unitId: ctx.unit.id };
-      const { islandOf, mineIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
       const disembarkIslandIdx = ctx.helpers.canDisembarkToUnexploredOrContested(
-        transport, ctx.obs, islandOf, mineIndices, exploredIslands,
+        transport, ctx.obs, islandOf, friendlyIndices, exploredIslands,
       );
       if (disembarkIslandIdx !== null) {
         // Find adjacent land tile on the target island (not any land on the island)
@@ -1478,11 +1478,11 @@ export class MovementRulesEngine {
 
     // SAIL to friendly island, park at coastal
     if (action === 'Sail to nearest friendly island, park at coastal') {
-      const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
       const adjTiles = ctx.helpers.getAdjacentTiles(ctx.unit.x, ctx.unit.y, ctx.mapWidth);
       for (const tile of adjTiles) {
         const adjIsland = islandOf.get(`${tile.x},${tile.y}`);
-        if (adjIsland !== undefined && mineIndices.has(adjIsland)) {
+        if (adjIsland !== undefined && friendlyIndices.has(adjIsland)) {
           const coastalCities = ctx.obs.myCities.filter((c) => {
             for (const [dx, dy] of [
               [-1, -1], [0, -1], [1, -1],
@@ -1499,7 +1499,7 @@ export class MovementRulesEngine {
             return false;
           }).filter((c) => {
             const idx = islandOf.get(`${c.x},${c.y}`);
-            return idx !== undefined && mineIndices.has(idx);
+            return idx !== undefined && friendlyIndices.has(idx);
           });
           const nearestFriendly = this.nearestCity(coastalCities, ctx.unit);
           if (nearestFriendly) {
@@ -1533,7 +1533,7 @@ export class MovementRulesEngine {
 
     // SAIL to unexplored island
     if (action === 'Sail to unexplored island') {
-      const { islandOf, mineIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices, exploredIslands } = ctx.helpers.classifyIslands(ctx.obs);
       const unexploredIslands = ctx.helpers.getIslandsByExploredState(
         ctx.obs, islandOf, exploredIslands, false,
       );
@@ -1554,7 +1554,7 @@ export class MovementRulesEngine {
           }
         }
         const targetCity = ctx.helpers.findCoastalCityOnIsland(
-          ctx.obs, targetIsland, ctx.helpers.classifyIslands(ctx.obs).mineIndices, islandOf, ctx.mapWidth,
+          ctx.obs, targetIsland, ctx.helpers.classifyIslands(ctx.obs).friendlyIndices, islandOf, ctx.mapWidth,
         );
         if (targetCity) {
           const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
@@ -1575,14 +1575,14 @@ export class MovementRulesEngine {
 
     // SAIL to contested island
     if (action === 'Sail to contested island') {
-      const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
       const contestedIslands = ctx.helpers.getIslandsByFriendlyState(
-        ctx.obs, islandOf, mineIndices, false,
+        ctx.obs, islandOf, friendlyIndices, false,
       );
       if (contestedIslands.length > 0) {
         const targetIsland = contestedIslands[0];
         const targetCity = ctx.helpers.findCoastalCityOnIsland(
-          ctx.obs, targetIsland, mineIndices, islandOf, ctx.mapWidth,
+          ctx.obs, targetIsland, friendlyIndices, islandOf, ctx.mapWidth,
         );
         if (targetCity) {
           const coastalOcean = ctx.helpers.getOceanTilesAdjacentToIsland(
@@ -1686,11 +1686,11 @@ export class MovementRulesEngine {
 
     // RETURN to friendly island for resupply
     if (action === 'Return to friendly island for resupply') {
-      const { islandOf, mineIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
       const adjTiles = ctx.helpers.getAdjacentTiles(ctx.unit.x, ctx.unit.y, ctx.mapWidth);
       for (const tile of adjTiles) {
         const adjIsland = islandOf.get(`${tile.x},${tile.y}`);
-        if (adjIsland !== undefined && mineIndices.has(adjIsland)) {
+        if (adjIsland !== undefined && friendlyIndices.has(adjIsland)) {
           const coastalCities = ctx.obs.myCities.filter((c) => {
             for (const [dx, dy] of [
               [-1, -1], [0, -1], [1, -1],
@@ -1707,7 +1707,7 @@ export class MovementRulesEngine {
             return false;
           }).filter((c) => {
             const idx = islandOf.get(`${c.x},${c.y}`);
-            return idx !== undefined && mineIndices.has(idx);
+            return idx !== undefined && friendlyIndices.has(idx);
           });
           const nearestFriendly = this.nearestCity(coastalCities, ctx.unit);
           if (nearestFriendly) {
