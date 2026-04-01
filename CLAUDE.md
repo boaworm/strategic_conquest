@@ -54,17 +54,27 @@ cd packages/client && npm run dev
 ```bash
 cd packages/trainer
 npm run train                          # Run genetic training (see index.ts for CLI flags)
-npm run record                         # Record agent-vs-agent replays
-npm run replay                         # Interactive replay viewer
-npm run test_replay                    # Run test suite with replay output
-NUM_GAMES=50000 WORKERS=8 OUTPUT_DIR=./data npm run collect   # Collect IL data
+DATA_DIR=./data npm run record         # Record agent-vs-agent replays
+DATA_DIR=./data npm run replay         # Interactive replay viewer
+DATA_DIR=./data NUM_GAMES=50000 WORKERS=8 npm run collect   # Collect IL data
 npm run nn-sim                         # NN agent vs BasicAgent over Unix domain socket
 ```
 
 ### Data collection (imitation learning)
 ```bash
-# Rebuilds shared first, then collects (state, action) pairs
-NUM_GAMES=50000 WORKERS=8 OUTPUT_DIR=./data npm run collect
+# Collect (state, action) pairs for NN training
+DATA_DIR=./data NUM_GAMES=50000 WORKERS=8 npm run collect
+
+# Output: DATA_DIR/training/states.bin, actions.jsonl, meta.json
+```
+
+### Recording replays
+```bash
+# Record games with DATA_DIR environment variable
+DATA_DIR=./data NUM_GAMES=100 WORKERS=8 npm run record
+
+# Quick test with tmp directory
+rm -fR tmp/* && DATA_DIR=tmp NUM_GAMES=8 MAX_TURNS=300 P1AGENT=basicAgent P2AGENT=basicAgent npm run record
 ```
 
 ### Python NN training (Phase 2)

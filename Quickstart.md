@@ -80,19 +80,37 @@ npx tsx packages/trainer/src/index.ts --help
 
 ## Record games
 
+All data operations use the `DATA_DIR` environment variable:
+
 ```bash
 # Record 5 games (default)
-npm run record
+DATA_DIR=./data npm run record
 
 # Record 100 games across 8 workers
-NUM_GAMES=100 WORKERS=8 npm run record
+DATA_DIR=./data NUM_GAMES=100 WORKERS=8 npm run record
 
-# Custom map size and agent matchup
-NUM_GAMES=50 P1_AGENT=basicAgent P2_AGENT=gunAirAgent npm run record
+# Custom map size, turn limit, and agent matchup
+DATA_DIR=./data NUM_GAMES=50 MAX_TURNS=300 P1_AGENT=basicAgent P2_AGENT=gunAirAgent npm run record
+
+# Use tmp directory for quick tests
+rm -fR tmp/* && DATA_DIR=tmp NUM_GAMES=8 MAX_TURNS=300 P1AGENT=basicAgent P2AGENT=basicAgent npm run record
 ```
 
 ## View replays
 
 ```bash
-npm run replay
+# View replays from default data directory
+DATA_DIR=./data npm run replay
+
+# View replays from tmp directory
+DATA_DIR=tmp npm run replay
+```
+
+## Collect training data (Imitation Learning)
+
+```bash
+# Collect (state, action) pairs for NN training
+DATA_DIR=./data NUM_GAMES=50000 WORKERS=8 npm run collect
+
+# Output: DATA_DIR/training/states.bin, actions.jsonl, meta.json
 ```

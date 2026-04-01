@@ -10,7 +10,8 @@ import fs from 'fs';
 
 const NUM_GAMES = parseInt(process.env.NUM_GAMES ?? '1');
 const MAX_TURNS = parseInt(process.env.MAX_TURNS ?? '300');
-const PROFILE_OUTPUT = process.env.PROFILE_OUTPUT ?? './tmp/profile.json';
+const DATA_DIR = process.env.DATA_DIR ?? './data';
+const PROFILE_OUTPUT = path.join(DATA_DIR, 'profile.json');
 
 interface TimingStats {
   totalMs: number;
@@ -113,9 +114,10 @@ function profileGameCollection(): void {
     })),
   };
 
-  fs.mkdirSync('./tmp', { recursive: true });
-  fs.writeFileSync('./tmp/profile_stats.json', JSON.stringify(output, null, 2));
-  console.log(`\nDetailed stats saved to tmp/profile_stats.json`);
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const statsFile = path.join(DATA_DIR, 'profile_stats.json');
+  fs.writeFileSync(statsFile, JSON.stringify(output, null, 2));
+  console.log(`\nDetailed stats saved to ${statsFile}`);
 }
 
 async function main(): Promise<void> {
