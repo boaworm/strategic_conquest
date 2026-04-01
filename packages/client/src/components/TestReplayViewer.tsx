@@ -458,13 +458,24 @@ const PlayerViewCanvas = React.memo(({
         ctx.globalAlpha = 1;
       }
 
-      // Stack count
-      if (units.length > 1) {
+      // Stack count (exclude carried units)
+      const visibleUnits = units.filter((u) => !u.carriedBy);
+      if (visibleUnits.length > 1) {
         ctx.fillStyle = '#fff';
         ctx.font = `bold ${Math.floor(actualTileSize * 0.4)}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(units.length.toString(), cx, cy);
+        ctx.fillText(visibleUnits.length.toString(), cx, cy);
+      }
+
+      // Cargo count for transports/carriers
+      const transport = units.find((u) => u.type === UnitType.Transport || u.type === UnitType.Carrier);
+      if (transport && transport.cargo.length > 0 && actualTileSize >= 14) {
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${Math.floor(actualTileSize * 0.3)}px sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(transport.cargo.length.toString(), cx - actualTileSize / 2 + 2, cy - actualTileSize / 2 + 1);
       }
     }
 

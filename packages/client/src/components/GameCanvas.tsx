@@ -1026,15 +1026,6 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
             ctx.fill();
           }
 
-          // Stack indicator
-          if (units.length > 1 && tileSize >= 14) {
-            ctx.fillStyle = '#fff';
-            ctx.font = `bold ${Math.max(8, tileSize * 0.3)}px sans-serif`;
-            ctx.textAlign = 'right';
-            ctx.textBaseline = 'top';
-            ctx.fillText(`${units.length}`, screenPx + tileSize - 2, screenPy + 1);
-          }
-
           // Health bar (own units only, if damaged)
           if (unit.owner === playerId && unit.health < 10 && tileSize >= 10) {
             const barW = tileSize - 4;

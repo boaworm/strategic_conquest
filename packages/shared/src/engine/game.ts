@@ -542,6 +542,23 @@ function handleSetProduction(
   if (!city) return { success: false, error: 'City not found' };
   if (city.owner !== playerId) return { success: false, error: 'Not your city' };
 
+  // Test mode: enforce allowedProduction restriction (defaults to all types if not set)
+  if (unitType !== null) {
+    const allowed = state.testOptions?.allowedProduction ?? [
+      UnitType.Army,
+      UnitType.Fighter,
+      UnitType.Bomber,
+      UnitType.Transport,
+      UnitType.Destroyer,
+      UnitType.Submarine,
+      UnitType.Carrier,
+      UnitType.Battleship,
+    ];
+    if (!allowed.includes(unitType)) {
+      return { success: false, error: 'Production not allowed' };
+    }
+  }
+
   // Naval units require a coastal city (adjacent to ocean)
   if (unitType !== null && UNIT_STATS[unitType].domain === UnitDomain.Sea) {
     if (!isCityCoastal(state, city)) {

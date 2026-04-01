@@ -241,6 +241,8 @@ export interface GameState {
   testOptions?: {
     /** Override city capture success rate (1 = 100% success) */
     cityCaptureSuccessRate?: number;
+    /** Override allowed production types (defaults to all unit types) */
+    allowedProduction?: UnitType[];
   };
 }
 

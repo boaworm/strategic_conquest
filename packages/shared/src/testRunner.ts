@@ -87,17 +87,7 @@ export interface TestConfig {
   testOptions?: {
     cityCaptureSuccessRate?: number; // 1 = 100% success
     initialProduction?: 'army'; // Set initial city production for all cities
-    allowedProduction?: UnitType[] = [
-      UnitType.Army,
-      UnitType.Fighter,
-      UnitType.Bomber,
-      UnitType.Transport,
-      UnitType.Destroyer,
-      UnitType.Submarine,
-      UnitType.Carrier,
-      UnitType.Battleship,
-    ];
-  };
+    allowedProduction?: UnitType[]; // If set, overrides default (ALL_UNIT_TYPES)
   };
 }
 
