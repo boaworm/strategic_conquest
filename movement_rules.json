@@ -196,8 +196,16 @@
 
       "Combat": [
         {
+          "conditions": ["enemy_loaded_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
           "conditions": ["enemy_ship_in_range"],
           "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_shipping_exists"],
+          "action": "hunt_for_enemy_shipping"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
@@ -300,8 +308,24 @@
 
       "Combat": [
         {
+          "conditions": ["enemy_loaded_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_city_with_troops_in_range"],
+          "action": "bombard_enemy_city_with_troops"
+        },
+        {
+          "conditions": ["enemy_city_with_troops_exists"],
+          "action": "move_to_enemy_city_with_troops"
+        },
+        {
           "conditions": ["enemy_ship_in_range"],
           "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_shipping_exists"],
+          "action": "hunt_for_enemy_shipping"
         },
         {
           "conditions": ["enemy_city_with_defenders_in_range"],
@@ -340,8 +364,16 @@
 
       "Combat": [
         {
+          "conditions": ["enemy_loaded_transport_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
           "conditions": ["enemy_high_value_ship_in_range"],
           "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_shipping_exists"],
+          "action": "hunt_for_enemy_shipping"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"

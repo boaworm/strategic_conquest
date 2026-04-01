@@ -159,11 +159,7 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
   // ── Combat conditions (shared) ──────────────────────────────
 
   m.set('enemy_ship_in_range', (ctx) => {
-    const targetTypes: UnitType[] =
-      ctx.unit.type === UnitType.Destroyer  ? [UnitType.Transport, UnitType.Submarine, UnitType.Destroyer] :
-      ctx.unit.type === UnitType.Battleship ? [UnitType.Transport, UnitType.Destroyer, UnitType.Carrier, UnitType.Battleship] :
-      [];
-    return ctx.map.findEnemyInRange(ctx.unit, ctx.obs, targetTypes) !== null;
+    return ctx.map.huntForEnemyShipping(ctx.unit, ctx.obs, ctx.unit.movesLeft) !== null;
   });
 
   m.set('enemy_high_value_ship_in_range', (ctx) => {
@@ -188,6 +184,22 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
 
   m.set('enemy_city_with_defenders_exists', (ctx) => {
     return ctx.map.findEnemyCityWithDefenders(ctx.unit, ctx.obs) !== null;
+  });
+
+  m.set('enemy_loaded_transport_in_range', (ctx) => {
+    return ctx.map.findEnemyTransportWithCargo(ctx.unit, ctx.obs, ctx.unit.movesLeft) !== null;
+  });
+
+  m.set('enemy_city_with_troops_in_range', (ctx) => {
+    return ctx.map.locateEnemyCityWithTroops(ctx.unit, ctx.obs, ctx.unit.movesLeft) !== null;
+  });
+
+  m.set('enemy_city_with_troops_exists', (ctx) => {
+    return ctx.map.locateEnemyCityWithTroops(ctx.unit, ctx.obs) !== null;
+  });
+
+  m.set('enemy_shipping_exists', (ctx) => {
+    return ctx.map.huntForEnemyShipping(ctx.unit, ctx.obs) !== null;
   });
 
   // ── Bomber conditions ───────────────────────────────────────
@@ -377,12 +389,14 @@ function buildActionResolvers(): Map<string, ActionResolver> {
   // ── Attack actions ──────────────────────────────────────────
 
   a.set('attack_nearest_enemy_ship', (ctx) => {
-    const targetTypes: UnitType[] =
-      ctx.unit.type === UnitType.Destroyer  ? [UnitType.Transport, UnitType.Submarine, UnitType.Destroyer] :
-      ctx.unit.type === UnitType.Submarine  ? [UnitType.Transport, UnitType.Carrier, UnitType.Battleship] :
-      ctx.unit.type === UnitType.Battleship ? [UnitType.Transport, UnitType.Destroyer, UnitType.Carrier, UnitType.Battleship] :
-      [];
-    const target = ctx.map.findEnemyInRange(ctx.unit, ctx.obs, targetTypes);
+    const target = ctx.map.huntForEnemyShipping(ctx.unit, ctx.obs, ctx.unit.movesLeft);
+    if (!target) return null;
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, target);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
+  a.set('hunt_for_enemy_shipping', (ctx) => {
+    const target = ctx.map.huntForEnemyShipping(ctx.unit, ctx.obs);
     if (!target) return null;
     const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, target);
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
@@ -412,8 +426,22 @@ function buildActionResolvers(): Map<string, ActionResolver> {
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
   });
 
+  a.set('bombard_enemy_city_with_troops', (ctx) => {
+    const city = ctx.map.locateEnemyCityWithTroops(ctx.unit, ctx.obs, ctx.unit.movesLeft);
+    if (!city) return null;
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, city);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
   a.set('move_to_enemy_city_with_defenders', (ctx) => {
     const city = ctx.map.findEnemyCityWithDefenders(ctx.unit, ctx.obs);
+    if (!city) return null;
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, city);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
+  a.set('move_to_enemy_city_with_troops', (ctx) => {
+    const city = ctx.map.locateEnemyCityWithTroops(ctx.unit, ctx.obs);
     if (!city) return null;
     const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, city);
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;

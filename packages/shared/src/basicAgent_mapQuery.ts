@@ -502,6 +502,59 @@ export class MapQuery {
     return best;
   }
 
+  /** Find nearest enemy-owned city with visible land troops on it. */
+  locateEnemyCityWithTroops(from: Coord, obs: AgentObservation, maxRange?: number): CityView | null {
+    return this.findEnemyCityWithDefenders(from, obs, maxRange);
+  }
+
+  /**
+   * Hunt for enemy shipping using per-unit priorities:
+   *  1) Loaded transports
+   *  2) Other allowed naval targets for this unit type
+   * Within each tier, pick nearest; ties break by higher build value.
+   */
+  huntForEnemyShipping(unit: UnitView, obs: AgentObservation, maxRange?: number): UnitView | null {
+    const allowed: UnitType[] =
+      unit.type === UnitType.Destroyer
+        ? [UnitType.Transport, UnitType.Submarine, UnitType.Destroyer]
+        : unit.type === UnitType.Submarine
+          ? [UnitType.Transport, UnitType.Carrier, UnitType.Battleship]
+          : unit.type === UnitType.Battleship
+            ? [UnitType.Transport, UnitType.Destroyer, UnitType.Carrier, UnitType.Battleship]
+            : [];
+
+    if (allowed.length === 0) return null;
+
+    let best: UnitView | null = null;
+    let bestTier = Infinity;
+    let bestDist = Infinity;
+    let bestValue = -1;
+
+    for (const e of obs.visibleEnemyUnits) {
+      if (!allowed.includes(e.type)) continue;
+      const dist = this.wrappedDist(unit, e);
+      if (maxRange !== undefined && dist > maxRange) continue;
+
+      const isLoadedTransport = e.type === UnitType.Transport && e.cargo.length > 0;
+      const tier = isLoadedTransport ? 0 : 1;
+      const value = UNIT_STATS[e.type].buildTime;
+
+      const better =
+        tier < bestTier ||
+        (tier === bestTier && dist < bestDist) ||
+        (tier === bestTier && dist === bestDist && value > bestValue);
+
+      if (better) {
+        best = e;
+        bestTier = tier;
+        bestDist = dist;
+        bestValue = value;
+      }
+    }
+
+    return best;
+  }
+
   /** Find enemy city with troops AND friendly troops within 2 squares (bomber target). */
   findBomberTarget(unit: UnitView, obs: AgentObservation): CityView | null {
     const maxFuel = UNIT_STATS[unit.type].maxFuel ?? 100;
