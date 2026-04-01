@@ -33,7 +33,7 @@ async function main() {
         { id: 'army1', type: UnitType.Army, owner: 'player1', x: 2, y: 3 },
         { id: 'transport1', type: UnitType.Transport, owner: 'player1', x: 9, y: 3 },
       ],
-      maxTurns: 6,
+      maxTurns: 12,
       exploredTiles: getLandTiles(mapConfig),
       victoryCondition: (state) => {
         const army = state.units.find((u) => u.id === 'army1');
