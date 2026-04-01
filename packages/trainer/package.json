@@ -10,8 +10,8 @@
     "collect": "npx tsc -p ../shared/tsconfig.json && npm run build && npx tsx src/collect_data.ts",
     "nn-sim": "npx tsx src/nn_simulator.ts",
     "record": "npx tsc -p ../shared/tsconfig.json && npm run build && npx tsx src/record_replay.ts",
-    "replay": "npx tsx src/replay_picker.ts",
-    "test_replay": "npx tsx src/test_replay_picker.ts",
+    "replay": "cd ../client && npm run build 2>/dev/null; cd ../trainer && npx tsx src/replay_picker.ts",
+    "test_replay": "cd ../client && npm run build 2>/dev/null; cd ../trainer && npx tsx src/test_replay_picker.ts",
     "profile": "npx tsx src/profile_game.ts",
     "profile:cpu": "npx tsx src/profile_game.ts --profile"
   },

@@ -23,7 +23,8 @@ import type { ReplayMeta } from './replayUtils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const REPLAY_DIR  = process.env.REPLAY_DIR  ?? '../../tmp';
+if (!process.env.DATA_DIR) { console.error('DATA_DIR env var is required'); process.exit(1); }
+const REPLAY_DIR  = path.join(process.env.DATA_DIR, 'replays');
 const REPLAY_PORT = parseInt(process.env.REPLAY_PORT ?? '4001');
 
 // Built client lives at packages/server/public/

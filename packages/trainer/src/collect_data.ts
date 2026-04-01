@@ -20,7 +20,8 @@ import { fileURLToPath } from 'url';
 
 const NUM_GAMES  = parseInt(process.env.NUM_GAMES  ?? '1000');
 const WORKERS    = parseInt(process.env.WORKERS    ?? '1');
-const OUTPUT_DIR = process.env.OUTPUT_DIR          ?? './data';
+if (!process.env.DATA_DIR) { console.error('DATA_DIR env var is required'); process.exit(1); }
+const OUTPUT_DIR = path.join(process.env.DATA_DIR, 'training');
 const MAP_WIDTH  = parseInt(process.env.MAP_WIDTH  ?? '50');
 const MAP_HEIGHT = parseInt(process.env.MAP_HEIGHT ?? '20');
 const MAX_TURNS          = parseInt(process.env.MAX_TURNS          ?? '500');

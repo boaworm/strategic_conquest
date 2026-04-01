@@ -21,7 +21,8 @@ const WORKERS    = parseInt(process.env.WORKERS    ?? String(os.cpus().length));
 const MAP_WIDTH  = parseInt(process.env.MAP_WIDTH  ?? '50');
 const MAP_HEIGHT = parseInt(process.env.MAP_HEIGHT ?? '20');
 const MAX_TURNS  = parseInt(process.env.MAX_TURNS  ?? '500');
-const REPLAY_DIR = process.env.REPLAY_DIR ?? '../../tmp';
+if (!process.env.DATA_DIR) { console.error('DATA_DIR env var is required'); process.exit(1); }
+const REPLAY_DIR = path.join(process.env.DATA_DIR, 'replays');
 const P1_AGENT   = process.env.P1_AGENT ?? process.env.P1AGENT ?? 'basicAgent';
 const P2_AGENT   = process.env.P2_AGENT ?? process.env.P2AGENT ?? 'basicAgent';
 

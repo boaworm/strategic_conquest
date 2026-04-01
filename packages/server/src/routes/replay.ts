@@ -1,17 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
-import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Default: packages/trainer/replays relative to server dist/routes/
-const DEFAULT_REPLAY_DIR = path.resolve(__dirname, '..', '..', '..', 'trainer', 'replays');
-const REPLAY_DIR = process.env.REPLAY_DIR ?? DEFAULT_REPLAY_DIR;
-
-// Test replays: tmp directory at repo root
-const DEFAULT_TEST_REPLAY_DIR = path.resolve(__dirname, '..', '..', '..', '..', 'tmp');
-const TEST_REPLAY_DIR = process.env.TEST_REPLAY_DIR ?? DEFAULT_TEST_REPLAY_DIR;
+if (!process.env.DATA_DIR) { throw new Error('DATA_DIR env var is required'); }
+const REPLAY_DIR = path.join(process.env.DATA_DIR, 'replays');
+const TEST_REPLAY_DIR = path.join(process.env.DATA_DIR, 'test-replays');
 
 export function createReplayRoutes(): Router {
   const router = Router();

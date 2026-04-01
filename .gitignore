@@ -22,3 +22,4 @@ packages/trainer/*.d.ts
 packages/trainer/*.d.ts.map
 tmp/
 tmp_logs/
+data/

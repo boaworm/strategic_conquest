@@ -22,7 +22,8 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const TEST_REPLAY_DIR  = process.env.TEST_REPLAY_DIR ?? path.resolve(__dirname, '..', '..', '..', 'tmp');
+if (!process.env.DATA_DIR) { console.error('DATA_DIR env var is required'); process.exit(1); }
+const TEST_REPLAY_DIR  = path.join(process.env.DATA_DIR, 'test-replays');
 const TEST_REPLAY_PORT = parseInt(process.env.TEST_REPLAY_PORT ?? '4002');
 
 // Built client lives at packages/server/public/
@@ -50,13 +51,12 @@ interface TestReplayMeta {
 }
 
 function loadTestReplayMetas(): TestReplayMeta[] {
-  const replayDir = path.isAbsolute(TEST_REPLAY_DIR) ? TEST_REPLAY_DIR : path.resolve(__dirname, TEST_REPLAY_DIR);
-  if (!fs.existsSync(replayDir)) return [];
-  const files = fs.readdirSync(replayDir).filter((f) => f.startsWith('test-') && f.endsWith('.json'));
+  if (!fs.existsSync(TEST_REPLAY_DIR)) return [];
+  const files = fs.readdirSync(TEST_REPLAY_DIR).filter((f) => f.startsWith('test-') && f.endsWith('.json'));
   const metas: TestReplayMeta[] = [];
   for (const f of files) {
     try {
-      const raw = JSON.parse(fs.readFileSync(path.join(replayDir, f), 'utf-8'));
+      const raw = JSON.parse(fs.readFileSync(path.join(TEST_REPLAY_DIR, f), 'utf-8'));
       if (raw.meta) metas.push(raw.meta);
     } catch { /* skip corrupt files */ }
   }
@@ -65,11 +65,10 @@ function loadTestReplayMetas(): TestReplayMeta[] {
 
 // ── Clean old test replays ────────────────────────────────────
 
-const replayDir = path.isAbsolute(TEST_REPLAY_DIR) ? TEST_REPLAY_DIR : path.resolve(__dirname, TEST_REPLAY_DIR);
-if (fs.existsSync(replayDir)) {
-  const oldTestReplays = fs.readdirSync(replayDir).filter((f) => f.startsWith('test-') && f.endsWith('.json'));
+if (fs.existsSync(TEST_REPLAY_DIR)) {
+  const oldTestReplays = fs.readdirSync(TEST_REPLAY_DIR).filter((f) => f.startsWith('test-') && f.endsWith('.json'));
   for (const f of oldTestReplays) {
-    fs.unlinkSync(path.join(replayDir, f));
+    fs.unlinkSync(path.join(TEST_REPLAY_DIR, f));
   }
 }
 

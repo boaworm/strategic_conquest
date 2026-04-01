@@ -6,7 +6,6 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import {
   BasicAgent,
   applyAction,
@@ -25,30 +24,12 @@ import {
   type PlayerId,
 } from './index.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const REPLAY_DIR = process.env.REPLAY_DIR ?? path.resolve(__dirname, '..', '..', '..', 'tmp');
+if (!process.env.DATA_DIR) { console.error('DATA_DIR env var is required'); process.exit(1); }
+const TEST_REPLAY_DIR = path.join(process.env.DATA_DIR, 'test-replays');
 
 function resolveReplayDir(): string {
-  const configured = path.isAbsolute(REPLAY_DIR)
-    ? REPLAY_DIR
-    : path.resolve(__dirname, REPLAY_DIR);
-
-  try {
-    if (fs.existsSync(configured)) {
-      if (fs.statSync(configured).isDirectory()) {
-        return configured;
-      }
-    } else {
-      fs.mkdirSync(configured, { recursive: true });
-      return configured;
-    }
-  } catch {
-    // Fall through to tmp_logs fallback.
-  }
-
-  const fallback = path.resolve(__dirname, '..', '..', '..', 'tmp_logs');
-  fs.mkdirSync(fallback, { recursive: true });
-  return fallback;
+  fs.mkdirSync(TEST_REPLAY_DIR, { recursive: true });
+  return TEST_REPLAY_DIR;
 }
 
 /**
