@@ -60,6 +60,8 @@ export function applyAction(
       return handleMove(state, action.unitId, action.to, playerId);
     case 'LOAD':
       return handleLoad(state, action.unitId, action.transportId, playerId);
+    case 'UNLOAD':
+      return handleUnload(state, action.unitId, action.to, playerId);
     case 'END_TURN':
       return handleEndTurn(state, playerId);
     default:
