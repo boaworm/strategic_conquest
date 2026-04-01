@@ -562,8 +562,9 @@ function tryCaptureCity(
   }
 
   // Attack succeeds. Army is consumed to capture the city.
+  const prevProduction = city.producing;  // Preserve production type
   city.owner = playerId;
-  city.producing = null;
+  city.producing = prevProduction;        // Auto-set same production for new owner
   city.productionTurnsLeft = 0;
   city.productionProgress = 0;
   unit.health = 0;
