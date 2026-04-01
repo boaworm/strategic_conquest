@@ -83,7 +83,7 @@ export function removeDestroyedUnits(state: GameState): string[] {
     if (unit.carriedBy && toRemove.has(unit.carriedBy)) {
       unit.carriedBy = null;
     }
-    unit.cargo = unit.cargo.filter((id) => !toRemove.has(id));
+    if (unit.cargo) unit.cargo = unit.cargo.filter((id) => !toRemove.has(id));
   }
 
   return removedIds;

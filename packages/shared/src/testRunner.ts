@@ -16,6 +16,7 @@ import {
   Terrain,
   UnitType,
   advanceProduction,
+  setProduction,
   type GameState,
   type Unit,
   type City,
@@ -26,6 +27,21 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPLAY_DIR = process.env.REPLAY_DIR ?? path.resolve(__dirname, '..', '..', '..', 'tmp');
+
+/**
+ * After END_TURN, override any city production that isn't in the allowed list.
+ * The agent is free to request whatever it wants; the test engine silently corrects it.
+ */
+function enforceAllowedProduction(state: GameState, playerId: PlayerId): void {
+  const allowed = state.testOptions?.allowedProduction;
+  if (!allowed || allowed.length === 0) return;
+  for (const city of state.cities) {
+    if (city.owner !== playerId) continue;
+    if (city.producing !== null && !allowed.includes(city.producing)) {
+      setProduction(city, allowed[0]);
+    }
+  }
+}
 
 // All unit types for default allowedProduction
 export const ALL_UNIT_TYPES: UnitType[] = [
@@ -306,6 +322,7 @@ export async function runTest(
 
       // Check if agent ended turn
       if (action.type === 'END_TURN') {
+        enforceAllowedProduction(state, currentPlayer);
         break;
       }
     }
@@ -342,6 +359,7 @@ export async function runTest(
 
         // Check if agent ended turn
         if (action.type === 'END_TURN') {
+          enforceAllowedProduction(state, currentPlayer);
           break;
         }
       }
