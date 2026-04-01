@@ -1,54 +1,62 @@
-import { CombatResult, Unit, UnitType } from '../types.js';
-import combatData from '../combat_resolution.json' assert { type: 'json' };
+import { Unit, UnitType } from '../types.js';
+import combatData from '../combat_resolution.json' with { type: 'json' };
+
+/** Combat outcome enum */
+export enum CombatOutcome {
+  ATTACKER_DESTROYED,
+  DEFENDER_DESTROYED,
+  BOTH_DESTROYED,
+  NONE,
+}
 
 type Resolution =
   | { attackerDestroyed: number; defenderDestroyed: number }
   | 'n/a';
 
-type CombatTable = Record<UnitType, Record<UnitType | 'City', Resolution>>;
+type CombatTable = Record<string, Record<string, Resolution>>;
 
-const table = combatData as CombatTable;
+const table = combatData as unknown as CombatTable;
 
 /**
- * Look up the probabilistic outcome of an attacker vs defender matchup.
- * Returns 'n/a' if this matchup is not allowed (e.g., air vs submarine).
- * Percentages are 0-100.
+ * Look up if a matchup is allowed.
+ * Returns true if the attacker can attack the defender.
  */
-export function getCombatResolution(
-  attackerType: UnitType,
-  defenderType: UnitType | 'City',
-): Resolution {
-  return table[attackerType][defenderType];
+export function isCombatAllowed(attackerType: UnitType, defenderType: UnitType): boolean {
+  const resolution = table[attackerType][defenderType];
+  return resolution !== 'n/a';
 }
 
 /**
  * Resolve combat using the JSON-defined probabilities.
- * Rolls dice to determine if attacker and/or defender are destroyed.
+ * Returns the outcome enum based on dice rolls.
+ * Returns null if the matchup is not allowed.
  */
 export function resolveCombatFromTable(
   attacker: Unit,
   defender: Unit,
-): CombatResult | null {
-  const resolution = getCombatResolution(attacker.type, defender.type);
+): CombatOutcome | null {
+  const resolution = table[attacker.type][defender.type];
 
   if (resolution === 'n/a') {
     return null;
   }
 
-  // Roll for attacker destruction
-  const attackerRoll = Math.floor(Math.random() * 100) + 1;
-  const attackerDestroyed = attackerRoll <= resolution.attackerDestroyed;
+  // Roll for attacker destruction (0-99)
+  const attackerRoll = Math.floor(Math.random() * 100);
+  const attackerDestroyed = attackerRoll < resolution.attackerDestroyed;
 
-  // Roll for defender destruction
-  const defenderRoll = Math.floor(Math.random() * 100) + 1;
-  const defenderDestroyed = defenderRoll <= resolution.defenderDestroyed;
+  // Roll for defender destruction (0-99)
+  const defenderRoll = Math.floor(Math.random() * 100);
+  const defenderDestroyed = defenderRoll < resolution.defenderDestroyed;
 
-  return {
-    attackerId: attacker.id,
-    defenderId: defender.id,
-    attackerDamage: attackerDestroyed ? 1 : 0,
-    defenderDamage: defenderDestroyed ? 1 : 0,
-    attackerDestroyed,
-    defenderDestroyed,
-  };
+  if (attackerDestroyed && defenderDestroyed) {
+    return CombatOutcome.BOTH_DESTROYED;
+  }
+  if (attackerDestroyed) {
+    return CombatOutcome.ATTACKER_DESTROYED;
+  }
+  if (defenderDestroyed) {
+    return CombatOutcome.DEFENDER_DESTROYED;
+  }
+  return CombatOutcome.NONE;
 }

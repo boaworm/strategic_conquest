@@ -18,7 +18,8 @@ import {
   wrappedDistX,
 } from '../types.js';
 import { canMoveTo, canDetectSubmarine, getUnitsAt, getVisibleTiles, normalizeCoord } from './movement.js';
-import { resolveCombat, removeDestroyedUnits } from './combat.js';
+import { removeDestroyedUnits } from './combat.js';
+import { resolveCombatFromTable, CombatOutcome } from './combatResolution.js';
 import { advanceProduction, setProduction } from './production.js';
 
 /**
@@ -114,8 +115,19 @@ function handleMove(
         return { success: false, error: 'Already attacked this turn' };
       }
       const defender = enemiesAtTarget[Math.floor(Math.random() * enemiesAtTarget.length)];
-      const combat = resolveCombat(state, unit, defender);
+      const outcome = resolveCombatFromTable(unit, defender);
       removeDestroyedUnits(state);
+
+      // Build combat result from outcome
+      const combat = {
+        attackerId: unit.id,
+        defenderId: defender.id,
+        attackerDamage: (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+        defenderDamage: (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+        attackerDestroyed: outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+        defenderDestroyed: outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+      };
+
       if (combat.attackerDestroyed) {
         checkWinCondition(state);
         return { success: true, combat };
@@ -171,8 +183,19 @@ function handleMove(
         }
         // Pick a random land unit as the target
         const defender = enemyLand[Math.floor(Math.random() * enemyLand.length)];
-        const combat = resolveCombat(state, unit, defender, true);
+        const outcome = resolveCombatFromTable(unit, defender);
         removeDestroyedUnits(state);
+
+        // Build combat result from outcome
+        const combat = {
+          attackerId: unit.id,
+          defenderId: defender.id,
+          attackerDamage: (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+          defenderDamage: (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+          attackerDestroyed: outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+          defenderDestroyed: outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+        };
+
         unit.movesLeft--;
         unit.hasAttacked = true;
         checkWinCondition(state);
@@ -329,8 +352,18 @@ function handleMove(
     }
 
     // Normal combat with the selected defender
-    const combat = resolveCombat(state, unit, defender);
+    const outcome = resolveCombatFromTable(unit, defender);
     removeDestroyedUnits(state);
+
+    // Build combat result from outcome
+    const combat = {
+      attackerId: unit.id,
+      defenderId: defender.id,
+      attackerDamage: (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+      defenderDamage: (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+      attackerDestroyed: outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+      defenderDestroyed: outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+    };
 
     // If attacker survived AND no enemies remain on the target tile, move in
     if (!combat.attackerDestroyed) {
@@ -665,8 +698,18 @@ function handleUnload(
     }
 
     const defender = enemiesAtTarget[Math.floor(Math.random() * enemiesAtTarget.length)];
-    const combat = resolveCombat(state, unit, defender);
+    const outcome = resolveCombatFromTable(unit, defender);
     removeDestroyedUnits(state);
+
+    // Build combat result from outcome
+    const combat = {
+      attackerId: unit.id,
+      defenderId: defender.id,
+      attackerDamage: (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+      defenderDamage: (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+      attackerDestroyed: outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+      defenderDestroyed: outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+    };
 
     if (combat.attackerDestroyed) {
       // Unit lost — it's already removed from state; transport.cargo cleaned up by removeDestroyedUnits
