@@ -352,6 +352,10 @@
           "action": "attack_nearest_enemy_ship"
         },
         {
+          "conditions": ["enemy_city_with_troops_adjacent"],
+          "action": "bombard_enemy_city_with_troops"
+        },
+        {
           "conditions": ["enemy_city_with_troops_in_range"],
           "action": "bombard_enemy_city_with_troops"
         },

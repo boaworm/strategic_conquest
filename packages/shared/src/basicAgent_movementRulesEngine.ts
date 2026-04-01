@@ -206,6 +206,23 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     return ctx.map.locateEnemyCityWithTroops(ctx.unit, ctx.obs, ctx.unit.movesLeft) !== null;
   });
 
+  m.set('enemy_city_with_troops_adjacent', (ctx) => {
+    // Check if any enemy city with defenders is adjacent to the unit
+    for (const city of ctx.obs.visibleEnemyCities) {
+      if (city.owner === null) continue;
+      const dx = wrappedDistX(ctx.unit.x, city.x, ctx.mapWidth);
+      const dy = Math.abs(ctx.unit.y - city.y);
+      if (dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0)) {
+        // Check if city has defenders
+        const hasDefender = ctx.obs.visibleEnemyUnits.some(
+          (u) => u.x === city.x && u.y === city.y && UNIT_STATS[u.type].domain === UnitDomain.Land
+        );
+        if (hasDefender) return true;
+      }
+    }
+    return false;
+  });
+
   m.set('enemy_city_with_troops_exists', (ctx) => {
     return ctx.map.locateEnemyCityWithTroops(ctx.unit, ctx.obs) !== null;
   });
@@ -441,6 +458,15 @@ function buildActionResolvers(): Map<string, ActionResolver> {
   a.set('bombard_enemy_city_with_troops', (ctx) => {
     const city = ctx.map.locateEnemyCityWithTroops(ctx.unit, ctx.obs, ctx.unit.movesLeft);
     if (!city) return null;
+
+    // Check if already adjacent to the city
+    const dx = wrappedDistX(ctx.unit.x, city.x, ctx.mapWidth);
+    const dy = Math.abs(ctx.unit.y - city.y);
+    if (dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0)) {
+      // Already adjacent - return MOVE to city tile (engine will trigger bombardment)
+      return { type: 'MOVE', unitId: ctx.unit.id, to: { x: city.x, y: city.y } };
+    }
+
     const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, city);
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
   });
