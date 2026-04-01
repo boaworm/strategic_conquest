@@ -534,6 +534,41 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
     return counts;
   }, [replay, frameIdx]);
 
+  // Kill stats: kills by killer player against victim type
+  // Computed by tracking when units disappear between frames
+  const killStats = useMemo(() => {
+    if (!replay) return null;
+    // killsByKiller[killerOwner][victimType] = count
+    const killsByKiller: { player1: Record<UnitType, number>; player2: Record<UnitType, number> } = {
+      player1: {} as Record<UnitType, number>,
+      player2: {} as Record<UnitType, number>,
+    };
+    for (const t of UNIT_TYPES_ORDERED) {
+      (killsByKiller.player1 as any)[t] = 0;
+      (killsByKiller.player2 as any)[t] = 0;
+    }
+
+    // Compare consecutive frames to find dead units
+    for (let i = 1; i <= frameIdx; i++) {
+      const prevFrame = replay.frames[i - 1];
+      const currFrame = replay.frames[i];
+
+      // Build set of units in current frame
+      const currUnitIds = new Set(currFrame.units.map(u => u.id));
+
+      // Check which units from previous frame are gone
+      for (const u of prevFrame.units) {
+        if (!currUnitIds.has(u.id)) {
+          // Unit died between frames - attribute kill to enemy player
+          const killerOwner = u.owner === 'player1' ? 'player2' : 'player1';
+          killsByKiller[killerOwner][u.type]++;
+        }
+      }
+    }
+
+    return killsByKiller;
+  }, [replay, frameIdx]);
+
   if (replay) {
     const frame = replay.frames[frameIdx];
     const total = replay.frames.length;
@@ -562,7 +597,7 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
           )}
         </div>
 
-        {currentCounts && totalProduced && (
+        {currentCounts && totalProduced && killStats && (
           <div className="shrink-0 px-4 py-1 bg-gray-900 border-b border-gray-700 flex gap-8 text-xs">
             <table className="border-collapse">
               <thead>
@@ -596,6 +631,38 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
                     <td className="text-gray-400 pr-2">{UNIT_LABELS[t]}</td>
                     <td className="text-center px-2" style={{ color: COL_P1 }}>{totalProduced[t].p1 || ''}</td>
                     <td className="text-center px-2" style={{ color: COL_P2 }}>{totalProduced[t].p2 || ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <table className="border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-gray-500 font-normal text-left pr-2 pb-0.5">Kills by P1</th>
+                  <th className="px-2 pb-0.5" style={{ color: COL_P1 }}>P1</th>
+                </tr>
+              </thead>
+              <tbody>
+                {UNIT_TYPES_ORDERED.map((t) => (
+                  <tr key={t}>
+                    <td className="text-gray-400 pr-2">{UNIT_LABELS[t]}</td>
+                    <td className="text-center px-2" style={{ color: COL_P1 }}>{killStats.player1[t] || ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <table className="border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-gray-500 font-normal text-left pr-2 pb-0.5">Kills by P2</th>
+                  <th className="px-2 pb-0.5" style={{ color: COL_P2 }}>P2</th>
+                </tr>
+              </thead>
+              <tbody>
+                {UNIT_TYPES_ORDERED.map((t) => (
+                  <tr key={t}>
+                    <td className="text-gray-400 pr-2">{UNIT_LABELS[t]}</td>
+                    <td className="text-center px-2" style={{ color: COL_P2 }}>{killStats.player2[t] || ''}</td>
                   </tr>
                 ))}
               </tbody>
