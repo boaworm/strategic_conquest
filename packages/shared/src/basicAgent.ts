@@ -18,8 +18,8 @@ import {
 } from './basicAgent_productionRulesEngine.js';
 import { MovementRulesEngine } from './basicAgent_movementRulesEngine.js';
 import { MapQuery } from './basicAgent_mapQuery.js';
-import MOVEMENT_RULES from '../../../movement_rules.json' with { type: 'json' };
-import PRODUCTION_RULES_RAW from '../../../production_rules.json' with { type: 'json' };
+import MOVEMENT_RULES from './basicAgent_movement_rules.json' with { type: 'json' };
+import PRODUCTION_RULES_RAW from './basicAgent_production_rules.json' with { type: 'json' };
 
 const PRODUCTION_RULES: ProductionRulesSchema = {
   production: PRODUCTION_RULES_RAW.production,
