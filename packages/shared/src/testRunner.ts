@@ -317,6 +317,13 @@ export async function runTest(
         break;
       }
 
+      // Record frame after each action (except END_TURN)
+      if (action.type !== 'END_TURN' && action.type !== 'SET_PRODUCTION') {
+        const actionFrame = snapshotGame(state);
+        actionFrame.turn = state.turn;
+        frames.push(actionFrame);
+      }
+
       // Check victory condition
       if (victoryCondition(state)) {
         if (verbose) {
@@ -324,11 +331,7 @@ export async function runTest(
         }
         // Set winner to current player
         state.winner = currentPlayer;
-        // Record final state (turn N)
-        const finalState = snapshotGame(state);
-        finalState.turn = state.turn;
-        frames.push(finalState);
-        // Add N+1 frame to show "end state" (same as final, but turn+1)
+        // Add N+1 frame to show "end state"
         const endState = snapshotGame(state);
         endState.turn = state.turn + 1;
         frames.push(endState);
@@ -361,6 +364,13 @@ export async function runTest(
           break;
         }
 
+        // Record frame after each action (except END_TURN)
+        if (action.type !== 'END_TURN' && action.type !== 'SET_PRODUCTION') {
+          const actionFrame = snapshotGame(state);
+          actionFrame.turn = state.turn;
+          frames.push(actionFrame);
+        }
+
         // Check victory condition
         if (victoryCondition(state)) {
           if (verbose) {
@@ -368,11 +378,7 @@ export async function runTest(
           }
           // Set winner to current player
           state.winner = currentPlayer;
-          // Record final state (turn N)
-          const finalState = snapshotGame(state);
-          finalState.turn = state.turn;
-          frames.push(finalState);
-          // Add N+1 frame to show "end state" (same as final, but turn+1)
+          // Add N+1 frame to show "end state"
           const endState = snapshotGame(state);
           endState.turn = state.turn + 1;
           frames.push(endState);
@@ -387,11 +393,6 @@ export async function runTest(
         }
       }
     }
-
-    // Record state at end of turn (before next turn starts)
-    const endOfTurnState = snapshotGame(state);
-    endOfTurnState.turn = state.turn + 1; // Show as next turn
-    frames.push(endOfTurnState);
 
     // Reset for next game turn
     // Advance production first (new units are added to state.units)

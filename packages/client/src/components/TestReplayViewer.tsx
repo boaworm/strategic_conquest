@@ -569,7 +569,7 @@ export function TestReplayViewer() {
 
   // Load replay list
   useEffect(() => {
-    fetch('/api/test-replays')
+    fetch('/api/replays')
       .then(r => r.json())
       .then((d: { replays: TestReplayMeta[] }) => setReplayList(d.replays ?? []))
       .catch(err => console.error('Failed to load replay list:', err));
@@ -578,7 +578,7 @@ export function TestReplayViewer() {
   // Load replay from URL param or selected replay
   const loadReplay = (replayId: string) => {
     const id = replayId.endsWith('.json') ? replayId.slice(0, -5) : replayId;
-    fetch(`/api/test-replays/${id}`)
+    fetch(`/api/replays/${id}`)
       .then(r => r.json())
       .then(setData)
       .catch(err => console.error('Failed to load replay:', err));
@@ -597,15 +597,14 @@ export function TestReplayViewer() {
 
   const { meta, tiles, frames } = data;
 
-  // Deduplicate frames by turn - keep last frame of each turn
-  const turnMap = new Map<number, TestReplayFrame>();
-  for (const frame of frames) {
-    turnMap.set(frame.turn, frame);
-  }
-  const turnFrames = Array.from(turnMap.values()).sort((a, b) => a.turn - b.turn);
-  const totalTurns = turnFrames.length;
+  // Use all frames (including step-by-step actions), not deduplicated by turn
+  const allFrames = [...frames].sort((a, b) => {
+    if (a.turn !== b.turn) return a.turn - b.turn;
+    return 0;
+  });
+  const totalFrames = allFrames.length;
 
-  const frame = turnFrames[frameIdx];
+  const frame = allFrames[frameIdx];
 
   // Compute explored sets for current frame
   const p1Explored = new Set(frame.p1Explored ?? []);
@@ -664,11 +663,11 @@ export function TestReplayViewer() {
 
       <div style={{ marginBottom: 20, flexShrink: 0 }}>
         <label>
-          Turn {frameIdx + 1} / {totalTurns}
+          Frame {frameIdx + 1} / {totalFrames} (Turn {frame.turn})
           <input
             type="range"
             min={0}
-            max={totalTurns - 1}
+            max={totalFrames - 1}
             value={frameIdx}
             onChange={(e) => setFrameIdx(Number(e.target.value))}
             style={{ width: '80%', margin: '8px 0' }}

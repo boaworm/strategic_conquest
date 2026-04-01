@@ -138,16 +138,16 @@ function startServerAndOpen(replayId: string) {
 
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // GET /api/test-replays — list metas
-    if (pathname === '/api/test-replays') {
+    // GET /api/replays — list metas
+    if (pathname === '/api/replays') {
       const freshMetas = loadTestReplayMetas();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ replays: freshMetas }));
       return;
     }
 
-    // GET /api/test-replays/:id — serve replay file (with or without .json)
-    const replayMatch = pathname.match(/^\/api\/test-replays\/(.+?)(\.json)?$/);
+    // GET /api/replays/:id — serve replay file (with or without .json)
+    const replayMatch = pathname.match(/^\/api\/replays\/(.+?)(\.json)?$/);
     if (replayMatch) {
       const id = replayMatch[1];
       const filepath = path.join(TEST_REPLAY_DIR, `${id}.json`);
