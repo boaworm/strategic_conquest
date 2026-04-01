@@ -173,11 +173,10 @@ export function getVisibleTiles(
     if (unit.owner !== playerId) continue;
     if (unit.carriedBy !== null) continue;
 
-    const stats = UNIT_STATS[unit.type];
-    // Air units see nothing when parked (movesLeft === 0), full vision when flying
-    const range = stats.domain === UnitDomain.Air
-      ? (unit.movesLeft > 0 ? stats.vision : 0)
-      : stats.vision;
+    // Fixed FoW radii by unit class:
+    // - Fighters and bombers: 3
+    // - Everyone else: 2
+    const range = (unit.type === UnitType.Fighter || unit.type === UnitType.Bomber) ? 3 : 2;
 
     for (let dy = -range; dy <= range; dy++) {
       for (let dx = -range; dx <= range; dx++) {

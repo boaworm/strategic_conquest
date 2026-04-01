@@ -754,7 +754,7 @@ function handleUnload(
  * - Reset moves and attack status
  * - Repair capital ships
  * - Refuel air units
- * - Clear seen enemies
+ * - Keep seen enemy memory (last-known positions) across turns
  */
 function handleBeginOfTurn(state: GameState, playerId: PlayerId): void {
   // Advance production for this player (at beginning of turn)
@@ -802,8 +802,6 @@ function handleBeginOfTurn(state: GameState, playerId: PlayerId): void {
     }
   }
 
-  // Clear seen enemies for this player (fresh turn)
-  state.seenEnemies[playerId] = [];
 }
 
 function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
