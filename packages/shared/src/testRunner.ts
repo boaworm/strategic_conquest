@@ -14,6 +14,7 @@ import {
   GamePhase,
   UNIT_STATS,
   Terrain,
+  UnitType,
   advanceProduction,
   type GameState,
   type Unit,
@@ -25,6 +26,18 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPLAY_DIR = process.env.REPLAY_DIR ?? path.resolve(__dirname, '..', '..', '..', 'tmp');
+
+// All unit types for default allowedProduction
+export const ALL_UNIT_TYPES: UnitType[] = [
+  UnitType.Army,
+  UnitType.Fighter,
+  UnitType.Bomber,
+  UnitType.Transport,
+  UnitType.Destroyer,
+  UnitType.Submarine,
+  UnitType.Carrier,
+  UnitType.Battleship,
+];
 
 /**
  * Map configuration for test games.
@@ -73,6 +86,18 @@ export interface TestConfig {
   victoryCondition?: (state: GameState) => boolean;
   testOptions?: {
     cityCaptureSuccessRate?: number; // 1 = 100% success
+    initialProduction?: 'army'; // Set initial city production for all cities
+    allowedProduction?: UnitType[] = [
+      UnitType.Army,
+      UnitType.Fighter,
+      UnitType.Bomber,
+      UnitType.Transport,
+      UnitType.Destroyer,
+      UnitType.Submarine,
+      UnitType.Carrier,
+      UnitType.Battleship,
+    ];
+  };
   };
 }
 
@@ -154,7 +179,7 @@ export function createGameStateFromConfig(config: TestConfig): GameState {
       x: c.x,
       y: c.y,
       owner: c.owner,
-      producing: null,
+      producing: config.testOptions?.initialProduction ?? null,
       productionTurnsLeft: 0,
       productionProgress: 0,
     })),
