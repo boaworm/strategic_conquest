@@ -74,16 +74,25 @@ if (fs.existsSync(replayDir)) {
 }
 
 console.log('Running test generators...\n');
-try {
-  execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_armyMoveToCoastAndBoardTransport.ts')}`, { stdio: 'inherit' });
-  execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_armyMoveToCoastAndBoardTransport_2.ts')}`, { stdio: 'inherit' });
-  execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_exploreAndExpand_3.ts')}`, { stdio: 'inherit' });
-  execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_transportEarlyDeparture.ts')}`, { stdio: 'inherit' });
-  execSync(`npx tsx ${path.join(SHARED_SRC_DIR, 'test_transportsInCombatPhase.ts')}`, { stdio: 'inherit' });
-  console.log('\n');
-} catch (err) {
-  console.log('Some tests failed, continuing anyway...\n');
+const testFiles = [
+  'test_armyMoveToCoastAndBoardTransport.ts',
+  'test_armyMoveToCoastAndBoardTransport_2.ts',
+  'test_exploreAndExpand_3.ts',
+  'test_transportEarlyDeparture.ts',
+  'test_transportsInCombatPhase.ts',
+];
+
+for (const testFile of testFiles) {
+  const testPath = path.join(SHARED_SRC_DIR, testFile);
+  console.log(`Running: ${testFile}`);
+  try {
+    execSync(`npx tsx "${testPath}"`, { stdio: 'inherit' });
+    console.log(`✓ ${testFile} completed\n`);
+  } catch (err: any) {
+    console.log(`✗ ${testFile} failed: ${err.message || err}\n`);
+  }
 }
+console.log('\nAll tests completed.\n');
 
 const metas = loadTestReplayMetas();
 if (metas.length === 0) {

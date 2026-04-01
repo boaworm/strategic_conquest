@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Summary Only.** After a complex task, provide a maximum 2-sentence summary of what changed.
 - **Direct Answers.** If I ask a question, lead with the answer. Skip the "introductory paragraph."
 - **NEVER USE ANY OF THESE**: timeout wait sleep
+- **DO NOT EVER RUN** npm run test_replay   **NEVER EVER DO IT**
 
 # GIT
 I do all git commit, push, pull, add, delete, rename/mv
