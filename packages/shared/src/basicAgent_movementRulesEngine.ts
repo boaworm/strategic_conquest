@@ -459,9 +459,9 @@ function buildActionResolvers(): Map<string, ActionResolver> {
   // ── Bomber ──────────────────────────────────────────────────
 
   a.set('bomb_city', (ctx) => {
-    const city = ctx.map.findBomberTarget(ctx.unit, ctx.obs);
-    if (!city) return null;
-    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, city);
+    const target = ctx.map.findBomberTarget(ctx.unit, ctx.obs);
+    if (!target) return null;
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, target);
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
   });
 

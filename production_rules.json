@@ -45,13 +45,14 @@
       },
       {
         "conditions": ["City has access to water"],
-        "produce": "lowest_score(Transport, Battleship, Submarine, Destroyer, Fighter, Bomber)",
+        "produce": "lowest_score(Transport, Battleship, Submarine, Destroyer, Carrier, Fighter, Bomber)",
         "note": "score = (alive + in_production) * buildTime / scalingFactor",
         "scaling_factors": {
           "Transport":  1,
           "Battleship": 2,
-          "Submarine":  2,
-          "Destroyer":  1,
+          "Submarine":  3,
+          "Destroyer":  3,
+          "Carrier":    1,
           "Fighter":    1,
           "Bomber":     1
         }

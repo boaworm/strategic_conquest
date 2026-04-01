@@ -555,28 +555,59 @@ export class MapQuery {
     return best;
   }
 
-  /** Find enemy city with troops AND friendly troops within 2 squares (bomber target). */
-  findBomberTarget(unit: UnitView, obs: AgentObservation): CityView | null {
+  /**
+   * Find highest-priority bomber target across the entire visible map.
+   * Score = production cost (buildTime), with special multipliers:
+   * - Enemy city with defenders AND friendly unit within 2 squares: *999
+   * - Enemy transport with >=1 army: *3
+   * Returns the target coordinate (unit or city location).
+   */
+  findBomberTarget(unit: UnitView, obs: AgentObservation): Coord | null {
     const maxFuel = UNIT_STATS[unit.type].maxFuel ?? 100;
-    let best: CityView | null = null;
-    let bestValue = -1;
+    type Target = { x: number; y: number; score: number; dist: number };
+    const targets: Target[] = [];
+
+    // Score all visible enemy units by production cost
+    for (const u of obs.visibleEnemyUnits) {
+      if (this.wrappedDist(unit, u) > maxFuel) continue;
+      let score = UNIT_STATS[u.type].buildTime;
+
+      // Transport with at least 1 army: multiply by 3
+      if (u.type === UnitType.Transport && u.cargo.length >= 1) {
+        score *= 3;
+      }
+
+      targets.push({ x: u.x, y: u.y, score, dist: this.wrappedDist(unit, u) });
+    }
+
+    // Score enemy cities
     for (const city of obs.visibleEnemyCities) {
       if (city.owner === null) continue;
       if (this.wrappedDist(unit, city) > maxFuel) continue;
-      const hasDefender = obs.visibleEnemyUnits.some(
-        (u) => u.x === city.x && u.y === city.y && UNIT_STATS[u.type].domain === UnitDomain.Land,
+
+      const defenders = obs.visibleEnemyUnits.filter(
+        (u) => u.x === city.x && u.y === city.y,
       );
-      if (!hasDefender) continue;
-      const friendlyNear = obs.myUnits.some(
-        (u) => u.type === UnitType.Army && this.wrappedDist(u, city) <= 2,
-      );
-      if (!friendlyNear) continue;
-      const value = obs.visibleEnemyUnits
-        .filter((u) => u.x === city.x && u.y === city.y)
-        .reduce((s, u) => s + UNIT_STATS[u.type].buildTime, 0);
-      if (value > bestValue) { bestValue = value; best = city; }
+
+      // City with defenders AND friendly unit within 2 squares: score * 999
+      if (defenders.length > 0) {
+        const friendlyNear = obs.myUnits.some(
+          (u) => u.type === UnitType.Army && this.wrappedDist(u, city) <= 2,
+        );
+        if (friendlyNear) {
+          targets.push({ x: city.x, y: city.y, score: 999, dist: this.wrappedDist(unit, city) });
+          continue;
+        }
+      }
+
+      // Otherwise city has no production cost value (skip)
     }
-    return best;
+
+    if (targets.length === 0) return null;
+
+    // Return highest score target (prefer closer if tied)
+    targets.sort((a, b) => b.score - a.score || a.dist - b.dist);
+    return { x: targets[0].x, y: targets[0].y };
   }
 
   /** Find enemy transport with cargo (bomber/fighter target). */

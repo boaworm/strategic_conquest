@@ -75,6 +75,7 @@ export interface UnitConfig {
   y: number;
   health?: number;
   movesLeft?: number;
+  fuel?: number;
   cargo?: string[];
   carriedBy?: string | null;
 }
@@ -188,6 +189,7 @@ export function createGameStateFromConfig(config: TestConfig): GameState {
         y: u.y,
         health: u.health ?? stats?.maxHealth ?? 1,
         movesLeft: u.movesLeft ?? stats?.movesPerTurn ?? 3,
+        fuel: u.fuel ?? stats?.maxFuel,
         sleeping: false,
         hasAttacked: false,
         cargo: u.cargo ?? [],
@@ -283,7 +285,11 @@ export async function runTest(
   agent2?.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
 
   const frames: GameSnapshot[] = [];
-  frames.push(snapshotGame(state));
+
+  // Record initial state (turn 0 / before game starts)
+  const initialState = snapshotGame(state);
+  initialState.turn = 0;
+  frames.push(initialState);
 
   // Victory condition defaults to checking if any unit is carried
   const victoryCondition = config.victoryCondition ?? (() => false);
@@ -311,14 +317,17 @@ export async function runTest(
         break;
       }
 
-      // Record state after each action
-      frames.push(snapshotGame(state));
-
       // Check victory condition
       if (victoryCondition(state)) {
         if (verbose) {
           console.log('TEST PASSED');
         }
+        // Set winner to current player
+        state.winner = currentPlayer;
+        // Record final state with incremented turn
+        state.turn++;
+        const finalState = snapshotGame(state);
+        frames.push(finalState);
         const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames) : undefined;
         return { passed: true, turns: state.turn, message: 'Test passed', replayPath };
       }
@@ -348,14 +357,17 @@ export async function runTest(
           break;
         }
 
-        // Record state after each action
-        frames.push(snapshotGame(state));
-
         // Check victory condition
         if (victoryCondition(state)) {
           if (verbose) {
             console.log('TEST PASSED');
           }
+          // Set winner to current player
+          state.winner = currentPlayer;
+          // Record final state with incremented turn
+          state.turn++;
+          const finalState = snapshotGame(state);
+          frames.push(finalState);
           const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames) : undefined;
           return { passed: true, turns: state.turn, message: 'Test passed', replayPath };
         }
@@ -367,6 +379,11 @@ export async function runTest(
         }
       }
     }
+
+    // Record state at end of turn (before next turn starts)
+    const endOfTurnState = snapshotGame(state);
+    endOfTurnState.turn = state.turn + 1; // Show as next turn
+    frames.push(endOfTurnState);
 
     // Reset for next game turn
     // Advance production first (new units are added to state.units)

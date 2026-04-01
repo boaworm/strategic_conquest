@@ -53,6 +53,7 @@ const UNIT_NAME_MAP: Record<string, UnitType> = {
   Destroyer:  UnitType.Destroyer,
   Submarine:  UnitType.Submarine,
   Battleship: UnitType.Battleship,
+  Carrier:    UnitType.Carrier,
   Fighter:    UnitType.Fighter,
   Bomber:     UnitType.Bomber,
 };

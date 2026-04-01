@@ -78,6 +78,7 @@ const testFiles = [
   'test_armyMoveToCoastAndBoardTransport.ts',
   'test_armyMoveToCoastAndBoardTransport_2.ts',
   'test_battleshipPriorities.ts',
+  'test_bomberDecision.ts',
   'test_exploreAndExpand_3.ts',
   'test_transportEarlyDeparture.ts',
   'test_transportsInCombatPhase.ts',
