@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Terrain,
   UnitType,
@@ -28,6 +28,7 @@ interface ReplayFrame {
   cities: City[];
   units: Unit[];
   winner: string | null;
+  phases?: Record<string, number>;
 }
 
 interface ReplayData {
@@ -49,6 +50,9 @@ const COL_GRID         = 'rgba(0,0,0,0.2)';
 const COL_P1           = '#4a9eed';
 const COL_P2           = '#ed4a4a';
 const COL_NEUTRAL      = '#aaa';
+const COL_PHASE1       = '#22c55e'; // green
+const COL_PHASE2       = '#3b82f6'; // blue
+const COL_PHASE3       = '#ef4444'; // red
 
 function ownerColor(owner: string | null): string {
   if (owner === 'player1') return COL_P1;
@@ -198,6 +202,57 @@ function drawUnitShape(ctx: CanvasRenderingContext2D, type: UnitType, cx: number
   ctx.restore();
 }
 
+// ── Unit image loading & tinted rendering ────────────────────
+
+const UNIT_IMAGE_SRCS: Record<UnitType, string> = {
+  [UnitType.Army]:       '/units/army.png',
+  [UnitType.Fighter]:    '/units/figher.png',
+  [UnitType.Bomber]:     '/units/bomber.png',
+  [UnitType.Transport]:  '/units/transport.png',
+  [UnitType.Destroyer]:  '/units/destroyer.png',
+  [UnitType.Submarine]:  '/units/submarine.png',
+  [UnitType.Carrier]:    '/units/carrier.png',
+  [UnitType.Battleship]: '/units/battleship.png',
+};
+
+const unitImageTintCache = new Map<string, HTMLCanvasElement>();
+
+function drawUnit(
+  ctx: CanvasRenderingContext2D,
+  type: UnitType,
+  cx: number,
+  cy: number,
+  size: number,
+  color: string,
+  images: Partial<Record<UnitType, HTMLImageElement>>,
+) {
+  const img = images[type];
+  if (!img || !img.complete || img.naturalWidth === 0) {
+    drawUnitShape(ctx, type, cx, cy, size, color);
+    return;
+  }
+
+  const aspect = img.naturalWidth / img.naturalHeight;
+  const w = aspect >= 1 ? Math.round(size * 0.82) : Math.round(size * 0.82 * aspect);
+  const h = aspect >= 1 ? Math.round(w / aspect) : Math.round(size * 0.82);
+
+  const cacheKey = `${type}:${w}:${h}:${color}`;
+  let tinted = unitImageTintCache.get(cacheKey);
+  if (!tinted) {
+    tinted = document.createElement('canvas');
+    tinted.width = w;
+    tinted.height = h;
+    const tc = tinted.getContext('2d')!;
+    tc.fillStyle = color;
+    tc.fillRect(0, 0, w, h);
+    tc.globalCompositeOperation = 'destination-in';
+    tc.drawImage(img, 0, 0, w, h);
+    unitImageTintCache.set(cacheKey, tinted);
+  }
+
+  ctx.drawImage(tinted, Math.round(cx - w / 2), Math.round(cy - h / 2));
+}
+
 // ── Canvas renderer ───────────────────────────────────────────
 
 interface ReplayCanvasProps {
@@ -209,6 +264,8 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const camRef = useRef({ x: replay.mapWidth / 2, y: replay.mapHeight / 2, tileSize: 24 });
   const dragRef = useRef<{ sx: number; sy: number; cx: number; cy: number } | null>(null);
+  const unitImagesRef = useRef<Partial<Record<UnitType, HTMLImageElement>>>({});
+  const drawRef = useRef<() => void>(() => {});
 
   const mapW = replay.mapWidth;
   const mapH = replay.mapHeight;
@@ -272,7 +329,7 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
 
         const units = unitsByPos.get(key);
         if (units && units.length > 0) {
-          drawUnitShape(ctx, units[0].type, ccx, ccy, ts, ownerColor(units[0].owner));
+          drawUnit(ctx, units[0].type, ccx, ccy, ts, ownerColor(units[0].owner), unitImagesRef.current);
           if ((units[0].type === UnitType.Carrier || units[0].type === UnitType.Transport) && units[0].cargo.length > 0 && ts >= 14) {
             ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.max(8, ts * 0.3)}px sans-serif`;
             ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`${units[0].cargo.length}`, sx + 2, sy + 1);
@@ -304,7 +361,19 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
     ro.observe(canvas); return () => ro.disconnect();
   }, [draw]);
 
+  useEffect(() => { drawRef.current = draw; });
   useEffect(() => { draw(); }, [draw]);
+  useEffect(() => {
+    for (const [type, src] of Object.entries(UNIT_IMAGE_SRCS) as [UnitType, string][]) {
+      const img = new Image();
+      img.src = src;
+      img.onload = () => {
+        unitImagesRef.current[type] = img;
+        unitImageTintCache.clear();
+        drawRef.current();
+      };
+    }
+  }, []);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button === 2 || e.button === 1) {
@@ -340,6 +409,53 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
     />
   );
 }
+
+// ── Phase track bars component (renders bars only, no label) ───
+
+interface PhaseTrackBarsProps {
+  frames: ReplayFrame[];
+  playerId: string;
+  color: string;
+}
+
+function PhaseTrackBars({ frames, playerId, color }: PhaseTrackBarsProps) {
+  if (frames.length === 0) return null;
+
+  const bars: React.ReactNode[] = [];
+  const segmentWidth = 100 / frames.length;
+
+  for (let i = 0; i < frames.length; i++) {
+    const phase = frames[i].phases?.[playerId] ?? 1;
+    const bg = phase === 3 ? COL_PHASE3 : phase === 2 ? COL_PHASE2 : COL_PHASE1;
+    bars.push(
+      <div
+        key={i}
+        className="absolute top-0 bottom-0"
+        style={{
+          left: `${i * segmentWidth}%`,
+          width: `${segmentWidth}%`,
+          backgroundColor: bg,
+        }}
+      />
+    );
+  }
+
+  return <>{bars}</>;
+}
+
+// ── Unit table constants ──────────────────────────────────────
+
+const UNIT_TYPES_ORDERED = [
+  UnitType.Army, UnitType.Transport, UnitType.Destroyer,
+  UnitType.Submarine, UnitType.Battleship, UnitType.Carrier,
+  UnitType.Fighter, UnitType.Bomber,
+] as const;
+
+const UNIT_LABELS: Record<UnitType, string> = {
+  [UnitType.Army]: 'Army', [UnitType.Transport]: 'Transport', [UnitType.Destroyer]: 'Destroyer',
+  [UnitType.Submarine]: 'Submarine', [UnitType.Battleship]: 'Battleship', [UnitType.Carrier]: 'Carrier',
+  [UnitType.Fighter]: 'Fighter', [UnitType.Bomber]: 'Bomber',
+};
 
 // ── Main component ────────────────────────────────────────────
 
@@ -389,6 +505,35 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
     }
   }
 
+  const currentCounts = useMemo(() => {
+    if (!replay) return null;
+    const frame = replay.frames[frameIdx];
+    const counts: Record<UnitType, { p1: number; p2: number }> = {} as any;
+    for (const t of UNIT_TYPES_ORDERED) counts[t] = { p1: 0, p2: 0 };
+    for (const u of frame.units) {
+      if (u.owner === 'player1') counts[u.type].p1++;
+      else if (u.owner === 'player2') counts[u.type].p2++;
+    }
+    return counts;
+  }, [replay, frameIdx]);
+
+  const totalProduced = useMemo(() => {
+    if (!replay) return null;
+    const seen = new Set<string>();
+    const counts: Record<UnitType, { p1: number; p2: number }> = {} as any;
+    for (const t of UNIT_TYPES_ORDERED) counts[t] = { p1: 0, p2: 0 };
+    for (let i = 0; i <= frameIdx; i++) {
+      for (const u of replay.frames[i].units) {
+        if (!seen.has(u.id)) {
+          seen.add(u.id);
+          if (u.owner === 'player1') counts[u.type].p1++;
+          else if (u.owner === 'player2') counts[u.type].p2++;
+        }
+      }
+    }
+    return counts;
+  }, [replay, frameIdx]);
+
   if (replay) {
     const frame = replay.frames[frameIdx];
     const total = replay.frames.length;
@@ -417,21 +562,102 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
           )}
         </div>
 
+        {currentCounts && totalProduced && (
+          <div className="shrink-0 px-4 py-1 bg-gray-900 border-b border-gray-700 flex gap-8 text-xs">
+            <table className="border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-gray-500 font-normal text-left pr-2 pb-0.5">Current</th>
+                  <th className="px-2 pb-0.5" style={{ color: COL_P1 }}>P1</th>
+                  <th className="px-2 pb-0.5" style={{ color: COL_P2 }}>P2</th>
+                </tr>
+              </thead>
+              <tbody>
+                {UNIT_TYPES_ORDERED.map((t) => (
+                  <tr key={t}>
+                    <td className="text-gray-400 pr-2">{UNIT_LABELS[t]}</td>
+                    <td className="text-center px-2" style={{ color: COL_P1 }}>{currentCounts[t].p1 || ''}</td>
+                    <td className="text-center px-2" style={{ color: COL_P2 }}>{currentCounts[t].p2 || ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <table className="border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-gray-500 font-normal text-left pr-2 pb-0.5">Produced</th>
+                  <th className="px-2 pb-0.5" style={{ color: COL_P1 }}>P1</th>
+                  <th className="px-2 pb-0.5" style={{ color: COL_P2 }}>P2</th>
+                </tr>
+              </thead>
+              <tbody>
+                {UNIT_TYPES_ORDERED.map((t) => (
+                  <tr key={t}>
+                    <td className="text-gray-400 pr-2">{UNIT_LABELS[t]}</td>
+                    <td className="text-center px-2" style={{ color: COL_P1 }}>{totalProduced[t].p1 || ''}</td>
+                    <td className="text-center px-2" style={{ color: COL_P2 }}>{totalProduced[t].p2 || ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
         <div className="flex-1 overflow-hidden">
           <ReplayCanvas replay={replay} frame={frame} />
         </div>
 
-        <div className="shrink-0 px-4 py-3 bg-gray-900 border-t border-gray-700 flex items-center gap-3">
-          <button className="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-white text-sm disabled:opacity-40"
-            disabled={frameIdx === 0} onClick={() => setFrameIdx((i) => Math.max(0, i - 1))}>‹</button>
-          <input type="range" min={0} max={total - 1} value={frameIdx}
-            onChange={(e) => setFrameIdx(Number(e.target.value))} className="flex-1" />
-          <button className="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-white text-sm disabled:opacity-40"
-            disabled={frameIdx === total - 1} onClick={() => setFrameIdx((i) => Math.min(total - 1, i + 1))}>›</button>
-          <span className="text-gray-400 text-sm w-24 text-right shrink-0">
-            Turn {frame.turn} &nbsp;({frameIdx + 1}/{total})
-          </span>
-        </div>
+        {/* Phase tracks and slider - table layout */}
+        {replay.frames.length > 0 && (
+          <div className="shrink-0 px-4 py-2 bg-gray-900 border-t border-gray-700">
+            <table className="w-full border-collapse" style={{tableLayout: 'fixed'}}>
+              <colgroup>
+                <col style={{width: '80px'}} />
+                <col style={{width: '100%'}} />
+                <col style={{width: '120px'}} />
+              </colgroup>
+              <tbody>
+                <tr>
+                  <td className="text-xs font-bold align-top" style={{ color: COL_P1 }}>Player 1</td>
+                  <td className="p-0 align-top">
+                    <div className="w-full h-2 bg-gray-800 relative overflow-hidden">
+                      <PhaseTrackBars frames={replay.frames} playerId="player1" color={COL_P1} />
+                    </div>
+                  </td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td className="text-xs font-bold align-top" style={{ color: COL_P2 }}>Player 2</td>
+                  <td className="p-0 align-top">
+                    <div className="w-full h-2 bg-gray-800 relative overflow-hidden">
+                      <PhaseTrackBars frames={replay.frames} playerId="player2" color={COL_P2} />
+                    </div>
+                  </td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td className="text-center align-top">
+                    <button className="w-8 h-8 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-white text-sm disabled:opacity-40 flex items-center justify-center"
+                      disabled={frameIdx === 0} onClick={() => setFrameIdx((i) => Math.max(0, i - 1))}>‹</button>
+                  </td>
+                  <td className="p-0 align-top">
+                    <input type="range" min={0} max={total - 1} value={frameIdx}
+                      onChange={(e) => setFrameIdx(Number(e.target.value))} className="w-full h-2" />
+                  </td>
+                  <td className="text-right align-top">
+                    <div className="flex items-center justify-end gap-1">
+                      <button className="w-8 h-8 px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-white text-sm disabled:opacity-40 flex items-center justify-center"
+                        disabled={frameIdx === total - 1} onClick={() => setFrameIdx((i) => Math.min(total - 1, i + 1))}>›</button>
+                      <span className="text-gray-400 text-sm whitespace-nowrap">
+                        Turn {frame.turn} ({frameIdx + 1}/{total})
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
   }

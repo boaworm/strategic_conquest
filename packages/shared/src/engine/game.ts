@@ -6,6 +6,7 @@ import {
   type TileView,
   type CityView,
   type UnitView,
+  type Unit,
   GamePhase,
   TileVisibility,
   Terrain,
@@ -17,7 +18,8 @@ import {
   wrappedDistX,
 } from '../types.js';
 import { canMoveTo, canDetectSubmarine, getUnitsAt, getVisibleTiles, normalizeCoord } from './movement.js';
-import { resolveCombat, removeDestroyedUnits } from './combat.js';
+import { removeDestroyedUnits } from './combat.js';
+import { resolveCombatFromTable, CombatOutcome } from './combatResolution.js';
 import { advanceProduction, setProduction } from './production.js';
 
 /**
@@ -58,8 +60,6 @@ export function applyAction(
       return handleMove(state, action.unitId, action.to, playerId);
     case 'LOAD':
       return handleLoad(state, action.unitId, action.transportId, playerId);
-    case 'UNLOAD':
-      return handleUnload(state, action.unitId, action.to, playerId);
     case 'END_TURN':
       return handleEndTurn(state, playerId);
     default:
@@ -76,10 +76,90 @@ function handleMove(
   const unit = state.units.find((u) => u.id === unitId);
   if (!unit) return { success: false, error: 'Unit not found' };
   if (unit.owner !== playerId) return { success: false, error: 'Not your unit' };
-  if (unit.carriedBy !== null) return { success: false, error: 'Unit is being carried' };
 
   // Normalize target for cylindrical wrapping
   const target = normalizeCoord(to, state.mapWidth);
+
+  // Army disembarkation: army on transport can move to adjacent land tile
+  if (unit.carriedBy !== null && unit.type === UnitType.Army && unit.movesLeft > 0) {
+    const transport = state.units.find((u) => u.id === unit.carriedBy);
+    if (!transport) return { success: false, error: 'Transport not found' };
+
+    // Must be adjacent to transport
+    const dx = wrappedDistX(unit.x, target.x, state.mapWidth);
+    const dy = Math.abs(unit.y - target.y);
+    if (dx > 1 || dy > 1 || (dx === 0 && dy === 0)) {
+      return { success: false, error: 'Can only move to adjacent tile' };
+    }
+
+    // Target must be land (not ice cap)
+    if (target.y <= 0 || target.y >= state.mapHeight - 1) {
+      return { success: false, error: 'Cannot move there' };
+    }
+    const terrain = state.tiles[target.y]?.[target.x];
+    if (terrain !== Terrain.Land) {
+      return { success: false, error: 'Can only disembark to land' };
+    }
+
+    // Disembark from transport
+    unit.carriedBy = null;
+    transport.cargo = transport.cargo.filter((id) => id !== unit.id);
+
+    // Handle enemy units at target
+    const enemiesAtTarget = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
+    if (enemiesAtTarget.length > 0) {
+      if (unit.hasAttacked) {
+        // Re-attach and fail
+        unit.carriedBy = transport.id;
+        transport.cargo.push(unit.id);
+        return { success: false, error: 'Already attacked this turn' };
+      }
+      const defender = enemiesAtTarget[Math.floor(Math.random() * enemiesAtTarget.length)];
+      const outcome = resolveCombatFromTable(unit, defender);
+      removeDestroyedUnits(state);
+
+      // Build combat result from outcome
+      const combat = {
+        attackerId: unit.id,
+        defenderId: defender.id,
+        attackerDamage: (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+        defenderDamage: (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+        attackerDestroyed: outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+        defenderDestroyed: outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+      };
+
+      if (combat.attackerDestroyed) {
+        checkWinCondition(state);
+        return { success: true, combat };
+      }
+      const remaining = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
+      if (remaining.length > 0) {
+        // Attack failed, re-attach
+        unit.carriedBy = transport.id;
+        transport.cargo.push(unit.id);
+        unit.movesLeft--;
+        unit.hasAttacked = true;
+        checkWinCondition(state);
+        return { success: true, combat };
+      }
+      // Enemy destroyed, land the unit
+      unit.x = target.x;
+      unit.y = target.y;
+      unit.movesLeft--;
+      unit.hasAttacked = true;
+      checkWinCondition(state);
+      return { success: true, combat };
+    }
+
+    // No enemies - land the unit
+    unit.x = target.x;
+    unit.y = target.y;
+    unit.movesLeft--;
+    checkWinCondition(state);
+    return { success: true };
+  }
+
+  if (unit.carriedBy !== null) return { success: false, error: 'Unit is being carried' };
 
   // Shore bombardment: Battleship can attack land units on adjacent non-ocean tiles (including cities)
   if (unit.type === UnitType.Battleship) {
@@ -103,8 +183,19 @@ function handleMove(
         }
         // Pick a random land unit as the target
         const defender = enemyLand[Math.floor(Math.random() * enemyLand.length)];
-        const combat = resolveCombat(state, unit, defender, true);
+        const outcome = resolveCombatFromTable(unit, defender);
         removeDestroyedUnits(state);
+
+        // Build combat result from outcome
+        const combat = {
+          attackerId: unit.id,
+          defenderId: defender.id,
+          attackerDamage: (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+          defenderDamage: (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+          attackerDestroyed: outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+          defenderDestroyed: outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+        };
+
         unit.movesLeft--;
         unit.hasAttacked = true;
         checkWinCondition(state);
@@ -171,8 +262,19 @@ function handleMove(
       }
     }
 
-    // Pick a random defender from the enemies present
-    const defender = enemyUnits[Math.floor(Math.random() * enemyUnits.length)];
+    // Pick a defender from the enemies present
+    // Sea units prioritize sea targets (to attack transports, not land units on same tile)
+    let defender: Unit;
+    if (UNIT_STATS[unit.type].domain === UnitDomain.Sea) {
+      const seaTargets = enemyUnits.filter((e) => UNIT_STATS[e.type].domain === UnitDomain.Sea);
+      if (seaTargets.length > 0) {
+        defender = seaTargets[Math.floor(Math.random() * seaTargets.length)];
+      } else {
+        defender = enemyUnits[Math.floor(Math.random() * enemyUnits.length)];
+      }
+    } else {
+      defender = enemyUnits[Math.floor(Math.random() * enemyUnits.length)];
+    }
 
     // Bomber: check for intercepting fighters anywhere in the blast area.
     // If interceptors are present, the bomber fights them instead of bombing.
@@ -250,8 +352,18 @@ function handleMove(
     }
 
     // Normal combat with the selected defender
-    const combat = resolveCombat(state, unit, defender);
+    const outcome = resolveCombatFromTable(unit, defender);
     removeDestroyedUnits(state);
+
+    // Build combat result from outcome
+    const combat = {
+      attackerId: unit.id,
+      defenderId: defender.id,
+      attackerDamage: (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+      defenderDamage: (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+      attackerDestroyed: outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+      defenderDestroyed: outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+    };
 
     // If attacker survived AND no enemies remain on the target tile, move in
     if (!combat.attackerDestroyed) {
@@ -421,7 +533,10 @@ function tryCaptureCity(
   if (city.owner === playerId) return { captured: null };
 
   const isNeutral = city.owner === null;
-  const winChance = isNeutral ? 0.7 : 0.5;
+  const baseWinChance = isNeutral ? 0.7 : 0.5;
+
+  // Use test override if available
+  const winChance = state.testOptions?.cityCaptureSuccessRate ?? baseWinChance;
 
   if (Math.random() >= winChance) {
     // City defense succeeds (attack fails). Army is destroyed.
@@ -583,8 +698,18 @@ function handleUnload(
     }
 
     const defender = enemiesAtTarget[Math.floor(Math.random() * enemiesAtTarget.length)];
-    const combat = resolveCombat(state, unit, defender);
+    const outcome = resolveCombatFromTable(unit, defender);
     removeDestroyedUnits(state);
+
+    // Build combat result from outcome
+    const combat = {
+      attackerId: unit.id,
+      defenderId: defender.id,
+      attackerDamage: (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+      defenderDamage: (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+      attackerDestroyed: outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+      defenderDestroyed: outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+    };
 
     if (combat.attackerDestroyed) {
       // Unit lost — it's already removed from state; transport.cargo cleaned up by removeDestroyedUnits
@@ -623,39 +748,21 @@ function handleUnload(
   return { success: true, cityCaptured: captureResult.captured ?? undefined, cityCaptureFailed: captureResult.failed };
 }
 
-function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
-  // Advance production for current player
+/**
+ * Handle the beginning of a player's turn:
+ * - Advance production
+ * - Reset moves and attack status
+ * - Repair capital ships
+ * - Refuel air units
+ * - Clear seen enemies
+ */
+function handleBeginOfTurn(state: GameState, playerId: PlayerId): void {
+  // Advance production for this player (at beginning of turn)
   advanceProduction(state, playerId);
 
-  // Crash fighters not on a friendly city or carrier
-  let fightersCrashed = 0;
+  // Refresh moves and attack status for this player's units (including newly produced)
   for (const unit of state.units) {
-    if (unit.owner !== playerId) continue;
-    if (unit.type !== UnitType.Fighter) continue;
-    if (unit.carriedBy !== null) continue; // safe on carrier
-    const onCity = state.cities.some(
-      (c) => c.x === unit.x && c.y === unit.y && c.owner === unit.owner,
-    );
-    if (!onCity) {
-      unit.health = 0;
-      fightersCrashed++;
-    }
-  }
-  if (fightersCrashed > 0) {
-    removeDestroyedUnits(state);
-  }
-
-  // Switch player
-  if (state.currentPlayer === 'player1') {
-    state.currentPlayer = 'player2';
-  } else {
-    state.currentPlayer = 'player1';
-    state.turn++;
-  }
-
-  // Refresh moves for the new current player's units
-  for (const unit of state.units) {
-    if (unit.owner === state.currentPlayer) {
+    if (unit.owner === playerId) {
       const stats = UNIT_STATS[unit.type];
       unit.movesLeft = stats.movesPerTurn;
       unit.hasAttacked = false;
@@ -665,7 +772,7 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
   // Repair capital ships in cities
   for (const unit of state.units) {
     if (
-      unit.owner === state.currentPlayer &&
+      unit.owner === playerId &&
       (unit.type === UnitType.Battleship || unit.type === UnitType.Carrier) &&
       unit.health < UNIT_STATS[unit.type].maxHealth
     ) {
@@ -680,7 +787,7 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
 
   // Refuel air units on cities or carriers
   for (const unit of state.units) {
-    if (unit.owner === state.currentPlayer && unit.fuel !== undefined) {
+    if (unit.owner === playerId && unit.fuel !== undefined) {
       const stats = UNIT_STATS[unit.type];
       // On a friendly city?
       const onCity = state.cities.some(
@@ -695,11 +802,42 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
     }
   }
 
-  // Clear seen enemies for the new current player (fresh turn)
-  state.seenEnemies[state.currentPlayer] = [];
+  // Clear seen enemies for this player (fresh turn)
+  state.seenEnemies[playerId] = [];
+}
+
+function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
+  // Crash fighters and bombers not on a friendly city or carrier
+  let aircraftCrashed = 0;
+  for (const unit of state.units) {
+    if (unit.owner !== playerId) continue;
+    if (unit.type !== UnitType.Fighter && unit.type !== UnitType.Bomber) continue;
+    if (unit.carriedBy !== null) continue; // safe on carrier
+    const onCity = state.cities.some(
+      (c) => c.x === unit.x && c.y === unit.y && c.owner === unit.owner,
+    );
+    if (!onCity) {
+      unit.health = 0;
+      aircraftCrashed++;
+    }
+  }
+  if (aircraftCrashed > 0) {
+    removeDestroyedUnits(state);
+  }
+
+  // Switch player
+  if (state.currentPlayer === 'player1') {
+    state.currentPlayer = 'player2';
+  } else {
+    state.currentPlayer = 'player1';
+    state.turn++;
+  }
+
+  // Handle the beginning of the new current player's turn
+  handleBeginOfTurn(state, state.currentPlayer);
 
   checkWinCondition(state);
-  return { success: true, fightersCrashed: fightersCrashed > 0 ? fightersCrashed : undefined };
+  return { success: true, fightersCrashed: aircraftCrashed > 0 ? aircraftCrashed : undefined };
 }
 
 function checkWinCondition(state: GameState): void {

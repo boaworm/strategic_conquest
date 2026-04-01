@@ -2,214 +2,181 @@
 
 ## Overview
 
-This document outlines the design for a neural network-based agent that can play Strategic Conquest. The agent will use a Model-of-Experts (MoE) architecture where a central "Runner" coordinates decisions by querying specialized neural network models.
+This document outlines the design for a neural network-based agent that can play Strategic Conquest. The current infrastructure supports:
 
-## Key Design Principles
+1. **Genetic Algorithm** (TypeScript): Weight-vector genome evolution against `BasicAgent`
+2. **Imitation Learning Data Collection**: Parallel (state, action) pair collection for supervised learning
+3. **NN Training** (Python/PyTorch): Policy CNN trained on collected data
 
-### 1. Model-of-Experts (MoE) Architecture
+## Current Infrastructure
 
-Rather than a single monolithic network, we'll use specialized experts:
+### Genetic Algorithm (`packages/trainer`)
+
+- **Genome**: 28-weight vector over hand-crafted strategic features
+- **Features**: Unit-level (10), Global strategic (8), Production per unit type (8)
+- **Fitness**: Win bonus + turn speed + city/unit ratios - loss penalty
+- **Parallelism**: Worker threads for population evaluation
+- **Output**: `champion.json` — genome file usable by `EvolvedAgent`
+
+### Imitation Learning (`packages/trainer/src/collect_data.ts`)
+
+- **Workers**: Child processes (not worker threads — tsx doesn't transfer to workers reliably)
+- **Output**:
+  - `states.bin` — raw float32 bytes, shape `[N, 14, H, W]`
+  - `actions.jsonl` — one action JSON per line
+  - `meta.json` — map dimensions, channels, sample count, wins
+- **Sampling**: Reservoir sampling (Algorithm R), max 3000 samples per game
+
+### State Tensor Representation (14 channels)
+
+The state is represented as a 3D tensor `[Channels × MapHeight × MapWidth]`:
+
+| Channel | Description |
+|---------|-------------|
+| 1 | Friendly Army |
+| 2 | Friendly Fighter |
+| 3 | Friendly Bomber |
+| 4 | Friendly Transport |
+| 5 | Friendly Destroyer |
+| 6 | Friendly Submarine |
+| 7 | Friendly Carrier |
+| 8 | Friendly Battleship |
+| 9 | Friendly Cities |
+| 10 | Visible Enemy Units (aggregate) |
+| 11 | Visible Enemy Cities |
+| 12 | Terrain (1 for Ocean, 0 for Land) |
+| 13 | Fog of War (1 for visible, 0 for hidden) |
+| 14 | Turn number (normalized) |
+
+**Note**: The map includes ice cap rows at `y=0` and `y=mapHeight-1` (impassable), so actual tensor height is `H+2`.
+
+### Action Space
+
+Actions are discrete classifications:
+
+| Action | Description |
+|--------|-------------|
+| `END_TURN` | Finish all actions |
+| `SET_PRODUCTION` | Set city production (requires city ID + unit type) |
+| `MOVE` | Move unit (requires unit ID + destination coordinates) |
+| `LOAD` | Load army onto transport (requires unit ID + transport ID) |
+| `UNLOAD` | Unload cargo (requires unit ID + destination coordinates) |
+| `SLEEP` | Sleep unit until woken |
+| `WAKE` | Wake sleeping unit |
+| `SKIP` | Skip this unit for now |
+
+## Architecture Options for NN Agent
+
+### Option 1: Monolithic Policy CNN
+
+Single network that outputs action probabilities over all possible actions.
+
+**Pros**:
+- Simple architecture
+- End-to-end training
+- Can learn feature representations automatically
+
+**Cons**:
+- Large action space (all tiles × all units)
+- Hard to enforce action legality
+- May struggle with long-horizon planning
+
+### Option 2: Multi-Head Architecture
+
+Separate output heads for different action components:
+
+```
+Policy CNN
+  ├─ Action Type Head (8 classes)
+  ├─ Target Tile Head (H × W grid)
+  ├─ Unit ID Head (max units)
+  └─ Production Type Head (8 unit types)
+```
+
+**Pros**:
+- Modular design
+- Easier to mask invalid actions
+- Can train heads separately
+
+**Cons**:
+- More complex training
+- Requires careful coordination between heads
+
+### Option 3: Model-of-Experts (MoE)
+
+Specialized experts for different decision types:
 
 | Expert | Input | Output | Purpose |
 |--------|-------|--------|---------|
-| **CommanderExpert** | Global state (macro map view) | Strategy latent vector | Decide high-level strategy (economy vs defense vs attack) |
-| **CityProductionExpert** | City state + economic context + Strategy vector | Unit type probability distribution | Decide what to build in a city |
-| **UnitMovementExpert** | Unit state + visible map + Strategy vector | Move destination probability | Decide where a unit should move |
-| **CombatTargetExpert** | Unit state + enemy units + Strategy vector | Target selection probability | Decide which enemy to attack |
-| **TransportLoadExpert** | Transport state + army units + Strategy vector | Cargo assignment probability | Decide which units to load |
-| **TransportUnloadExpert** | Transport state + target map + Strategy vector | Unload location probability | Decide where to unload cargo |
+| **CommanderExpert** | Global state | Strategy latent vector | High-level strategy |
+| **CityProductionExpert** | City state + context | Unit type distribution | City production |
+| **UnitMovementExpert** | Unit state + visible map | Move destination | Unit movement |
+| **CombatTargetExpert** | Unit state + enemies | Target selection | Combat decisions |
+| **TransportLoadExpert** | Transport state | Cargo assignment | Loading decisions |
+| **TransportUnloadExpert** | Transport state | Unload location | Unloading decisions |
 
-### 2. State Representation
+**Pros**:
+- Specialized learning per task
+- Easier to interpret decisions
+- Can train experts separately
 
-The state fed to the NN should be:
-- **Normalized** (values scaled to 0-1 range)
-- **Fixed-size tensors** (NNs require fixed input dimensions)
-- **Meaningful features** (capturing strategic relevance)
-- **Fog-of-war aware** (only visible information)
-
-### 3. Action Space
-
-Actions can be:
-- **Discrete** (classification): Select from predefined options
-- **Continuous** (regression): Direct coordinate output
-- **Mixed**: Classification for "what" + regression for "where"
-
-## Architecture Details
-
-### State Encoder (Spatial CNN Grid)
-
-To allow the neural network to inherently understand spatial relationships, bottlenecks, and distances, the state is represented as a 3D tensor `[Channels × MapHeight × MapWidth]`. This is fed into Convolutional Neural Networks (CNNs) using circular padding on the X-axis for the cylindrical map.
-
-```
-Input: Game State Tensor
-  ├─ Channel 1: Friendly Infantry (1 if present, 0 otherwise)
-  ├─ Channel 2: Friendly Tanks
-  ├─ Channel 3: Friendly Fighters
-  ├─ Channel 4: Friendly Bombers
-  ├─ Channel 5: Friendly Transports
-  ├─ Channel 6: Friendly Submarines
-  ├─ Channel 7: Friendly Destroyers
-  ├─ Channel 8: Friendly Cruisers
-  ├─ Channel 9: Friendly Battleships
-  ├─ Channel 10: Friendly Carriers
-  ├─ Channel 11: Friendly Cities
-  ├─ Channel 12: Visible Enemy Units (aggregate or separate channels)
-  ├─ Channel 13: Visible Enemy Cities
-  ├─ Channel 14: Terrain (1 for Ocean, 0 for Land)
-  ├─ Channel 15: Fog of War (1 for visible, 0 for hidden)
-  └─ Global Features (Appended to flattened CNN output):
-     ├─ Turn number (normalized)
-     ├─ Current player (1-hot)
-     ├─ Friendly/Enemy unit counts
-     └─ Strategy Latent Vector (from CommanderExpert)
-```
-
-### Action Decoder
-
-```
-Output: Action Selection
-  ├─ Action Type (1-hot: 8 values)
-  │  ├─ END_TURN
-  │  ├─ SET_PRODUCTION
-  │  ├─ MOVE
-  │  ├─ LOAD
-  │  ├─ UNLOAD
-  │  ├─ SLEEP
-  │  ├─ WAKE
-  │  └─ SKIP
-  ├─ Target ID (if applicable)
-  │  ├─ City ID (for SET_PRODUCTION)
-  │  ├─ Unit ID (for MOVE/LOAD/UNLOAD/SLEEP/WAKE/SKIP)
-  │  └─ Target Unit ID (for LOAD)
-  └─ Destination (x, y) coordinates (for MOVE/UNLOAD)
-```
-
-## Runner Architecture
-
-The Runner is the central coordinator that:
-
-1. **Maintains Game State**: Tracks the current game state from server updates
-2. **Manages Turn Flow**: Knows when it's the agent's turn
-3. **Orchestrates Experts**: Calls the appropriate expert(s) to make decisions
-4. **Handles Constraints**: Validates that actions are legal before sending
-5. **Manages Memory**: Tracks history for better decision-making
-
-### Runner Flow
-
-```
-1. Receive batched stateUpdates from simulation environment
-2. Check if it's my turn
-3. If yes, pass global state to CommanderExpert to generate Strategy Vector
-4. Scan for pending decisions across the batch:
-   a. Find units with moves left → UnitMovementExpert (conditioned on Strategy Vector)
-   b. Find cities without production → CityProductionExpert (conditioned on Strategy Vector)
-   c. Check for transport loading opportunities → TransportLoadExpert
-   d. Check for transport unloading opportunities → TransportUnloadExpert
-5. For each decision needed:
-   a. Extract relevant spatial/CNN slice for the expert
-   b. Call expert NN model (batched across multiple games)
-   c. Sample action from probability distribution
-   d. Validate action legality (masking invalid moves)
-   e. Send batched actions to environment
-6. If no decisions needed, END_TURN
-```
+**Cons**:
+- Complex coordination logic
+- More data needed per expert
+- Harder to transfer between contexts
 
 ## Training Strategy
 
-### Data Collection
+### Phase 1: Imitation Learning (Bootstrapping)
 
-1. **Self-Play**: Agent plays against itself or basic AI
-2. **Expert Demonstrations**: Use existing BasicAgent/AdamAI as "teachers"
-3. **Human Play**: Record human games for imitation learning
+1. Run 50,000+ headless games of `BasicAgent` vs `BasicAgent`
+2. Collect (state, action) pairs via reservoir sampling
+3. Pre-train policy network to mimic `BasicAgent` (~90% action accuracy)
 
-### Loss Functions
+### Phase 2: Reinforcement Learning
 
-| Expert | Loss Function |
-|--------|---------------|
-| CityProduction | Cross-entropy (multi-class) |
-| UnitMovement | Cross-entropy over tile grid OR MSE for coordinates |
-| CombatTarget | Cross-entropy over enemy units |
-| TransportLoad | Cross-entropy over eligible cargo units |
-| TransportUnload | Cross-entropy over unload locations |
+1. Transition to self-play or vs `BasicAgent`
+2. Use policy gradient or PPO for fine-tuning
+3. Reward shaping: +10 for unit kill, +50 for city capture, +1000 for victory
 
-### Reward Structure (for RL)
+### Phase 3: Advanced Features
 
-```
-Immediate Rewards:
-  ├─ Unit destruction (+10)
-  ├─ Enemy unit destroyed (+15)
-  ├─ City capture (+50)
-  ├─ Enemy city captured (-50)
-  └─ Turn completion (-1, discourages slow play)
-
-Long-term Rewards:
-  ├─ Victory (+1000)
-  ├─ Defeat (-1000)
-  ├─ Territory control (per city: +5)
-  └─ Unit preservation (per unit health: +1)
-```
-
-## Implementation Plan
-
-### Phase 1: V1 Training Infrastructure (Headless Bridge)
-1. **State Tensor Converter**: Implement a TS function to convert `PlayerView` into the `15 × H × W` Float32Array CNN grid.
-2. **Headless Simulator**: Create a Node.js script that runs the pure TS engine locally (no sockets, no UI) vs the `BasicAgent`.
-3. **IPC Bridge (Unix Domain Sockets)**: Connect the fast TS simulator to Python using Unix Domain Sockets (UDS) to pass tensor buffers and receive actions. (UDS is native, zero-network-overhead, and requires no external libraries).
-4. **PyTorch Skeleton**: Write a minimal Python/PyTorch CNN to receive states and return valid random actions to benchmark Games-Per-Second.
-
-### Phase 2: Imitation Learning (Bootstrapping)
-1. Run 50,000 headless games of `BasicAgent` vs `BasicAgent`.
-2. Save exact `(State, Action)` pairs to disk.
-3. Pre-train the MoE experts using Supervised Learning to mimic `BasicAgent` (~90% accuracy).
-
-### Phase 3: Expert Models (RL)
-1. Implement Experience Replay Buffer to track `(State, Action, Reward)`.
-2. Transition the pre-trained agent to play against the `BasicAgent` in an RL loop.
-3. Add logging/monitoring.
-
-### Phase 4: Advanced Features
-1. Add TransportLoad/Unload experts
-2. Implement memory/history tracking
+1. Add history/memory tracking
+2. Implement attention over units/cities
 3. Add temperature scheduling for exploration
 
 ## Technical Considerations
 
-### Framework Choice
-- **PyTorch**: Good for research, flexible
-- **TensorFlow.js**: Can run in browser for debugging
-- **ONNX**: For model portability
+### Simulator Performance
 
-### Input Preprocessing
-- Padding for variable-length units/cities
-- Masking for invalid actions
-- Normalization per feature type
+- **TypeScript engine**: Runs headlessly at ~100-500 games/second (single-threaded)
+- **Parallelism**: 8 workers → ~800-4000 games/second
+- **Python overhead**: NN inference adds ~1-10ms per decision
+- **Bottleneck**: For millions of games, consider porting engine to C++/JAX
 
-### Output Postprocessing
-- Masking invalid actions (e.g., can't move to ocean with land unit)
-- Temperature scaling for exploration vs exploitation
-- Top-K sampling for diversity
+### Action Masking
 
-### Simulator Bottleneck for Millions of Games
-- **The Challenge**: A Python training loop cannot make a WebSocket call to a Node.js server for every single unit move. Network/IPC serialization latency would severely bottleneck RL training to just a few dozen actions per second.
-- **Batched Inference**: The system needs a headless environment that can batch thousands of `step()` calls simultaneously. State updates and NN inference must be highly batched.
-- **Engine Porting**: To truly scale RL, the core TypeScript game engine (`packages/shared/src/engine`) will likely need to be ported to C++ or JAX. This allows the simulation to run directly alongside PyTorch on the GPU/CPU in a highly vectorized manner, bypassing Node.js entirely during training.
+Invalid actions must be masked before sampling:
 
-### Performance Optimizations (During Training)
-- Process expert decisions in large batches
-- Pre-compute and cache CNN feature maps for the board; only crop/re-center the feature map around specific units when querying the UnitMovementExpert
-- Async expert calls to avoid blocking the main simulation thread
+- Cannot move land units onto ocean
+- Cannot attack sleeping units
+- Cannot load non-army units onto transports
+- Cannot set production on neutral cities
+- Cannot move units with 0 moves left
 
-## Open Questions
+### Cylindrical Map Handling
 
-1. **Should we use a transformer architecture** for better sequence modeling of game state?
-2. **How much state history** should the agent remember?
-3. **Should experts be trained separately or jointly**?
-4. **What's the right balance** between RL and supervised learning?
-5. **How to handle the cylindrical map** (X-wrapping) in the NN?
+The map wraps east-west. For CNN processing:
+
+- Use circular padding on X-axis
+- Convolution kernels respect wraparound
+- Pooling operations handle edge tiles correctly
 
 ## Next Steps
 
-1. Review and iterate on this design
-2. Define the exact state tensor shapes
-3. Create mock expert implementations
-4. Start collecting training data
+1. **Choose architecture**: Monolithic vs multi-head vs MoE
+2. **Implement state converter**: `PlayerView` → Float32Array (already exists in `tensorUtils.ts`)
+3. **Build Python training loop**: PyTorch model + data loader
+4. **Benchmark games/second**: Measure inference throughput
+5. **Start with imitation learning**: Bootstrap from `BasicAgent`
+6. **Transition to RL**: Fine-tune with self-play

@@ -4,7 +4,7 @@
  * Each completed game is written directly as a JSON file to REPLAY_DIR.
  *
  * P1_AGENT / P2_AGENT — agent name for each player (default: basicAgent).
- * Supported values: basicAgent, gunAirAgent, adamAI
+ * Supported values: basicAgent, gunAirAgent
  */
 import fs from 'fs';
 import path from 'path';
@@ -15,7 +15,6 @@ import {
   getPlayerView,
   BasicAgent,
   GunAirAgent,
-  AdamAI,
 } from '@sc/shared';
 import type { Agent, AgentAction } from '@sc/shared';
 import { snapshotGame, type ReplayMeta } from './replayUtils.js';
@@ -38,9 +37,6 @@ function makeAgent(name: string): Agent {
     case 'gunairagent':
     case 'gunair':
       return new GunAirAgent();
-    case 'adamai':
-    case 'adam':
-      return new AdamAI();
     case 'basicagent':
     case 'basic':
     default:
@@ -78,7 +74,7 @@ for (let g = 0; g < numGames; g++) {
   agents.player1.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
   agents.player2.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
 
-  const frames: ReturnType<typeof snapshotGame>[] = [snapshotGame(state)];
+  const frames: ReturnType<typeof snapshotGame>[] = [];
   let prevTurn = state.turn;
   let actionsThisTurn = 0;
   let prevPlayer = state.currentPlayer;
@@ -105,13 +101,13 @@ for (let g = 0; g < numGames; g++) {
     }
 
     if (state.turn !== prevTurn) {
-      frames.push(snapshotGame(state));
+      frames.push(snapshotGame(state, agents));
       prevTurn = state.turn;
     }
   }
 
   if (state.winner !== null && frames[frames.length - 1].turn !== state.turn) {
-    frames.push(snapshotGame(state));
+    frames.push(snapshotGame(state, agents));
   }
 
   const p1Cities = state.cities.filter((c) => c.owner === 'player1').length;
@@ -119,6 +115,7 @@ for (let g = 0; g < numGames; g++) {
   const neutral  = state.cities.filter((c) => c.owner === null).length;
 
   const id = randomUUID();
+
   const meta: ReplayMeta = {
     id,
     gameNum: gameNum + g,

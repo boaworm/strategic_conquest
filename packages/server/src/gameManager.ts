@@ -8,6 +8,7 @@ import {
   createGameState,
   applyAction,
   getPlayerView,
+  advanceProduction,
   type AIDifficulty,
   UNIT_STATS,
 } from '@sc/shared';
@@ -58,8 +59,8 @@ export class GameManager {
     difficulty: AIDifficulty = 'medium',
     p1Type: 'human' | 'ai' = 'human',
     p2Type: 'human' | 'ai' = 'human',
-    p1AI: 'adam' | 'basic' | 'gunair' = 'basic',
-    p2AI: 'adam' | 'basic' | 'gunair' = 'basic',
+    p1AI: 'basic' | 'gunair' = 'basic',
+    p2AI: 'basic' | 'gunair' = 'basic',
   ): Promise<GameSession> {
     const id = crypto.randomUUID();
     const tokens = generateTokens();
@@ -264,7 +265,10 @@ export class GameManager {
     session.state.currentPlayer = nextPlayer;
     session.state.turn++;
 
-    // Reset moves and attack status for the new player's units
+    // Advance production for the new current player (at beginning of turn)
+    advanceProduction(session.state, nextPlayer);
+
+    // Reset moves and attack status for the new player's units (including newly produced)
     for (const unit of session.state.units) {
       if (unit.owner === nextPlayer) {
         const stats = UNIT_STATS[unit.type];

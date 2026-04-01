@@ -1,5 +1,31 @@
 # Quickstart
 
+## Test Cases
+
+### Running individual tests
+
+```bash
+npx tsx packages/shared/src/test_exploreAndExpand_3.ts
+npx tsx packages/shared/src/test_transportEarlyDeparture.ts
+```
+
+### View test replays
+
+```bash
+# Run test suite and open the most recent replay
+npm run test_replay
+
+# View specific replay
+npx tsx packages/trainer/src/replay_picker.ts tmp/test-*.json
+```
+
+### Adding a new test
+
+1. Create a new test file in `packages/shared/src/test_*.ts`
+2. Use the `runTest()` helper from `testRunner.ts`
+3. Define a `victoryCondition` that checks the expected outcome
+4. Add the test to `packages/trainer/src/test_replay_picker.ts`
+
 ## Prerequisites
 
 - Node.js 18+
@@ -50,4 +76,23 @@ npx tsx packages/trainer/src/index.ts --pop 200 --gens 500 --out champion.json
 
 # See all options
 npx tsx packages/trainer/src/index.ts --help
+```
+
+## Record games
+
+```bash
+# Record 5 games (default)
+npm run record
+
+# Record 100 games across 8 workers
+NUM_GAMES=100 WORKERS=8 npm run record
+
+# Custom map size and agent matchup
+NUM_GAMES=50 P1_AGENT=basicAgent P2_AGENT=gunAirAgent npm run record
+```
+
+## View replays
+
+```bash
+npm run replay
 ```

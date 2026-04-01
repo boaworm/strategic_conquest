@@ -127,7 +127,8 @@ export function canMoveTo(
 
   // Air unit fuel-return check: after this move the unit must
   // still have enough fuel to reach a friendly city or carrier.
-  if (stats.domain === UnitDomain.Air && unit.fuel !== undefined) {
+  // Bombers have no fuel constraint (single-use weapons).
+  if (stats.domain === UnitDomain.Air && unit.fuel !== undefined && unit.type !== UnitType.Bomber) {
     const fuelAfterMove = unit.fuel - 1;
     const dist = distToNearestLandingSpot(state, wx, wy, unit.owner, unit.type);
     if (fuelAfterMove < dist) {

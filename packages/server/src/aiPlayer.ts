@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import { AdamAI, BasicAgent, GunAirAgent, UNIT_STATS } from '@sc/shared';
+import { BasicAgent, GunAirAgent, UNIT_STATS } from '@sc/shared';
 import type { Agent, AgentAction } from '@sc/shared';
 import type { GameSession } from './gameManager.js';
 import type { PlayerId } from '@sc/shared';
@@ -15,16 +15,14 @@ const log = VERBOSE ? console.log : () => {};
 export async function spawnAIPlayer(
   session: GameSession,
   playerId: PlayerId,
-  aiName: 'adam' | 'basic' | 'gunair',
+  aiName: 'basic' | 'gunair',
 ): Promise<Socket> {
   const token = playerId === 'player1' ? session.tokens.p1Token : session.tokens.p2Token;
   const serverUrl = process.env.SERVER_URL || 'http://localhost:4000';
 
   // Create the appropriate AI agent
   let agent: Agent;
-  if (aiName === 'adam') {
-    agent = new AdamAI();
-  } else if (aiName === 'gunair') {
+  if (aiName === 'gunair') {
     agent = new GunAirAgent();
   } else {
     agent = new BasicAgent();
@@ -121,6 +119,7 @@ function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId
     visibleEnemyCities: view.visibleEnemyCities,
     turn: view.turn,
     myPlayerId: expectedPlayerId as any,
+    myBomberBlastRadius: view.myBomberBlastRadius,
   });
 
   logAction(prefix, action, view);

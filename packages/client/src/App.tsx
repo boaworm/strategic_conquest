@@ -6,6 +6,7 @@ import { CityDialog } from './components/CityDialog';
 import { HUD } from './components/HUD';
 import { MainMenu } from './components/MainMenu';
 import { ReplayViewer } from './components/ReplayViewer';
+import { TestReplayViewer } from './components/TestReplayViewer';
 import { GamePhase } from '@sc/shared';
 
 export default function App() {
@@ -20,6 +21,16 @@ export default function App() {
   const cityDialog = cityDialogId
     ? view?.myCities.find((c) => c.id === cityDialogId) ?? null
     : null;
+
+  // Test replay viewer
+  const testReplayParam = new URLSearchParams(window.location.search).get('testReplay');
+  if (testReplayParam) {
+    return (
+      <div style={{ margin: 0, padding: 0, height: '100vh' }}>
+        <TestReplayViewer />
+      </div>
+    );
+  }
 
   // Replay viewer
   if (showReplay) {
