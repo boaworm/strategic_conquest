@@ -6,6 +6,7 @@ import {
   type TileView,
   type CityView,
   type UnitView,
+  type Unit,
   GamePhase,
   TileVisibility,
   Terrain,
@@ -238,8 +239,19 @@ function handleMove(
       }
     }
 
-    // Pick a random defender from the enemies present
-    const defender = enemyUnits[Math.floor(Math.random() * enemyUnits.length)];
+    // Pick a defender from the enemies present
+    // Sea units prioritize sea targets (to attack transports, not land units on same tile)
+    let defender: Unit;
+    if (UNIT_STATS[unit.type].domain === UnitDomain.Sea) {
+      const seaTargets = enemyUnits.filter((e) => UNIT_STATS[e.type].domain === UnitDomain.Sea);
+      if (seaTargets.length > 0) {
+        defender = seaTargets[Math.floor(Math.random() * seaTargets.length)];
+      } else {
+        defender = enemyUnits[Math.floor(Math.random() * enemyUnits.length)];
+      }
+    } else {
+      defender = enemyUnits[Math.floor(Math.random() * enemyUnits.length)];
+    }
 
     // Bomber: check for intercepting fighters anywhere in the blast area.
     // If interceptors are present, the bomber fights them instead of bombing.

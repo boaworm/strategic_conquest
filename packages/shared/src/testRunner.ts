@@ -178,19 +178,22 @@ export function createGameStateFromConfig(config: TestConfig): GameState {
       productionProgress: 0,
     })),
     testOptions: config.testOptions,
-    units: config.units.map((u) => ({
-      id: u.id,
-      type: u.type,
-      owner: u.owner,
-      x: u.x,
-      y: u.y,
-      health: u.health ?? 100,
-      movesLeft: u.movesLeft ?? UNIT_STATS[u.type as keyof typeof UNIT_STATS]?.movesPerTurn ?? 3,
-      sleeping: false,
-      hasAttacked: false,
-      cargo: u.cargo ?? [],
-      carriedBy: u.carriedBy ?? null,
-    })),
+    units: config.units.map((u) => {
+      const stats = UNIT_STATS[u.type as keyof typeof UNIT_STATS];
+      return {
+        id: u.id,
+        type: u.type,
+        owner: u.owner,
+        x: u.x,
+        y: u.y,
+        health: u.health ?? stats?.maxHealth ?? 1,
+        movesLeft: u.movesLeft ?? stats?.movesPerTurn ?? 3,
+        sleeping: false,
+        hasAttacked: false,
+        cargo: u.cargo ?? [],
+        carriedBy: u.carriedBy ?? null,
+      };
+    }),
     explored: {
       player1: new Set(),
       player2: new Set(),
