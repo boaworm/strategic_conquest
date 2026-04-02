@@ -34,13 +34,13 @@ const TENSOR_BYTES = NUM_CHANNELS * (MAP_HEIGHT + 2) * MAP_WIDTH * 4;  // +2 for
 const workerScript = fileURLToPath(new URL('../dist/collect_worker.js', import.meta.url));
 const tmpDir = path.join(OUTPUT_DIR, 'tmp');
 
-function spawnWorker(workerId: number, numGames: number): Promise<void> {
+function spawnWorker(workerId: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [workerScript], {
       env: {
         ...process.env,
         WORKER_ID:  String(workerId),
-        NUM_GAMES:  String(numGames),
+        TOTAL_GAMES:  String(NUM_GAMES),
         MAP_WIDTH:  String(MAP_WIDTH),
         MAP_HEIGHT: String(MAP_HEIGHT),
         MAX_TURNS:           String(MAX_TURNS),
@@ -92,49 +92,12 @@ function mb(bytes: number): string {
   return (bytes / 1_000_000).toFixed(0) + ' MB';
 }
 
-async function mergeFiles(numWorkers: number): Promise<{ totalSamples: number; wins: Record<string, number> }> {
-  console.log('Merging worker output...');
-
-  const statesWs  = fs.createWriteStream(path.join(OUTPUT_DIR, 'states.bin'));
-  const actionsWs = fs.createWriteStream(path.join(OUTPUT_DIR, 'actions.jsonl'));
-  let totalSamples = 0;
-  const wins = { player1: 0, player2: 0, draw: 0 };
-
-  for (let i = 0; i < numWorkers; i++) {
-    const stateFile  = path.join(tmpDir, `worker-${i}.states.bin`);
-    const actionFile = path.join(tmpDir, `worker-${i}.actions.jsonl`);
-    const stateSize  = fs.statSync(stateFile).size;
-    const actionSize = fs.statSync(actionFile).size;
-    process.stdout.write(`  worker ${i}: states ${mb(stateSize)}, actions ${mb(actionSize)} ... `);
-
-    await pipeFile(stateFile,  statesWs);
-    await pipeFile(actionFile, actionsWs);
-
-    const result = JSON.parse(fs.readFileSync(path.join(tmpDir, `result-${i}.json`), 'utf-8'));
-    totalSamples += result.samples;
-    wins.player1 += result.wins.player1;
-    wins.player2 += result.wins.player2;
-    wins.draw    += result.wins.draw;
-    console.log(`done (${result.samples.toLocaleString()} samples)`);
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    statesWs.end((err?: Error | null) => err ? reject(err) : resolve());
-  });
-  await new Promise<void>((resolve, reject) => {
-    actionsWs.end((err?: Error | null) => err ? reject(err) : resolve());
-  });
-  fs.rmSync(tmpDir, { recursive: true });
-
-  return { totalSamples, wins };
-}
-
 async function main(): Promise<void> {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  const gamesPerWorker = Math.ceil(NUM_GAMES / WORKERS);
-  const actualGames    = gamesPerWorker * WORKERS;
+  // Initialize shared game counter
+  fs.writeFileSync(path.join(tmpDir, 'game_counter.txt'), '0');
 
   console.log(`Collecting data: ${NUM_GAMES} games across ${WORKERS} worker(s), map ${MAP_WIDTH}×${MAP_HEIGHT}`);
 
@@ -145,40 +108,56 @@ async function main(): Promise<void> {
   const pollInterval = setInterval(() => {
     const totalDone = Array.from({ length: WORKERS }, (_, i) => readProgress(i))
       .reduce((a, b) => a + b, 0);
-    const pct = Math.floor((totalDone / actualGames) * 100);
+    const pct = Math.floor((totalDone / NUM_GAMES) * 100);
     if (pct > lastReportedPct) {
       lastReportedPct = pct;
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-      console.log(`${pct}% completed (${totalDone.toLocaleString()}/${actualGames.toLocaleString()} games, ${elapsed}s)`);
+      console.log(`${pct}% completed (${totalDone.toLocaleString()}/${NUM_GAMES.toLocaleString()} games, ${elapsed}s)`);
     }
   }, 1000);
 
   await Promise.all(
-    Array.from({ length: WORKERS }, (_, i) => spawnWorker(i, gamesPerWorker)),
+    Array.from({ length: WORKERS }, (_, i) => spawnWorker(i)),
   );
 
   clearInterval(pollInterval);
 
-  const { totalSamples, wins } = await mergeFiles(WORKERS);
+  // Aggregate results from workers
+  let totalSamples = 0;
+  const wins = { player1: 0, player2: 0, draw: 0 };
+  for (let i = 0; i < WORKERS; i++) {
+    const result = JSON.parse(fs.readFileSync(path.join(tmpDir, `result-${i}.json`), 'utf-8'));
+    totalSamples += result.samples;
+    wins.player1 += result.wins.player1;
+    wins.player2 += result.wins.player2;
+    wins.draw += result.wins.draw;
+  }
+
+  // Move worker files to output dir (no merge — keep per-worker files)
+  for (let i = 0; i < WORKERS; i++) {
+    fs.renameSync(path.join(tmpDir, `worker-${i}.states.bin`), path.join(OUTPUT_DIR, `worker-${i}.states.bin`));
+    fs.renameSync(path.join(tmpDir, `worker-${i}.actions.jsonl`), path.join(OUTPUT_DIR, `worker-${i}.actions.jsonl`));
+  }
+  fs.rmSync(tmpDir, { recursive: true });
 
   const meta = {
     mapWidth:    MAP_WIDTH,
-    mapHeight:   MAP_HEIGHT + 2,  // actual tile grid height including ice cap rows
+    mapHeight:   MAP_HEIGHT + 2,
     numChannels: NUM_CHANNELS,
     numSamples:  totalSamples,
-    numGames:    actualGames,
+    numGames:    NUM_GAMES,
     wins,
   };
   fs.writeFileSync(path.join(OUTPUT_DIR, 'meta.json'), JSON.stringify(meta, null, 2));
 
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-  const mbStates = ((totalSamples * TENSOR_BYTES) / 1e6).toFixed(1);
+  const mbPerWorker = ((TENSOR_BYTES * (totalSamples / WORKERS)) / 1e6).toFixed(1);
 
   console.log(`Done in ${elapsed}s`);
-  console.log(`  ${totalSamples.toLocaleString()} samples, ${actualGames.toLocaleString()} games`);
+  console.log(`  ${totalSamples.toLocaleString()} samples, ${NUM_GAMES.toLocaleString()} games`);
   console.log(`  P1 wins: ${wins.player1}  P2 wins: ${wins.player2}  Draws: ${wins.draw}`);
-  console.log(`  states.bin: ~${mbStates} MB`);
-  console.log(`  Output: ${OUTPUT_DIR}/`);
+  console.log(`  Per-worker states: ~${mbPerWorker} MB each`);
+  console.log(`  Output: ${OUTPUT_DIR}/ (worker-*.states.bin, worker-*.actions.jsonl)`);
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

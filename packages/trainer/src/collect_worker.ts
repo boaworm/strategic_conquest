@@ -16,7 +16,7 @@ import type { AgentAction } from '@sc/shared';
 import { snapshotGame } from './replayUtils.js';
 
 const workerId  = parseInt(process.env.WORKER_ID!);
-const numGames  = parseInt(process.env.NUM_GAMES!);
+const totalGames  = parseInt(process.env.TOTAL_GAMES!);
 const mapWidth  = parseInt(process.env.MAP_WIDTH!);
 const mapHeight = parseInt(process.env.MAP_HEIGHT!);
 const maxTurns  = parseInt(process.env.MAX_TURNS!);
@@ -30,9 +30,59 @@ const replayDir = process.env.REPLAY_DIR ?? null;
 if (replayDir) fs.mkdirSync(replayDir, { recursive: true });
 
 const progressFile = path.join(tmpDir, `progress-${workerId}.txt`);
+const counterFile = path.join(tmpDir, 'game_counter.txt');
 
 function writeProgress(game: number): void {
   fs.writeFileSync(progressFile, String(game));
+}
+
+// Atomic claim of next game number using file-based locking
+function claimNextGame(): number | null {
+  const lockFile = path.join(tmpDir, 'game_counter.lock');
+
+  for (let attempt = 0; attempt < 100; attempt++) {
+    let lockFd: number;
+    try {
+      // Try to acquire lock via exclusive open
+      lockFd = fs.openSync(lockFile, 'wx');
+    } catch {
+      // Lock held by another worker - wait briefly and retry
+      const delay = Math.floor(1 + Math.random() * 10);
+      const start = Date.now();
+      while (Date.now() - start < delay) { /* spin */ }
+      continue;
+    }
+
+    try {
+      // Read current counter
+      const content = fs.readFileSync(counterFile, 'utf-8').trim();
+      const current = content ? parseInt(content) : 0;
+      const next = current + 1;
+
+      if (next > totalGames) {
+        fs.closeSync(lockFd);
+        fs.unlinkSync(lockFile);
+        return null;
+      }
+
+      // Write new counter value
+      fs.writeFileSync(counterFile, String(next));
+
+      fs.closeSync(lockFd);
+      fs.unlinkSync(lockFile);
+      return next;
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        // Counter file missing, initialize it
+        try { fs.writeFileSync(counterFile, '0'); } catch {}
+        continue;
+      }
+      fs.closeSync(lockFd);
+      try { fs.unlinkSync(lockFile); } catch {}
+      return null;
+    }
+  }
+  return null;
 }
 
 process.stderr.write(`[W${workerId}] started\n`);
@@ -43,13 +93,20 @@ const actionsWs = fs.createWriteStream(path.join(tmpDir, `worker-${workerId}.act
 let totalSamples = 0;
 const wins = { player1: 0, player2: 0, draw: 0 };
 
-for (let g = 0; g < numGames; g++) {
+// Initialize counter file if it doesn't exist
+if (!fs.existsSync(counterFile)) {
+  fs.writeFileSync(counterFile, '0');
+}
+
+// Process games from shared queue until all games are done
+let gameNumber: number | null;
+while ((gameNumber = claimNextGame()) !== null) {
   let state: ReturnType<typeof createGameState>;
   try {
     state = createGameState({ width: mapWidth, height: mapHeight });
   } catch {
     // Map generation failed constraints — skip this game
-    writeProgress(g + 1);
+    writeProgress(gameNumber);
     continue;
   }
 
@@ -154,13 +211,13 @@ for (let g = 0; g < numGames; g++) {
     fs.writeFileSync(path.join(replayDir, `${id}.json`), JSON.stringify(replay));
   }
 
-  process.stderr.write(
-    `[W${workerId}] game ${g + 1}: turns=${state.turn} winner=${state.winner ?? 'draw'} ` +
+   process.stderr.write(
+    `[W${workerId}] game ${gameNumber}: turns=${state.turn} winner=${state.winner ?? 'draw'} ` +
     `p1=${p1cities} p2=${p2cities} neutral=${neutral} samples=${seenThisGame}\n`,
   );
 
-  if (g === 0 || (g + 1) % 50 === 0 || g === numGames - 1) {
-    writeProgress(g + 1);
+  if (gameNumber === 1 || gameNumber % 50 === 0 || gameNumber === totalGames) {
+    writeProgress(gameNumber);
   }
 }
 
@@ -169,4 +226,3 @@ await new Promise<void>((resolve) => actionsWs.end(resolve));
 
 // Write final result as JSON so main process can read it
 fs.writeFileSync(path.join(tmpDir, `result-${workerId}.json`), JSON.stringify({ samples: totalSamples, wins }));
-writeProgress(numGames);  // mark complete

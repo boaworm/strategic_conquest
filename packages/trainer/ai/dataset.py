@@ -2,12 +2,18 @@
 GameDataset — loads imitation learning data produced by collect_data.ts.
 
 File format (all in OUTPUT_DIR/):
-  states.bin    — raw float32, shape [N, C, H, W] with no header
-  actions.jsonl — one action JSON per line
-  meta.json     — mapWidth, mapHeight, numChannels, numSamples, numGames, wins
+  Consolidated mode:
+    states.bin    — raw float32, shape [N, C, H, W] with no header
+    actions.jsonl — one action JSON per line
+    meta.json     — mapWidth, mapHeight, numChannels, numSamples, numGames, wins
+  Per-worker mode (if states.bin not found):
+    worker-*.states.bin — one file per worker
+    worker-*.actions.jsonl — one file per worker
+    meta.json — same as above
 """
 
 import json
+import glob
 from pathlib import Path
 
 import numpy as np
@@ -66,18 +72,50 @@ class GameDataset(Dataset):
         self.num_channels = meta["numChannels"]
         self.num_samples  = meta["numSamples"]
 
-        # Memory-map the states file — avoids loading everything into RAM.
-        # Each sample is num_channels * map_height * map_width float32 values.
-        self.states = np.memmap(
-            data_dir / "states.bin",
-            dtype="float32",
-            mode="r",
-            shape=(self.num_samples, self.num_channels, self.map_height, self.map_width),
-        )
+        states_file = data_dir / "states.bin"
+        actions_file = data_dir / "actions.jsonl"
 
-        # Load action JSONs into memory — much smaller than the tensors.
-        with open(data_dir / "actions.jsonl") as f:
-            self.actions = [json.loads(line) for line in f if line.strip()]
+        # Check if consolidated files exist
+        if states_file.exists() and actions_file.exists():
+            # Consolidated mode — single files
+            self.states = np.memmap(
+                states_file,
+                dtype="float32",
+                mode="r",
+                shape=(self.num_samples, self.num_channels, self.map_height, self.map_width),
+            )
+            with open(actions_file) as f:
+                self.actions = [json.loads(line) for line in f if line.strip()]
+        else:
+            # Per-worker mode — concatenate worker files virtually
+            worker_states = sorted(glob.glob(str(data_dir / "worker-*.states.bin")))
+            worker_actions = sorted(glob.glob(str(data_dir / "worker-*.actions.jsonl")))
+
+            if not worker_states:
+                raise FileNotFoundError(
+                    f"No states.bin or worker-*.states.bin found in {data_dir}"
+                )
+
+            # Memory-map each worker file and track offsets
+            self.worker_files = []
+            self.worker_offsets = [0]
+            self.worker_samples = []
+
+            for wf in worker_states:
+                size = Path(wf).stat().st_size
+                sample_size = self.num_channels * self.map_height * self.map_width * 4  # float32 = 4 bytes
+                count = size // sample_size
+                self.worker_samples.append(count)
+                self.worker_offsets.append(self.worker_offsets[-1] + count)
+                self.worker_files.append(np.memmap(wf, dtype="float32", mode="r"))
+
+            # Load all actions from worker files
+            self.actions = []
+            for wa in sorted(glob.glob(str(data_dir / "worker-*.actions.jsonl"))):
+                with open(wa) as f:
+                    self.actions.extend([json.loads(line) for line in f if line.strip()])
+
+            self.states = self.worker_files  # List of memmaps
 
         if len(self.actions) != self.num_samples:
             raise ValueError(
@@ -89,8 +127,17 @@ class GameDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx: int) -> dict:
-        # .copy() is required when using memmap with num_workers > 0
-        state = torch.from_numpy(self.states[idx].copy())
+        # Handle per-worker mode vs consolidated mode
+        if isinstance(self.states, list):
+            # Per-worker mode: find which worker file contains this index
+            worker_idx = 0
+            while idx >= self.worker_offsets[worker_idx + 1]:
+                worker_idx += 1
+            local_idx = idx - self.worker_offsets[worker_idx]
+            state = torch.from_numpy(self.states[worker_idx][local_idx].copy())
+        else:
+            # Consolidated mode
+            state = torch.from_numpy(self.states[idx].copy())
 
         action = self.actions[idx]
         action_type = action.get("type", "END_TURN")

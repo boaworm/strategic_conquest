@@ -10,6 +10,10 @@ This document outlines the design for a neural network-based agent that can play
 
 ## Current Infrastructure
 
+### Practical Guide
+
+See `packages/trainer/ai/README.md` for step-by-step training instructions.
+
 ### Genetic Algorithm (`packages/trainer`)
 
 - **Genome**: 28-weight vector over hand-crafted strategic features
@@ -20,12 +24,13 @@ This document outlines the design for a neural network-based agent that can play
 
 ### Imitation Learning (`packages/trainer/src/collect_data.ts`)
 
-- **Workers**: Child processes (not worker threads — tsx doesn't transfer to workers reliably)
-- **Output**:
-  - `states.bin` — raw float32 bytes, shape `[N, 14, H, W]`
-  - `actions.jsonl` — one action JSON per line
+- **Workers**: Child processes with shared atomic game counter
+- **Output** (per-worker, no merge to avoid disk duplication):
+  - `worker-*.states.bin` — raw float32 bytes, shape `[N, 14, H, W]` per worker
+  - `worker-*.actions.jsonl` — one action JSON per line per worker
   - `meta.json` — map dimensions, channels, sample count, wins
 - **Sampling**: Reservoir sampling (Algorithm R), max 3000 samples per game
+- **Training**: Python `dataset.py` automatically reads per-worker files
 
 ### State Tensor Representation (14 channels)
 
@@ -33,20 +38,20 @@ The state is represented as a 3D tensor `[Channels × MapHeight × MapWidth]`:
 
 | Channel | Description |
 |---------|-------------|
-| 1 | Friendly Army |
-| 2 | Friendly Fighter |
-| 3 | Friendly Bomber |
-| 4 | Friendly Transport |
-| 5 | Friendly Destroyer |
-| 6 | Friendly Submarine |
-| 7 | Friendly Carrier |
-| 8 | Friendly Battleship |
-| 9 | Friendly Cities |
-| 10 | Visible Enemy Units (aggregate) |
-| 11 | Visible Enemy Cities |
-| 12 | Terrain (1 for Ocean, 0 for Land) |
-| 13 | Fog of War (1 for visible, 0 for hidden) |
-| 14 | Turn number (normalized) |
+| 0 | Friendly Army |
+| 1 | Friendly Fighter |
+| 2 | Friendly Bomber |
+| 3 | Friendly Transport |
+| 4 | Friendly Destroyer |
+| 5 | Friendly Submarine |
+| 6 | Friendly Carrier |
+| 7 | Friendly Battleship |
+| 8 | Friendly Cities |
+| 9 | Enemy Units (aggregate) |
+| 10 | Enemy Cities |
+| 11 | Terrain (1 for Ocean, 0 for Land) |
+| 12 | My Bomber Blast Radius |
+| 13 | Reserved / Future |
 
 **Note**: The map includes ice cap rows at `y=0` and `y=mapHeight-1` (impassable), so actual tensor height is `H+2`.
 
@@ -64,6 +69,7 @@ Actions are discrete classifications:
 | `SLEEP` | Sleep unit until woken |
 | `WAKE` | Wake sleeping unit |
 | `SKIP` | Skip this unit for now |
+| `DISBAND` | Disband unit (not yet implemented) |
 
 ## Architecture Options for NN Agent
 
@@ -129,9 +135,18 @@ Specialized experts for different decision types:
 
 ### Phase 1: Imitation Learning (Bootstrapping)
 
-1. Run 50,000+ headless games of `BasicAgent` vs `BasicAgent`
+1. Run 1,000+ headless games of `BasicAgent` vs `BasicAgent`
 2. Collect (state, action) pairs via reservoir sampling
-3. Pre-train policy network to mimic `BasicAgent` (~90% action accuracy)
+3. Pre-train policy network to mimic `BasicAgent`
+
+```bash
+# Collect data
+DATA_DIR=/Volumes/500G/Training NUM_GAMES=1500 MAX_SAMPLES_PER_GAME=3000 WORKERS=8 npm run collect
+
+# Train model
+cd packages/trainer/ai
+python train.py --data-dir /Volumes/500G/Training/training --epochs 50
+```
 
 ### Phase 2: Reinforcement Learning
 
@@ -145,12 +160,20 @@ Specialized experts for different decision types:
 2. Implement attention over units/cities
 3. Add temperature scheduling for exploration
 
+## Quick Reference
+
+| Step | Command | Output |
+|------|---------|--------|
+| Collect data | `DATA_DIR=... NUM_GAMES=1500 WORKERS=8 npm run collect` | `worker-*.states.bin`, `meta.json` |
+| Train model | `python train.py --data-dir ... --epochs 50` | `checkpoints/best_model.pt` |
+| Evaluate | `npm run nn-sim` | NN vs BasicAgent results |
+
 ## Technical Considerations
 
 ### Simulator Performance
 
-- **TypeScript engine**: Runs headlessly at ~100-500 games/second (single-threaded)
-- **Parallelism**: 8 workers → ~800-4000 games/second
+- **TypeScript engine**: ~300 games/second (BasicAgent vs BasicAgent, single worker)
+- **Parallelism**: 8 workers → ~2400 games/second
 - **Python overhead**: NN inference adds ~1-10ms per decision
 - **Bottleneck**: For millions of games, consider porting engine to C++/JAX
 

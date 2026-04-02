@@ -65,8 +65,18 @@ npm run nn-sim                         # NN agent vs BasicAgent over Unix domain
 # Collect (state, action) pairs for NN training
 DATA_DIR=/Volumes/500G/Training NUM_GAMES=1500 MAX_SAMPLES_PER_GAME=3000 WORKERS=8 MAX_TURNS=300 npm run collect
 
-# Output: DATA_DIR/training/states.bin, actions.jsonl, meta.json
+# Output: DATA_DIR/training/worker-*.states.bin, worker-*.actions.jsonl, meta.json
+# Per-worker files (no merge to avoid disk duplication)
 ```
+
+### Python NN training
+```bash
+cd packages/trainer/ai
+pip install -r requirements.txt
+python train.py --data-dir /Volumes/500G/Training/training --out-dir ./checkpoints --epochs 50
+```
+
+See `packages/trainer/ai/README.md` for full documentation.
 
 ### Recording replays
 ```bash
@@ -77,12 +87,6 @@ DATA_DIR=./data NUM_GAMES=100 WORKERS=8 npm run record
 rm -fR tmp/* && DATA_DIR=tmp NUM_GAMES=8 MAX_TURNS=300 P1AGENT=basicAgent P2AGENT=basicAgent npm run record
 ```
 
-### Python NN training (Phase 2)
-```bash
-cd packages/trainer/ai
-pip install -r requirements.txt
-python train.py --data-dir ../data --out-dir ./checkpoints --epochs 50
-```
 
 ## Architecture
 
