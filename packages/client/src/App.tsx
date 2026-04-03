@@ -14,6 +14,7 @@ export default function App() {
   const connected = useGameStore((s) => s.connected);
   const playerId = useGameStore((s) => s.playerId);
   const [cityDialogId, setCityDialogId] = useState<string | null>(null);
+  const setCamera = useGameStore((s) => s.setCamera);
   const replayParam = new URLSearchParams(window.location.search).get('replay');
   const [showReplay, setShowReplay] = useState(!!replayParam);
 
@@ -83,7 +84,13 @@ export default function App() {
               <button
                 key={city.id}
                 className={`w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-700 ${cityDialogId === city.id ? 'bg-purple-900 ring-1 ring-purple-500' : 'bg-gray-900'}`}
-                onClick={() => setCityDialogId(city.id)}
+                onClick={(e) => {
+                  if (e.shiftKey) {
+                    setCamera(city.x, city.y);
+                  } else {
+                    setCityDialogId(city.id);
+                  }
+                }}
               >
                 ({city.x},{city.y}){' '}
                 {city.producing ? (

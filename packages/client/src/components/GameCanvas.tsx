@@ -743,7 +743,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     progress: number;      // 0→1 over the animation
     startTime: number;
     result: CombatResult | null;  // filled once server responds
-    phase: 'waiting' | 'clashing' | 'flash' | 'done';
+    phase: 'waiting' | 'clashing' | 'flash' | 'result' | 'done';
   }
   interface BomberBlastAnim {
     centerX: number;       // tile coords
@@ -758,6 +758,16 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   const pendingCombatRef = useRef<{ unitId: string; type: UnitType; owner: string; fromX: number; fromY: number; toX: number; toY: number } | null>(null);
   const animFrameRef = useRef<number>(0);
   const [, forceRender] = useState(0);
+
+  // Combat result text display
+  interface CombatResultText {
+    text: string;
+    x: number;
+    y: number;
+    startTime: number;
+    color: string;
+  }
+  const combatResultRef = useRef<CombatResultText | null>(null);
 
   // Flame hit indicators: shown on units that were hit in combat
   interface FlameHit {
@@ -779,6 +789,16 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
   }
   const moveAnimRef = useRef<MoveAnim | null>(null);
   const MOVE_STEP_DURATION = 333; // ms per tile
+
+  // Fading text for messages like "Out of range"
+  interface FadingText {
+    text: string;
+    x: number;
+    y: number;
+    startTime: number;
+    color: string;
+  }
+  const fadingTextRef = useRef<FadingText | null>(null);
 
   // ── Unit sprite images ─────────────────────────────────────
   const unitImagesRef = useRef<Partial<Record<UnitType, HTMLImageElement>>>({});
@@ -992,6 +1012,15 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
 
           drawUnit(ctx, unit.type, cxCenter, cyCenter, tileSize, ownerColor(unit.owner), unitImagesRef.current);
 
+          // Stack count when multiple units on same tile (white number, bottom-right)
+          if (units.length > 1 && tileSize >= 14) {
+            ctx.fillStyle = '#fff';
+            ctx.font = `bold ${Math.max(10, tileSize * 0.45)}px sans-serif`;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`${units.length}`, screenPx + tileSize - 2, screenPy + tileSize - 2);
+          }
+
           // Cargo count for carriers/transports (white number, top-left)
           if (
             (unit.type === UnitType.Carrier || unit.type === UnitType.Transport) &&
@@ -1148,6 +1177,59 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
 
         // Attacker is already drawn by normal unit rendering at its new position
         // No need to draw it here - this prevents double-drawing and flickering
+      } else if (combatAnim.phase === 'result') {
+        // Unit stays at target position during result display
+        drawUnit(ctx, combatAnim.attackerType, toSX, toSY, tileSize, ownerColor(combatAnim.attackerOwner), unitImagesRef.current);
+      }
+    }
+
+    // ── Combat result text (Win/Draw/Loss) ────────────────────
+    const resultText = combatResultRef.current;
+    if (resultText) {
+      const elapsed = performance.now() - resultText.startTime;
+      const fadeDuration = 2000; // 2 seconds fade
+      const alpha = Math.max(0, 1 - elapsed / fadeDuration);
+      if (alpha > 0) {
+        const rx = resultText.x * tileSize - originX + tileSize / 2;
+        const ry = resultText.y * tileSize - originY - tileSize * 0.5;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = `bold ${Math.max(16, tileSize * 0.6)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // Text shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillText(resultText.text, rx + 2, ry + 2);
+        // Main text
+        ctx.fillStyle = resultText.color;
+        ctx.fillText(resultText.text, rx, ry);
+        ctx.restore();
+      } else {
+        combatResultRef.current = null;
+      }
+    }
+
+    // ── Fading text messages (e.g., "Out of range") ───────────
+    const fadeText = fadingTextRef.current;
+    if (fadeText) {
+      const elapsed = performance.now() - fadeText.startTime;
+      const fadeDuration = 2000;
+      const alpha = Math.max(0, 1 - elapsed / fadeDuration);
+      if (alpha > 0) {
+        const rx = fadeText.x * tileSize - originX + tileSize / 2;
+        const ry = fadeText.y * tileSize - originY - tileSize * 0.5;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = `bold ${Math.max(14, tileSize * 0.5)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillText(fadeText.text, rx + 2, ry + 2);
+        ctx.fillStyle = fadeText.color;
+        ctx.fillText(fadeText.text, rx, ry);
+        ctx.restore();
+      } else {
+        fadingTextRef.current = null;
       }
     }
 
@@ -1364,6 +1446,17 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         anim.progress = Math.min(elapsed / FLASH_DURATION, 1);
 
         if (anim.progress >= 1) {
+          // Transition to result phase - unit stays visible for 2 seconds
+          anim.phase = 'result';
+          anim.startTime = performance.now();
+          anim.progress = 0;
+        }
+        needsFrame = true;
+      } else if (anim && anim.phase === 'result') {
+        const elapsed = performance.now() - anim.startTime;
+        anim.progress = Math.min(elapsed / 2000, 1); // 2 seconds for result display
+
+        if (anim.progress >= 1) {
           anim.phase = 'done';
           combatAnimRef.current = null;
           forceRender((n) => n + 1);
@@ -1523,6 +1616,31 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       // Defender scored a hit → flame on attacker's tile
       flameHitsRef.current.push({ x: pending.fromX, y: pending.fromY, startTime: now + CLASH_DURATION + FLASH_DURATION });
     }
+
+    // Set combat result text after flash completes
+    setTimeout(() => {
+      let text: string;
+      let color: string;
+      if (combat.attackerDamage < combat.defenderDamage) {
+        text = 'WIN';
+        color = '#2ecc71'; // green
+      } else if (combat.attackerDamage === combat.defenderDamage) {
+        text = 'DRAW';
+        color = '#f39c12'; // orange
+      } else {
+        text = 'LOSS';
+        color = '#e74c3c'; // red
+      }
+      combatResultRef.current = {
+        text,
+        x: pending.toX,
+        y: pending.toY,
+        startTime: performance.now(),
+        color,
+      };
+      forceRender((n) => n + 1);
+    }, CLASH_DURATION + FLASH_DURATION + 100);
+
     // The animation loop will pick it up
   }, [lastActionResult]);
 
@@ -1588,6 +1706,32 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     if (combat.attackerDamage > 0) {
       flameHitsRef.current.push({ x: fromX, y: fromY, startTime: now + CLASH_DURATION + FLASH_DURATION });
     }
+
+    // Set combat result text after flash completes (for enemy attacks on our units)
+    setTimeout(() => {
+      let text: string;
+      let color: string;
+      // From our perspective: we win if attacker took more damage
+      if (combat.attackerDamage > combat.defenderDamage) {
+        text = 'WIN';
+        color = '#2ecc71'; // green
+      } else if (combat.attackerDamage === combat.defenderDamage) {
+        text = 'DRAW';
+        color = '#f39c12'; // orange
+      } else {
+        text = 'LOSS';
+        color = '#e74c3c'; // red
+      }
+      combatResultRef.current = {
+        text,
+        x: toX,
+        y: toY,
+        startTime: performance.now(),
+        color,
+      };
+      forceRender((n) => n + 1);
+    }, CLASH_DURATION + FLASH_DURATION + 100);
+
     forceRender((n) => n + 1);
   }, [lastEnemyCombat]);
 
@@ -1788,28 +1932,76 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
           }
 
           const domain = UNIT_STATS[unit.type].domain;
+
+          // For fighters (no fuel), check if click is outside max range
+          const isFighter = unit.type === UnitType.Fighter;
+          if (isFighter) {
+            const reachable = computeReachableTiles(unit, view, mapW, mapH);
+            if (!reachable.has(`${tx},${ty}`)) {
+              // Show "Out of range" message
+              fadingTextRef.current = {
+                text: 'Out of range',
+                x: tx,
+                y: ty,
+                startTime: performance.now(),
+                color: '#e74c3c', // red
+              };
+              forceRender((n) => n + 1);
+              return;
+            }
+          }
+
           const path = computePath(unit.x, unit.y, tx, ty, unit.movesLeft, domain);
           if (path.length > 0) {
-            const lastStep = path[path.length - 1];
-            const reachedTarget = lastStep.x === tx && lastStep.y === ty;
-            const enemyOnLast = view.visibleEnemyUnits.find(
-              (e) => e.x === lastStep.x && e.y === lastStep.y && !e.carriedBy,
-            );
-            // Allow partial moves: if target is out of range, consume all moves toward it
+            // Check for enemy on any step of the path
+            let enemyStepIdx = -1;
+            for (let i = 0; i < path.length; i++) {
+              const step = path[i];
+              const enemy = view.visibleEnemyUnits.find(
+                (e) => e.x === step.x && e.y === step.y && !e.carriedBy,
+              );
+              if (enemy) {
+                enemyStepIdx = i;
+                break;
+              }
+            }
 
-            if (enemyOnLast) {
-              const stepBefore = path.length > 1 ? path[path.length - 2] : { x: unit.x, y: unit.y };
+            // If enemy encountered, stop before it and return control to player
+            if (enemyStepIdx >= 0) {
+              const attackStep = path[enemyStepIdx];
+              const fromStep = enemyStepIdx > 0 ? path[enemyStepIdx - 1] : { x: unit.x, y: unit.y };
               pendingCombatRef.current = {
                 unitId: unit.id,
                 type: unit.type,
                 owner: unit.owner,
-                fromX: stepBefore.x,
-                fromY: stepBefore.y,
-                toX: lastStep.x,
-                toY: lastStep.y,
+                fromX: fromStep.x,
+                fromY: fromStep.y,
+                toX: attackStep.x,
+                toY: attackStep.y,
               };
+              // Only move up to (but not including) the enemy step
+              const safePath = path.slice(0, enemyStepIdx);
+              if (safePath.length > 0) {
+                playMoveSound(unit.type);
+                moveAnimRef.current = {
+                  unitId: unit.id,
+                  unitType: unit.type,
+                  unitOwner: unit.owner,
+                  pathTiles: [{ x: unit.x, y: unit.y }, ...safePath],
+                  startTime: performance.now(),
+                  sentCount: 0,
+                };
+                sendAction({ type: 'MOVE', unitId: selectedUnitId, to: safePath[0] });
+                moveAnimRef.current.sentCount = 1;
+                forceRender((n) => n + 1);
+                return;
+              } else {
+                // Enemy is immediately adjacent, just initiate combat
+                return;
+              }
             }
 
+            // No enemy on path, proceed with full movement
             playMoveSound(unit.type);
             moveAnimRef.current = {
               unitId: unit.id,
@@ -1866,7 +2058,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     let found = false;
     outer: while (queue.length > 0) {
       const cur = queue.shift()!;
-      for (const [ddx, ddy] of [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]] as [number,number][]) {
+      for (const [ddx, ddy] of [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[-1,1],[1,-1],[1,1]] as [number,number][]) {
         const nx = wrapX(cur.x + ddx, mapW);
         const ny = cur.y + ddy;
         const key = `${nx},${ny}`;

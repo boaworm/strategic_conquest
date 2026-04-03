@@ -50,9 +50,9 @@ export interface MapOptions {
  * grid is height + 2 rows tall.
  *
  * Guarantees:
- * - At least 3 islands (MIN_ISLANDS)
- * - Each island has at least 3 cities (MIN_ISLAND_CITIES)
- * - Cities on the same island are at least 4 tiles apart (Chebyshev, MIN_CITY_DIST)
+ * - Island count scales with map size (~1 per 200 tiles, min 3)
+ * - Each island has 1-7 cities
+ * - Cities on the same island are at least 4-5 tiles apart (scales with map size)
  * - Cities on different islands have no minimum distance requirement
  */
 export function generateMap(opts: MapOptions): {
@@ -74,22 +74,25 @@ export function generateMap(opts: MapOptions): {
   // Scale all constraints with map area so small maps (30×10) and large maps (80×30) both work.
   const mapArea = width * height;
 
-  const MIN_ISLANDS = 3;
+  // Island count scales with map size: ~1 island per 200 tiles, minimum 3.
+  // 30×10→3, 60×20→6, 80×30→12
+  const MIN_ISLANDS = Math.max(3, Math.floor(mapArea / 200));
 
-  // Small/medium maps need a lower city-distance threshold so cities can fit on compact islands.
-  // Strict constraints only kick in on large maps (area ≥ 1500, e.g. 60×25).
-  const MIN_CITY_DIST = mapArea < 1500 ? 3 : 4;
+  // City distance: 4 for small/medium maps, 5 for large maps (area ≥ 1800, e.g. 60×30).
+  const MIN_CITY_DIST = mapArea < 1800 ? 4 : 5;
 
-  // Small/medium maps only require 2 cities per island; large maps require 3.
-  const MIN_ISLAND_CITIES = mapArea < 1500 ? 2 : 3;
+  // Each island gets 1-7 cities based on size:
+  // min 1 city, max 7 cities, scales with island area.
+  // An island of 20 tiles → ~3 cities, 50 tiles → ~7 cities.
+  const MAX_ISLAND_CITIES = 7;
+  const MIN_ISLAND_CITIES = 1;
 
-  // Island must be large enough to comfortably hold MIN_ISLAND_CITIES cities.
-  // ~2% of map area, minimum 6 tiles.
-  // 30×10→6, 50×20→20, 80×30→48
-  const MIN_ISLAND_SIZE = Math.max(6, Math.floor(mapArea * 0.02));
+  // Island must be large enough to hold at least MIN_ISLAND_CITIES cities.
+  // ~1% of map area, minimum 4 tiles (smaller islands can still have 1 city).
+  const MIN_ISLAND_SIZE = Math.max(4, Math.floor(mapArea * 0.01));
 
-  // Total cities scales with map size: roughly one per 30 tiles, bounded [8, 30].
-  const cityCount = opts.cityCount ?? Math.min(30, Math.max(8, Math.floor(mapArea / 30)));
+  // Total cities scales with map size: roughly one per 30 tiles, bounded [6, 30].
+  const cityCount = opts.cityCount ?? Math.min(30, Math.max(6, Math.floor(mapArea / 30)));
 
   type CityConfig = { x: number; y: number; owner: PlayerId | null };
 
@@ -232,12 +235,13 @@ export function generateMap(opts: MapOptions): {
     cityConfigs.push({ x: p2Start.x, y: p2Start.y, owner: 'player2' });
     usedPositions.add(posKey(p2Start));
 
-    // Ensure each island has at least MIN_ISLAND_CITIES cities total,
-    // with at least one city on a coastal tile (land adjacent to ocean).
+    // Ensure each island has 1-7 cities total, with at least one city on a coastal tile.
+    // Cap at MAX_ISLAND_CITIES per island
+    const maxOnIsland = MAX_ISLAND_CITIES;
     let valid = true;
     for (let i = 0; i < validIslands.length; i++) {
       const existing = cityConfigs.filter(c => getIslandIdx(c.x, c.y) === i);
-      let needed = MIN_ISLAND_CITIES - existing.length;
+      let needed = Math.max(0, MIN_ISLAND_CITIES - existing.length);
 
       // Prioritize coastal tiles so neutral city placement naturally satisfies
       // the coastal-city requirement without extra passes.
@@ -251,6 +255,9 @@ export function generateMap(opts: MapOptions): {
         if (needed <= 0) break;
         if (usedPositions.has(posKey(tile))) continue;
         if (isTooClose(tile, cityConfigs)) continue;
+        // Check we haven't exceeded max cities on this island
+        const currentOnIsland = cityConfigs.filter(c => getIslandIdx(c.x, c.y) === i).length;
+        if (currentOnIsland >= maxOnIsland) break;
         cityConfigs.push({ x: tile.x, y: tile.y, owner: null });
         usedPositions.add(posKey(tile));
         needed--;
@@ -274,6 +281,7 @@ export function generateMap(opts: MapOptions): {
     if (!valid) continue;
 
     // Place remaining neutral cities up to cityCount, spread across all islands
+    // but respect MAX_ISLAND_CITIES per island
     const allTiles = shuffledIslandTiles.flat();
     for (let i = allTiles.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
@@ -286,6 +294,12 @@ export function generateMap(opts: MapOptions): {
       if (placed >= cityCount) break;
       if (usedPositions.has(posKey(tile))) continue;
       if (isTooClose(tile, cityConfigs)) continue;
+      // Check island city cap
+      const tileIsland = getIslandIdx(tile.x, tile.y);
+      if (tileIsland !== undefined) {
+        const currentOnIsland = cityConfigs.filter(c => getIslandIdx(c.x, c.y) === tileIsland).length;
+        if (currentOnIsland >= maxOnIsland) continue;
+      }
       cityConfigs.push({ x: tile.x, y: tile.y, owner: null });
       usedPositions.add(posKey(tile));
       placed++;
