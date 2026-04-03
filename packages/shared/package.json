@@ -14,5 +14,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "onnxruntime-node": "^1.17.0"
   }
 }

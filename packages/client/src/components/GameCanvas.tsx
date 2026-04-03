@@ -1146,12 +1146,8 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         ctx.fill();
         ctx.globalAlpha = 1;
 
-        // Draw attacker at final position if it survived and moved (defender destroyed)
-        if (combatAnim.result && !combatAnim.result.attackerDestroyed) {
-          const drawX = combatAnim.result.defenderDestroyed ? toSX : fromSX;
-          const drawY = combatAnim.result.defenderDestroyed ? toSY : fromSY;
-          drawUnit(ctx, combatAnim.attackerType, drawX, drawY, tileSize, ownerColor(combatAnim.attackerOwner), unitImagesRef.current);
-        }
+        // Attacker is already drawn by normal unit rendering at its new position
+        // No need to draw it here - this prevents double-drawing and flickering
       }
     }
 

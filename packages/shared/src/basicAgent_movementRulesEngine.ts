@@ -31,6 +31,8 @@ export interface MovementContext {
   mapWidth: number;
   mapHeight: number;
   transportTarget?: Coord | null;
+  patrolState?: Map<string, { waypoint: Coord | null; lastVisitTurn: number; routeIndex: number; lastDir: Coord | null }>;
+  transportState?: Map<string, { target: Coord | null; lastDir: Coord | null }>;
 }
 
 // ── Phase name mapping ───────────────────────────────────────────────────────
@@ -190,6 +192,44 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     return ctx.map.findCityUnderAttack(ctx.obs, 3) !== null;
   });
 
+  // ── Patrol conditions ─────────────────────────────────────────
+
+  m.set('no_combat_targets', (ctx) => {
+    // True if no enemy ships in range, no cities under attack, no shipping to hunt
+    const enemyShips = ctx.map.findEnemyInRange(ctx.unit, ctx.obs,
+      [UnitType.Transport, UnitType.Carrier, UnitType.Battleship, UnitType.Destroyer, UnitType.Submarine]);
+    const cityUnderAttack = ctx.map.findCityUnderAttack(ctx.obs, 3);
+    const shippingExists = ctx.map.huntForEnemyShipping(ctx.unit, ctx.obs) !== null;
+    return !enemyShips && !cityUnderAttack && !shippingExists;
+  });
+
+  m.set('patrol_routes_exist', (ctx) => {
+    // True if we have at least 2 friendly coastal cities within fighter range
+    const routes = ctx.map.generatePatrolRoutes(ctx.obs, ctx.unit.movesLeft);
+    return routes.length >= 2;
+  });
+
+  m.set('has_patrol_waypoint', (ctx) => {
+    // True if this fighter has an active patrol waypoint
+    const state = ctx.patrolState?.get(ctx.unit.id);
+    return state?.waypoint !== null;
+  });
+
+  m.set('at_patrol_waypoint', (ctx) => {
+    // True if fighter has reached its current waypoint
+    const state = ctx.patrolState?.get(ctx.unit.id);
+    if (!state?.waypoint) return false;
+    return ctx.unit.x === state.waypoint.x && ctx.unit.y === state.waypoint.y;
+  });
+
+  m.set('friendly_city_on_contested_island_exists', (ctx) => {
+    return ctx.map.findFriendlyCityOnContestedIsland(ctx.obs) !== null;
+  });
+
+  m.set('friendly_city_with_enemy_nearby_exists', (ctx) => {
+    return ctx.map.findFriendlyCityWithEnemyNearby(ctx.obs, 5) !== null;
+  });
+
   m.set('enemy_city_with_defenders_in_range', (ctx) => {
     return ctx.map.findEnemyCityWithDefenders(ctx.unit, ctx.obs, ctx.unit.movesLeft) !== null;
   });
@@ -330,8 +370,15 @@ function buildActionResolvers(): Map<string, ActionResolver> {
 
   a.set('continue_toward_target', (ctx) => {
     if (!ctx.transportTarget) return null;
-    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, ctx.transportTarget);
-    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+    const state = ctx.transportState || new Map();
+    const unitState = state.get(ctx.unit.id) || { target: null, lastDir: null };
+    const step = ctx.map.farthestStepTowardWithDirection(ctx.obs, ctx.unit, ctx.transportTarget, unitState.lastDir);
+    if (step) {
+      unitState.lastDir = { x: step.x - ctx.unit.x, y: step.y - ctx.unit.y };
+      state.set(ctx.unit.id, unitState);
+      return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+    }
+    return null;
   });
 
   a.set('move_to_adjacent_ocean', (ctx) => {
@@ -494,6 +541,20 @@ function buildActionResolvers(): Map<string, ActionResolver> {
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
   });
 
+  a.set('move_to_friendly_city_on_contested_island', (ctx) => {
+    const city = ctx.map.findFriendlyCityOnContestedIsland(ctx.obs);
+    if (!city) return null;
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, city);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
+  a.set('move_to_friendly_city_with_enemy_nearby', (ctx) => {
+    const city = ctx.map.findFriendlyCityWithEnemyNearby(ctx.obs, 5);
+    if (!city) return null;
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, city);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
   // ── Bomber ──────────────────────────────────────────────────
 
   a.set('bomb_city', (ctx) => {
@@ -548,6 +609,72 @@ function buildActionResolvers(): Map<string, ActionResolver> {
     return { type: 'SKIP', unitId: ctx.unit.id };
   });
 
+  // ── Patrol actions ──────────────────────────────────────────
+
+  a.set('select_patrol_route', (ctx) => {
+    const routes = ctx.map.generatePatrolRoutes(ctx.obs, ctx.unit.movesLeft);
+    if (routes.length < 2) return null;
+
+    // Select waypoint (every other city is the destination of a route)
+    const waypointIdx = Math.min(1, routes.length - 1);
+    const waypoint = { x: routes[waypointIdx].x, y: routes[waypointIdx].y };
+
+    // Store patrol state
+    const patrolState = ctx.patrolState || new Map();
+    const existingState = patrolState.get(ctx.unit.id) || {
+      waypoint: null,
+      lastVisitTurn: -1,
+      routeIndex: 0,
+      lastDir: null,
+    };
+    existingState.waypoint = waypoint;
+    existingState.lastVisitTurn = ctx.obs.turn;
+    existingState.routeIndex = 0;
+    existingState.lastDir = null;
+    patrolState.set(ctx.unit.id, existingState);
+
+    const step = ctx.map.farthestStepTowardWithDirection(ctx.obs, ctx.unit, waypoint, null);
+    if (step) {
+      existingState.lastDir = { x: step.x - ctx.unit.x, y: step.y - ctx.unit.y };
+      patrolState.set(ctx.unit.id, existingState);
+    }
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
+  a.set('continue_patrol', (ctx) => {
+    const state = ctx.patrolState?.get(ctx.unit.id);
+    if (!state?.waypoint) return null;
+
+    const step = ctx.map.farthestStepTowardWithDirection(ctx.obs, ctx.unit, state.waypoint, state.lastDir);
+    if (step) {
+      state.lastDir = { x: step.x - ctx.unit.x, y: step.y - ctx.unit.y };
+    }
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
+  a.set('select_next_patrol_waypoint', (ctx) => {
+    const state = ctx.patrolState?.get(ctx.unit.id);
+    if (!state) return null;
+
+    const routes = ctx.map.generatePatrolRoutes(ctx.obs, ctx.unit.movesLeft);
+    if (routes.length < 2) return null;
+
+    // Move to next route (cycle through)
+    const nextRouteIdx = (state.routeIndex + 2) % routes.length;
+    const waypoint = { x: routes[nextRouteIdx].x, y: routes[nextRouteIdx].y };
+
+    state.waypoint = waypoint;
+    state.lastVisitTurn = ctx.obs.turn;
+    state.routeIndex = nextRouteIdx;
+    state.lastDir = null;
+
+    const step = ctx.map.farthestStepTowardWithDirection(ctx.obs, ctx.unit, waypoint, null);
+    if (step) {
+      state.lastDir = { x: step.x - ctx.unit.x, y: step.y - ctx.unit.y };
+    }
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
   return a;
 }
 
@@ -568,6 +695,7 @@ export class MovementRulesEngine {
     this.mapHeight = mapHeight;
   }
 
+  
   /**
    * Evaluate rules top-to-bottom for the unit's type and current phase.
    * First rule whose conditions all pass wins. Returns the resolved action.

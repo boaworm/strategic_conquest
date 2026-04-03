@@ -90,7 +90,7 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
   [UnitType.Fighter]: {
     type: UnitType.Fighter,
     domain: UnitDomain.Air,
-    movesPerTurn: 10,
+    movesPerTurn: 12,
     vision: 3,
     maxHealth: 1,
     buildTime: 12,

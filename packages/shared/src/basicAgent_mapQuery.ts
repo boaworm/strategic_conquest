@@ -566,10 +566,11 @@ export class MapQuery {
 
     switch (attacker) {
       case UnitType.Submarine:
-        // Hunter-killer: capital ships > other subs > destroyers
+        // Hunter-killer: loaded transports > capital ships > other subs > destroyers > empty transports
         if (target === UnitType.Carrier || target === UnitType.Battleship) return 1;
         if (target === UnitType.Submarine) return 2;
         if (target === UnitType.Destroyer) return 3;
+        if (target === UnitType.Transport) return 4;
         return Infinity;
 
       case UnitType.Destroyer:
@@ -581,10 +582,17 @@ export class MapQuery {
         return Infinity;
 
       case UnitType.Battleship:
-        // Capital ship: destroyers > carriers > other battleships
+        // Capital ship: loaded transports > destroyers > carriers > other battleships > empty transports
         if (target === UnitType.Destroyer) return 1;
         if (target === UnitType.Carrier) return 2;
         if (target === UnitType.Battleship) return 3;
+        if (target === UnitType.Transport) return 4;
+        return Infinity;
+
+      case UnitType.Fighter:
+        // Air superiority: loaded transports > submarines > empty transports
+        if (target === UnitType.Submarine) return 1;
+        if (target === UnitType.Transport) return 2;
         return Infinity;
 
       default:
@@ -688,6 +696,31 @@ export class MapQuery {
     return null;
   }
 
+  /** Find friendly city on a contested island (island with enemy units). */
+  findFriendlyCityOnContestedIsland(obs: AgentObservation): CityView | null {
+    const { islandOf, friendlyIndices } = this.classifyIslands(obs);
+    for (const city of obs.myCities) {
+      const idx = islandOf.get(`${city.x},${city.y}`);
+      if (idx === undefined || !friendlyIndices.has(idx)) continue;
+      // Check if any enemy unit is on this island
+      for (const e of obs.visibleEnemyUnits) {
+        const eIsland = islandOf.get(`${e.x},${e.y}`);
+        if (eIsland === idx) return city;
+      }
+    }
+    return null;
+  }
+
+  /** Find friendly city with enemy unit within `radius` squares. */
+  findFriendlyCityWithEnemyNearby(obs: AgentObservation, radius: number): CityView | null {
+    for (const city of obs.myCities) {
+      for (const e of obs.visibleEnemyUnits) {
+        if (this.wrappedDist(e, city) <= radius) return city;
+      }
+    }
+    return null;
+  }
+
   /** Find friendly city within `radius` of enemy city or enemy units worth `minValue`+. */
   findConflictZoneCity(from: Coord, obs: AgentObservation, radius: number): Coord | null {
     const conflictCities = obs.myCities.filter((c) => {
@@ -754,13 +787,23 @@ export class MapQuery {
    * gets the unit closest to `target` within its remaining movement range.
    */
   farthestStepToward(obs: AgentObservation, unit: UnitView, target: Coord): Coord | null {
+    return this.farthestStepTowardWithDirection(obs, unit, target, null);
+  }
+
+  /**
+   * BFS bounded by `unit.movesLeft`. Prefers continuing in the same direction
+   * to avoid zigzagging. Returns the first step that gets the unit closest to
+   * `target` within its remaining movement range.
+   */
+  farthestStepTowardWithDirection(obs: AgentObservation, unit: UnitView, target: Coord, lastDir: Coord | null): Coord | null {
     const canEnter = this.makeCanEnter(obs, unit);
     const visited = new Set<string>();
     visited.add(`${unit.x},${unit.y}`);
-    const queue: Array<{ x: number; y: number; dist: number; first: Coord }> = [];
+    const queue: Array<{ x: number; y: number; dist: number; first: Coord; firstDir: Coord }> = [];
 
     let bestStep: Coord | null = null;
     let bestDistToTarget = this.wrappedDist(unit, target);
+    let bestDirMatch = false;
 
     for (const adj of this.getAdjacentTiles(unit.x, unit.y)) {
       if (adj.y <= 0 || adj.y >= this.mapHeight - 1) continue;
@@ -769,15 +812,29 @@ export class MapQuery {
       visited.add(k);
       if (!canEnter(adj.x, adj.y)) continue;
       const d = this.wrappedDist(adj, target);
-      if (d < bestDistToTarget) { bestDistToTarget = d; bestStep = adj; }
-      if (unit.movesLeft > 1) queue.push({ x: adj.x, y: adj.y, dist: 1, first: adj });
+      const dir = { x: adj.x - unit.x, y: adj.y - unit.y };
+      const dirMatch = lastDir !== null && dir.x === lastDir.x && dir.y === lastDir.y;
+      if (d < bestDistToTarget || (d === bestDistToTarget && dirMatch && !bestDirMatch)) {
+        bestDistToTarget = d;
+        bestStep = adj;
+        bestDirMatch = dirMatch;
+      }
+      if (unit.movesLeft > 1) queue.push({ x: adj.x, y: adj.y, dist: 1, first: adj, firstDir: dir });
     }
 
     const MAX = this.mapWidth * this.mapHeight;
     while (queue.length > 0 && visited.size < MAX) {
       const cur = queue.shift()!;
       if (cur.dist >= unit.movesLeft) continue;
-      for (const n of this.getAdjacentTiles(cur.x, cur.y)) {
+      // Prefer continuing in the same direction
+      const neighbors = this.getAdjacentTiles(cur.x, cur.y).sort((a, b) => {
+        const dirA = { x: a.x - cur.x, y: a.y - cur.y };
+        const dirB = { x: b.x - cur.x, y: b.y - cur.y };
+        const matchA = cur.firstDir.x === dirA.x && cur.firstDir.y === dirA.y;
+        const matchB = cur.firstDir.x === dirB.x && cur.firstDir.y === dirB.y;
+        return (matchB ? 0 : 1) - (matchA ? 0 : 1);
+      });
+      for (const n of neighbors) {
         if (n.y <= 0 || n.y >= this.mapHeight - 1) continue;
         const k = `${n.x},${n.y}`;
         if (visited.has(k)) continue;
@@ -785,7 +842,7 @@ export class MapQuery {
         if (!canEnter(n.x, n.y)) continue;
         const d = this.wrappedDist(n, target);
         if (d < bestDistToTarget) { bestDistToTarget = d; bestStep = cur.first; }
-        queue.push({ x: n.x, y: n.y, dist: cur.dist + 1, first: cur.first });
+        queue.push({ x: n.x, y: n.y, dist: cur.dist + 1, first: cur.first, firstDir: cur.firstDir });
       }
     }
     return bestStep;
@@ -903,5 +960,125 @@ export class MapQuery {
       if (!tile) return false;
       return true;
     };
+  }
+
+  // ── Patrol queries ─────────────────────────────────────────────────────────
+
+  /**
+   * Generate all valid patrol routes between friendly coastal cities.
+   * A route is valid if actual path distance <= fighter moves * 2 (round trip).
+   * Returns routes sorted by composite score (desc).
+   */
+  generatePatrolRoutes(obs: AgentObservation, fighterMoves: number): CityView[] {
+    const { islandOf, friendlyIndices } = this.classifyIslands(obs);
+    const maxDist = fighterMoves * 2;
+
+    // Get coastal friendly cities
+    const coastalCities = obs.myCities.filter((c) => {
+      const idx = islandOf.get(`${c.x},${c.y}`);
+      if (idx === undefined || !friendlyIndices.has(idx)) return false;
+      return this.isCityCoastal(c, obs);
+    });
+
+    if (coastalCities.length < 2) return [];
+
+    // Generate all unique pairs
+    type Route = { cityA: CityView; cityB: CityView; distance: number; score: number };
+    const routes: Route[] = [];
+
+    for (let i = 0; i < coastalCities.length; i++) {
+      for (let j = i + 1; j < coastalCities.length; j++) {
+        const cityA = coastalCities[i];
+        const cityB = coastalCities[j];
+
+        // Use actual path distance, not Manhattan distance
+        const path = this.findPath(obs, cityA, cityB);
+        if (!path || path.length === 0) continue;
+
+        const distance = path.length - 1; // path length in steps, not tiles
+
+        if (distance > maxDist) continue;
+
+        // Score: longer routes get priority, terrain bonus, recency penalty
+        const baseScore = 1 / (1 + distance);
+        const terrainRatio = this.computeRouteTerrainRatio(cityA, cityB, obs);
+        const terrainBonus = terrainRatio * 0.5;
+        const recencyPenalty = 1; // TODO: integrate with patrol state
+        const score = baseScore * (1 + terrainBonus) * (1 + recencyPenalty);
+
+        routes.push({ cityA, cityB, distance, score });
+      }
+    }
+
+    if (routes.length === 0) return [];
+
+    // Sort by score descending
+    routes.sort((a, b) => b.score - a.score);
+
+    // Return flat list of cities in route order (for waypoint selection)
+    const result: CityView[] = [];
+    for (const r of routes) {
+      result.push(r.cityA, r.cityB);
+    }
+    return result;
+  }
+
+  /**
+   * Compute terrain ratio along a route (for patrol preference scoring).
+   * Returns ratio of land tiles to total tiles along shortest path.
+   */
+  computeRouteTerrainRatio(from: Coord, to: Coord, obs: AgentObservation): number {
+    const path = this.findPath(obs, from, to);
+    if (!path || path.length === 0) return 0;
+
+    let landCount = 0;
+    for (const tile of path) {
+      const t = obs.tiles[tile.y]?.[tile.x];
+      if (t && t.terrain === Terrain.Land) landCount++;
+    }
+    return landCount / path.length;
+  }
+
+  /**
+   * BFS pathfinding - returns array of coordinates from start to end.
+   */
+  findPath(obs: AgentObservation, from: Coord, to: Coord): Coord[] | null {
+    const canEnter = this.makeCanEnter(obs, { type: UnitType.Fighter } as UnitView);
+    const startKey = `${from.x},${from.y}`;
+    const endKey = `${to.x},${to.y}`;
+
+    if (!canEnter(from.x, from.y) || !canEnter(to.x, to.y)) return null;
+
+    const visited = new Map<string, Coord | null>();
+    visited.set(startKey, null);
+    const queue: Coord[] = [from];
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      const curKey = `${cur.x},${cur.y}`;
+
+      if (cur.x === to.x && cur.y === to.y) {
+        // Reconstruct path
+        const path: Coord[] = [];
+        let node: Coord | null = cur;
+        while (node) {
+          path.unshift(node);
+          const key = `${node.x},${node.y}`;
+          node = visited.get(key) || null;
+        }
+        return path;
+      }
+
+      for (const adj of this.getAdjacentTiles(cur.x, cur.y)) {
+        const adjKey = `${adj.x},${adj.y}`;
+        if (visited.has(adjKey)) continue;
+        if (!canEnter(adj.x, adj.y)) continue;
+
+        visited.set(adjKey, cur);
+        queue.push(adj);
+      }
+    }
+
+    return null;
   }
 }

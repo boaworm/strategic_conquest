@@ -196,6 +196,14 @@
           "action": "attack_nearest_enemy_ship"
         },
         {
+          "conditions": ["enemy_ship_in_range"],
+          "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_shipping_exists"],
+          "action": "hunt_for_enemy_shipping"
+        },
+        {
           "action": "move_to_nearest_unexplored_ocean"
         }
       ],
@@ -220,6 +228,10 @@
         {
           "conditions": ["enemy_ship_in_range"],
           "action": "attack_nearest_enemy_ship"
+        },
+        {
+          "conditions": ["enemy_shipping_exists"],
+          "action": "hunt_for_enemy_shipping"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
@@ -260,55 +272,106 @@
     "fighter": {
       "Explore": [
         {
-          "conditions": ["enemy_transport_with_cargo_in_range"],
-          "action": "attack_nearest_enemy"
-        },
-        {
-          "conditions": ["enemy_submarine_in_range"],
-          "action": "attack_nearest_enemy"
+          "conditions": ["enemy_ship_in_range"],
+          "action": "attack_nearest_enemy_ship"
         },
         {
           "conditions": ["friendly_city_under_attack"],
           "action": "move_to_city_under_attack"
         },
         {
-          "action": "move_to_nearest_unexplored_ocean"
+          "conditions": ["friendly_city_on_contested_island_exists"],
+          "action": "move_to_friendly_city_on_contested_island"
+        },
+        {
+          "conditions": ["friendly_city_with_enemy_nearby_exists"],
+          "action": "move_to_friendly_city_with_enemy_nearby"
+        },
+        {
+          "conditions": ["enemy_shipping_exists"],
+          "action": "hunt_for_enemy_shipping"
+        },
+        {
+          "conditions": ["no_combat_targets", "has_patrol_waypoint", "at_patrol_waypoint"],
+          "action": "select_next_patrol_waypoint"
+        },
+        {
+          "conditions": ["no_combat_targets", "has_patrol_waypoint"],
+          "action": "continue_patrol"
+        },
+        {
+          "conditions": ["no_combat_targets", "patrol_routes_exist"],
+          "action": "select_patrol_route"
         }
       ],
 
       "Expand": [
         {
-          "conditions": ["enemy_transport_with_cargo_in_range"],
-          "action": "attack_nearest_enemy"
-        },
-        {
-          "conditions": ["enemy_submarine_in_range"],
-          "action": "attack_nearest_enemy"
+          "conditions": ["enemy_ship_in_range"],
+          "action": "attack_nearest_enemy_ship"
         },
         {
           "conditions": ["friendly_city_under_attack"],
           "action": "move_to_city_under_attack"
         },
         {
-          "action": "move_to_nearest_unexplored_ocean"
+          "conditions": ["friendly_city_on_contested_island_exists"],
+          "action": "move_to_friendly_city_on_contested_island"
+        },
+        {
+          "conditions": ["friendly_city_with_enemy_nearby_exists"],
+          "action": "move_to_friendly_city_with_enemy_nearby"
+        },
+        {
+          "conditions": ["enemy_shipping_exists"],
+          "action": "hunt_for_enemy_shipping"
+        },
+        {
+          "conditions": ["no_combat_targets", "has_patrol_waypoint", "at_patrol_waypoint"],
+          "action": "select_next_patrol_waypoint"
+        },
+        {
+          "conditions": ["no_combat_targets", "has_patrol_waypoint"],
+          "action": "continue_patrol"
+        },
+        {
+          "conditions": ["no_combat_targets", "patrol_routes_exist"],
+          "action": "select_patrol_route"
         }
       ],
 
       "Combat": [
         {
-          "conditions": ["enemy_transport_with_cargo_in_range"],
-          "action": "attack_nearest_enemy"
-        },
-        {
-          "conditions": ["enemy_submarine_in_range"],
-          "action": "attack_nearest_enemy"
+          "conditions": ["enemy_ship_in_range"],
+          "action": "attack_nearest_enemy_ship"
         },
         {
           "conditions": ["friendly_city_under_attack"],
           "action": "move_to_city_under_attack"
         },
         {
-          "action": "move_to_nearest_unexplored_ocean"
+          "conditions": ["friendly_city_on_contested_island_exists"],
+          "action": "move_to_friendly_city_on_contested_island"
+        },
+        {
+          "conditions": ["friendly_city_with_enemy_nearby_exists"],
+          "action": "move_to_friendly_city_with_enemy_nearby"
+        },
+        {
+          "conditions": ["enemy_shipping_exists"],
+          "action": "hunt_for_enemy_shipping"
+        },
+        {
+          "conditions": ["no_combat_targets", "has_patrol_waypoint", "at_patrol_waypoint"],
+          "action": "select_next_patrol_waypoint"
+        },
+        {
+          "conditions": ["no_combat_targets", "has_patrol_waypoint"],
+          "action": "continue_patrol"
+        },
+        {
+          "conditions": ["no_combat_targets", "patrol_routes_exist"],
+          "action": "select_patrol_route"
         }
       ]
     },

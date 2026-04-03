@@ -18,6 +18,18 @@ import {
   wrappedDistX,
 } from '../types.js';
 import { canMoveTo, canDetectSubmarine, getUnitsAt, getVisibleTiles, normalizeCoord } from './movement.js';
+
+/** Check if a unit is on a city tile owned by its owner. */
+function unitInOwnCity(state: GameState, unit: Unit): boolean {
+  return state.cities.some(
+    (c) => c.x === unit.x && c.y === unit.y && c.owner === unit.owner
+  );
+}
+
+/** Check if a tile has a city. */
+function tileHasCity(state: GameState, x: number, y: number): boolean {
+  return state.cities.some((c) => c.x === x && c.y === y);
+}
 import { removeDestroyedUnits } from './combat.js';
 import { resolveCombatFromTable, CombatOutcome } from './combatResolution.js';
 import { advanceProduction, setProduction } from './production.js';
@@ -214,6 +226,54 @@ function handleMove(
     }
   }
 
+  // Naval units in cities can attack adjacent enemy naval units
+  const attackerInCity = unitInOwnCity(state, unit);
+  if (attackerInCity && UNIT_STATS[unit.type].domain === UnitDomain.Sea) {
+    const terrain = state.tiles[target.y]?.[target.x];
+    // Can only attack adjacent ocean tiles
+    if (terrain === Terrain.Ocean) {
+      const dx = wrappedDistX(target.x, unit.x, state.mapWidth);
+      const dy = Math.abs(target.y - unit.y);
+      if (dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0)) {
+        const enemySea = getUnitsAt(state, target).filter(
+          (u) => u.owner !== playerId && UNIT_STATS[u.type].domain === UnitDomain.Sea,
+        );
+        if (enemySea.length > 0) {
+          if (unit.movesLeft <= 0) {
+            return { success: false, error: 'No moves left this turn' };
+          }
+          if (unit.hasAttacked) {
+            return { success: false, error: 'Already attacked this turn' };
+          }
+          const defender = enemySea[Math.floor(Math.random() * enemySea.length)];
+          const outcome = resolveCombatFromTable(unit, defender);
+
+          if (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) {
+            unit.health = 0;
+          }
+          if (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) {
+            defender.health = 0;
+          }
+          removeDestroyedUnits(state);
+
+          const combat = {
+            attackerId: unit.id,
+            defenderId: defender.id,
+            attackerDamage: (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+            defenderDamage: (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+            attackerDestroyed: outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+            defenderDestroyed: outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED,
+          };
+
+          unit.movesLeft--;
+          unit.hasAttacked = true;
+          checkWinCondition(state);
+          return { success: true, combat };
+        }
+      }
+    }
+  }
+
   // Auto-embark: land unit moving onto ocean tile with friendly transport
   // (checked before canMoveTo because land units normally can't enter ocean)
   if (
@@ -269,6 +329,17 @@ function handleMove(
       );
       if (!hasNavalTarget) {
         return { success: false, error: 'Submarines can only attack naval units' };
+      }
+    }
+
+    // Naval units in a city can ONLY attack naval units
+    const attackerInCity = unitInOwnCity(state, unit);
+    if (attackerInCity && UNIT_STATS[unit.type].domain === UnitDomain.Sea) {
+      const hasNavalTarget = enemyUnits.some(
+        (e) => UNIT_STATS[e.type].domain === UnitDomain.Sea,
+      );
+      if (!hasNavalTarget) {
+        return { success: false, error: 'Naval units in cities can only attack naval units' };
       }
     }
 
@@ -387,16 +458,22 @@ function handleMove(
     if (!combat.attackerDestroyed) {
       const remainingEnemies = getUnitsAt(state, target).filter((u) => u.owner !== playerId);
       if (remainingEnemies.length === 0) {
-        unit.x = target.x;
-        unit.y = target.y;
+        // Naval units do NOT move into cities after combat
+        const isNavalAttacker = UNIT_STATS[unit.type].domain === UnitDomain.Sea;
+        const targetIsCity = tileHasCity(state, target.x, target.y);
 
-        // Sync cargo positions
-        if (unit.cargo.length > 0) {
-          for (const cargoId of unit.cargo) {
-            const carried = state.units.find((u) => u.id === cargoId);
-            if (carried) {
-              carried.x = unit.x;
-              carried.y = unit.y;
+        if (!(isNavalAttacker && targetIsCity)) {
+          unit.x = target.x;
+          unit.y = target.y;
+
+          // Sync cargo positions
+          if (unit.cargo.length > 0) {
+            for (const cargoId of unit.cargo) {
+              const carried = state.units.find((u) => u.id === cargoId);
+              if (carried) {
+                carried.x = unit.x;
+                carried.y = unit.y;
+              }
             }
           }
         }

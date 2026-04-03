@@ -48,6 +48,7 @@ interface TestReplayMeta {
   frames: number;
   p1Agent?: string;
   p2Agent?: string;
+  passed?: boolean;
 }
 
 function loadTestReplayMetas(): TestReplayMeta[] {
@@ -57,10 +58,20 @@ function loadTestReplayMetas(): TestReplayMeta[] {
   for (const f of files) {
     try {
       const raw = JSON.parse(fs.readFileSync(path.join(TEST_REPLAY_DIR, f), 'utf-8'));
-      if (raw.meta) metas.push(raw.meta);
+      if (raw.meta) {
+        // Determine pass/fail: passed if winner is set or neutralCities === 0
+        const passed = raw.meta.winner !== null || (raw.meta.neutralCities ?? 0) === 0;
+        metas.push({ ...raw.meta, passed });
+      }
     } catch { /* skip corrupt files */ }
   }
-  return metas.sort((a, b) => (b.recordedAt ?? '').localeCompare(a.recordedAt ?? ''));
+  // Sort: FAIL first, then PASS; within each group, most recent first
+  return metas.sort((a, b) => {
+    if (a.passed === b.passed) {
+      return (b.recordedAt ?? '').localeCompare(a.recordedAt ?? '');
+    }
+    return a.passed ? 1 : -1;
+  });
 }
 
 // ── Clean old test replays ────────────────────────────────────
@@ -79,6 +90,7 @@ const testFiles = [
   'test_battleshipPriorities.ts',
   'test_bomberDecision.ts',
   'test_destroyerChasingTransport.ts',
+  'test_expansionOfIslandFirst.ts',
   'test_exploreAndExpand_3.ts',
   'test_transportEarlyDeparture.ts',
   'test_transportsInCombatPhase.ts',

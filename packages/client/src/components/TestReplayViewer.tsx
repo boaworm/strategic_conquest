@@ -28,6 +28,7 @@ export interface TestReplayMeta {
   frames: number;
   p1Agent?: string;
   p2Agent?: string;
+  passed?: boolean;
 }
 
 export interface TestReplayFrame {
@@ -627,13 +628,15 @@ export function TestReplayViewer() {
           >
             {replayList.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.testName ?? r.id.slice(0, 8)}
+                {r.passed ? '[PASS]' : '[FAIL]'} {r.testName ?? r.id.slice(0, 8)}
               </option>
             ))}
           </select>
         </label>
       </div>
-      <h2 style={{ marginTop: 0, marginBottom: 15, flexShrink: 0, color: '#fff' }}>{meta.testName ?? meta.id.slice(0, 8)}</h2>
+      <h2 style={{ marginTop: 0, marginBottom: 15, flexShrink: 0, color: '#fff' }}>
+        {meta.passed ? '[PASS]' : '[FAIL]'} {meta.testName ?? meta.id.slice(0, 8)}
+      </h2>
 
       <div style={{ display: 'flex', gap: 20, flex: 1, minHeight: 0 }}>
         <div style={{ border: '2px solid #4a9eed', padding: 8, display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>

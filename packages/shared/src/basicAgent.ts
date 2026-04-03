@@ -48,8 +48,22 @@ export class BasicAgent implements Agent {
   private movementEngine!: MovementRulesEngine;
   private mapQuery!: MapQuery;
 
-  // Home island index - set once on init
-  private homeIslandIdx: number | undefined = undefined;
+  // Starting island index - set once on init
+  private startingIslandIdx: number | undefined = undefined;
+
+  // Patrol tracking per fighter (keyed by unit ID)
+  private readonly fighterPatrolState = new Map<string, {
+    waypoint: Coord | null;
+    lastVisitTurn: number;
+    routeIndex: number;
+    lastDir: Coord | null;
+  }>();
+
+  // Direction tracking per transport (keyed by unit ID)
+  private readonly transportState = new Map<string, {
+    target: Coord | null;
+    lastDir: Coord | null;
+  }>();
 
   init(config: AgentConfig): void {
     this.playerId = config.playerId;
@@ -57,7 +71,8 @@ export class BasicAgent implements Agent {
     this.mapHeight = config.mapHeight;
     this.transportTarget = null;
     this.phase = 1;
-    this.homeIslandIdx = undefined;
+    this.startingIslandIdx = undefined;
+    this.fighterPatrolState.clear();
     this.movementEngine = new MovementRulesEngine(MOVEMENT_RULES, config.mapWidth, config.mapHeight);
     this.mapQuery = new MapQuery(config.mapWidth, config.mapHeight);
   }
@@ -65,8 +80,8 @@ export class BasicAgent implements Agent {
   /**
    * Determine current strategic phase.
    * Phase 3: Enemy contact → stay in combat
-   * Phase 2: Home island fully explored → explore other islands
-   * Phase 1: Default → expand home island
+   * Phase 2: Starting island fully explored + captured → explore other islands
+   * Phase 1: Default → expand starting island
    */
   private computePhase(obs: AgentObservation): 1 | 2 | 3 {
     // Phase 3: Already in combat or enemy contact
@@ -74,11 +89,11 @@ export class BasicAgent implements Agent {
 
     const { islandOf, exploredIslands } = this.mapQuery.classifyIslands(obs);
 
-    // Set home island on first turn
-    if (this.homeIslandIdx === undefined && obs.myCities.length > 0) {
+    // Set starting island on first turn
+    if (this.startingIslandIdx === undefined && obs.myCities.length > 0) {
       const cityIdx = islandOf.get(`${obs.myCities[0].x},${obs.myCities[0].y}`);
       if (cityIdx !== undefined) {
-        this.homeIslandIdx = cityIdx;
+        this.startingIslandIdx = cityIdx;
       }
     }
 
@@ -88,9 +103,12 @@ export class BasicAgent implements Agent {
       return 3;
     }
 
-    // Home island fully explored → phase 2
-    if (this.phase === 1 && this.homeIslandIdx !== undefined && exploredIslands.has(this.homeIslandIdx)) {
-      this.phase = 2;
+    // Starting island fully explored + captured → phase 2
+    if (this.phase === 1 && this.startingIslandIdx !== undefined) {
+      if (this.isIslandFullyExplored(this.startingIslandIdx, exploredIslands) &&
+          this.isIslandFullyCaptured(this.startingIslandIdx, islandOf, obs)) {
+        this.phase = 2;
+      }
     }
 
     return this.phase;
@@ -98,6 +116,29 @@ export class BasicAgent implements Agent {
 
   getPhase(): 1 | 2 | 3 {
     return this.phase;
+  }
+
+  /** Check if an island is fully explored (all land tiles seen). */
+  private isIslandFullyExplored(
+    islandIdx: number,
+    exploredIslands: Set<number>,
+  ): boolean {
+    return exploredIslands.has(islandIdx);
+  }
+
+  /** Check if an island has no neutral cities (all captured or enemy-owned). */
+  private isIslandFullyCaptured(
+    islandIdx: number,
+    islandOf: Map<string, number>,
+    obs: AgentObservation,
+  ): boolean {
+    for (const city of obs.visibleEnemyCities) {
+      if (city.owner === null) {
+        const idx = islandOf.get(`${city.x},${city.y}`);
+        if (idx === islandIdx) return false;
+      }
+    }
+    return true;
   }
 
   act(obs: AgentObservation): AgentAction {
@@ -172,6 +213,8 @@ export class BasicAgent implements Agent {
       mapWidth: this.mapWidth,
       mapHeight: this.mapHeight,
       transportTarget: this.transportTarget,
+      patrolState: this.fighterPatrolState,
+      transportState: this.transportState,
     });
     if (action) {
       if (unit.type === UnitType.Transport && action.type === 'MOVE') {

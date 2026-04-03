@@ -101,13 +101,17 @@ class GameDataset(Dataset):
             self.worker_offsets = [0]
             self.worker_samples = []
 
+            sample_size = self.num_channels * self.map_height * self.map_width  # number of elements per sample
             for wf in worker_states:
                 size = Path(wf).stat().st_size
-                sample_size = self.num_channels * self.map_height * self.map_width * 4  # float32 = 4 bytes
-                count = size // sample_size
+                elem_size = 4  # float32 = 4 bytes
+                total_elements = size // elem_size
+                count = total_elements // sample_size
                 self.worker_samples.append(count)
                 self.worker_offsets.append(self.worker_offsets[-1] + count)
-                self.worker_files.append(np.memmap(wf, dtype="float32", mode="r"))
+                # Reshape memmap to [num_samples, C, H, W]
+                memmap_arr = np.memmap(wf, dtype="float32", mode="r", shape=(count, self.num_channels, self.map_height, self.map_width))
+                self.worker_files.append(memmap_arr)
 
             # Load all actions from worker files
             self.actions = []

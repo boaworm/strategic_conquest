@@ -172,7 +172,13 @@ def run_epoch(
 
 
 def train(args: argparse.Namespace) -> None:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # GPU selection: CUDA (NVIDIA) > MPS (Apple Silicon) > CPU
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     print(f"Device: {device}")
 
     # ── Data ──────────────────────────────────────────────────────────────────
@@ -187,7 +193,7 @@ def train(args: argparse.Namespace) -> None:
     train_size = len(dataset) - val_size
     train_ds, val_ds = random_split(dataset, [train_size, val_size])
 
-    loader_kwargs = dict(batch_size=args.batch_size, num_workers=args.workers, pin_memory=True)
+    loader_kwargs = dict(batch_size=args.batch_size, num_workers=args.workers, pin_memory=False)
     train_loader = DataLoader(train_ds, shuffle=True,  **loader_kwargs)
     val_loader   = DataLoader(val_ds,   shuffle=False, **loader_kwargs)
 
@@ -252,6 +258,6 @@ if __name__ == "__main__":
     parser.add_argument("--epochs",     type=int,   default=50)
     parser.add_argument("--batch-size", type=int,   default=256)
     parser.add_argument("--lr",         type=float, default=1e-3)
-    parser.add_argument("--workers",    type=int,   default=4,    help="DataLoader worker processes")
+    parser.add_argument("--workers",    type=int,   default=0,    help="DataLoader worker processes (0 for MPS compatibility)")
     args = parser.parse_args()
     train(args)
