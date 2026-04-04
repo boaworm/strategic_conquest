@@ -7,11 +7,19 @@
  *   3. Run games: DATA_DIR=... P1AGENT=nn P2AGENT=basicAgent npm run record
  */
 
-import * as ort from 'onnxruntime-node';
 import type { Agent, AgentObservation, AgentAction } from './agent.js';
 import { playerViewToTensor } from './engine/tensorUtils.js';
 import type { PlayerView } from './types.js';
 import { UnitType } from './types.js';
+
+// Lazy-load onnxruntime to avoid bundling issues
+let ort: typeof import('onnxruntime-node') | null = null;
+async function loadOrt(): Promise<typeof import('onnxruntime-node')> {
+  if (!ort) {
+    ort = await import('onnxruntime-node');
+  }
+  return ort;
+}
 
 const ACTION_TYPES = [
   'END_TURN',
@@ -37,7 +45,7 @@ const UNIT_TYPES = [
 ] as const;
 
 export class NnAgent implements Agent {
-  private session: ort.InferenceSession | null = null;
+  private session: any = null;
   private playerId: string = '';
   private mapWidth: number = 0;
   private mapHeight: number = 0;
@@ -47,12 +55,13 @@ export class NnAgent implements Agent {
     this.mapWidth = config.mapWidth;
     this.mapHeight = config.mapHeight;
 
-    // Load ONNX model
-    const modelPath = process.env.NN_MODEL_PATH || './model.onnx';
+    // Load ONNX runtime and model
+    const ort = await loadOrt();
+    const modelPath = (typeof process !== 'undefined' && process.env?.NN_MODEL_PATH) || './model.onnx';
     this.session = await ort.InferenceSession.create(modelPath);
   }
 
-  act(observation: AgentObservation): AgentAction {
+  async act(observation: AgentObservation): Promise<AgentAction> {
     if (!this.session) {
       throw new Error('NnAgent not initialized. Call init() first.');
     }
@@ -64,8 +73,9 @@ export class NnAgent implements Agent {
     const view = observation as any as PlayerView;
     const tensor = playerViewToTensor(view);
 
-    // Create ONNX tensor (1, 14, H+2, W)
-    const inputTensor = new ort.Tensor('float32', tensor, [1, 14, this.mapHeight + 2, this.mapWidth]);
+    // Create ONNX tensor (1, 14, H, W) - matches export_onnx.py dummy_input shape
+    const ort = await loadOrt();
+    const inputTensor = new ort.Tensor('float32', tensor, [1, 14, this.mapHeight, this.mapWidth]);
     const feeds = { input: inputTensor };
 
     // Run inference

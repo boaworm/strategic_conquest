@@ -39,8 +39,10 @@ interface GameStore {
     mode?: 'pvp' | 'pve' | 'ai_vs_ai',
     p1Type?: 'human' | 'ai',
     p2Type?: 'human' | 'ai',
-    p1AI?: 'basic' | 'gunair',
-    p2AI?: 'basic' | 'gunair',
+    p1AI?: 'basic' | 'gunair' | 'nn',
+    p2AI?: 'basic' | 'gunair' | 'nn',
+    p1ModelId?: string,
+    p2ModelId?: string,
   ) => Promise<CreateGameResponse>;
   joinGame: (token: string) => void;
   sendAction: (action: GameAction) => void;
@@ -102,8 +104,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     mode: 'pvp' | 'pve' | 'ai_vs_ai' = 'pvp',
     p1Type: 'human' | 'ai' = 'human',
     p2Type: 'human' | 'ai' = 'human',
-    p1AI?: 'basic' | 'gunair',
-    p2AI?: 'basic' | 'gunair',
+    p1AI?: 'basic' | 'gunair' | 'nn',
+    p2AI?: 'basic' | 'gunair' | 'nn',
+    p1ModelId?: string,
+    p2ModelId?: string,
   ) => {
     const body: Record<string, number | string> = {};
     if (mapWidth) body.mapWidth = mapWidth;
@@ -113,6 +117,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (p2Type) body.p2Type = p2Type;
     if (p1AI) body.p1AI = p1AI;
     if (p2AI) body.p2AI = p2AI;
+    if (p1ModelId) body.p1ModelId = p1ModelId;
+    if (p2ModelId) body.p2ModelId = p2ModelId;
 
     console.log('Creating game via fetch("./api/games")...');
     const res = await fetch('./api/games', {

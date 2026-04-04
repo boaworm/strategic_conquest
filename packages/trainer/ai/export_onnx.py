@@ -7,7 +7,7 @@ Usage:
 
 import argparse
 import torch
-from dataset import PolicyCNN
+from train import PolicyCNN
 
 
 def main():

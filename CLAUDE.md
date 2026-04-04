@@ -16,6 +16,9 @@ I do all git commit, push, pull, add, delete, rename/mv
 
 You can use it for diff
 
+# Working dirs
+Every command, documentation etc, should use the project root as working directory. Always assume cwd is the project root.
+
 ## Patching rules
 Precision Editing Protocol
 Anchor Strategy: When using edit_file, use the smallest possible old_str that is still unique. Avoid including more than 1 line of unchanged context.

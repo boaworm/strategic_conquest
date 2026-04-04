@@ -59,8 +59,10 @@ export class GameManager {
     difficulty: AIDifficulty = 'medium',
     p1Type: 'human' | 'ai' = 'human',
     p2Type: 'human' | 'ai' = 'human',
-    p1AI: 'basic' | 'gunair' = 'basic',
-    p2AI: 'basic' | 'gunair' = 'basic',
+    p1AI: 'basic' | 'gunair' | 'nn' = 'basic',
+    p2AI: 'basic' | 'gunair' | 'nn' = 'basic',
+    p1ModelId?: string,
+    p2ModelId?: string,
   ): Promise<GameSession> {
     const id = crypto.randomUUID();
     const tokens = generateTokens();
@@ -99,12 +101,12 @@ export class GameManager {
     // Spawn AI players if needed
     if (p1Type === 'ai') {
       console.log(`[AI Manager] Spawning ${p1AI} as player1 for game ${id}`);
-      await spawnAIPlayer(session, 'player1', p1AI);
+      await spawnAIPlayer(session, 'player1', p1AI, p1ModelId);
     }
 
     if (p2Type === 'ai') {
       console.log(`[AI Manager] Spawning ${p2AI} as player2 for game ${id}`);
-      await spawnAIPlayer(session, 'player2', p2AI);
+      await spawnAIPlayer(session, 'player2', p2AI, p2ModelId);
     }
 
     // For AI vs AI, start immediately (both players are AI and will connect)

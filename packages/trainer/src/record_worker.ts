@@ -4,17 +4,21 @@
  * Each completed game is written directly as a JSON file to REPLAY_DIR.
  *
  * P1_AGENT / P2_AGENT — agent name for each player (default: basicAgent).
- * Supported values: basicAgent, gunAirAgent
+ * Supported values: basicAgent, gunAirAgent, nnAgent:<model_path>
  */
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import {
   createGameState,
   applyAction,
   getPlayerView,
   BasicAgent,
   GunAirAgent,
+  NnAgent,
 } from '@sc/shared';
 import type { Agent, AgentAction } from '@sc/shared';
 import { snapshotGame, type ReplayMeta } from './replayUtils.js';
@@ -32,8 +36,36 @@ const p2AgentName = process.env.P2_AGENT ?? process.env.P2AGENT ?? 'basicAgent';
 
 const MAX_ACTIONS_PER_TURN = 500;
 
+// Track if either agent is async (NnAgent)
+let p1IsAsync = false;
+let p2IsAsync = false;
+
+// Resolve model path - supports shorthand names like "adam" → checkpoints/adam.onnx
+function resolveModelPath(modelName: string): string {
+  // If it's an absolute path or contains /, use as-is
+  if (modelName.startsWith('/') || modelName.includes('/')) {
+    return modelName;
+  }
+  // Otherwise, treat as shorthand and look in ../ai/checkpoints relative to dist/
+  const checkpointsDir = path.join(__dirname, '../ai/checkpoints');
+  return path.join(checkpointsDir, `${modelName}.onnx`);
+}
+
 function makeAgent(name: string): Agent {
-  switch (name.toLowerCase()) {
+  const lower = name.toLowerCase();
+
+  // Support nnAgent with model path: nnAgent:<path> or nn:<path>
+  if (lower.startsWith('nnagent:') || lower.startsWith('nn:')) {
+    const modelName = lower.split(':')[1];
+    if (modelName) {
+      const agent = new NnAgent();
+      const modelPath = resolveModelPath(modelName);
+      process.env.NN_MODEL_PATH = modelPath;
+      return agent;
+    }
+  }
+
+  switch (lower) {
     case 'gunairagent':
     case 'gunair':
       return new GunAirAgent();
@@ -54,25 +86,33 @@ function writeProgress(game: number): void {
 
 process.stderr.write(`[W${workerId}] started — ${numGames} games (p1=${p1AgentName} p2=${p2AgentName})\n`);
 
+// Check if agents are async
+p1IsAsync = p1AgentName.toLowerCase().startsWith('nnagent:') || p1AgentName.toLowerCase().startsWith('nn:');
+p2IsAsync = p2AgentName.toLowerCase().startsWith('nnagent:') || p2AgentName.toLowerCase().startsWith('nn:');
+
 let completed = 0;
 let skipped = 0;
 
-for (let g = 0; g < numGames; g++) {
+async function runGame(g: number): Promise<void> {
   let state: ReturnType<typeof createGameState>;
   try {
     state = createGameState({ width: mapWidth, height: mapHeight });
   } catch {
     skipped++;
     writeProgress(g + 1);
-    continue;
+    return;
   }
 
   const agents: Record<string, Agent> = {
     player1: makeAgent(p1AgentName),
     player2: makeAgent(p2AgentName),
   };
-  agents.player1.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
-  agents.player2.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
+
+  // Initialize agents (await for NnAgent)
+  const init1 = agents.player1.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
+  const init2 = agents.player2.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
+  if (p1IsAsync) await init1;
+  if (p2IsAsync) await init2;
 
   const frames: ReturnType<typeof snapshotGame>[] = [];
   let prevTurn = state.turn;
@@ -84,7 +124,8 @@ for (let g = 0; g < numGames; g++) {
     if (pid !== prevPlayer) { actionsThisTurn = 0; prevPlayer = pid; }
 
     const view = getPlayerView(state, pid);
-    const action: AgentAction = agents[pid].act({ ...view, myPlayerId: pid } as any);
+    const actionResult = agents[pid].act({ ...view, myPlayerId: pid } as any);
+    const action: AgentAction = actionResult instanceof Promise ? await actionResult : actionResult;
 
     const res = applyAction(state, action, pid);
     if (!res.success) {
@@ -132,7 +173,7 @@ for (let g = 0; g < numGames; g++) {
     p2Agent: p2AgentName,
   };
 
-  fs.writeFileSync(path.join(replayDir, `${id}.json`), JSON.stringify({ meta, tiles: state.tiles, frames }));
+  fs.writeFileSync(path.join(replayDir, `${id}.json`), JSON.stringify({ meta, mapWidth: state.mapWidth, mapHeight: state.mapHeight, tiles: state.tiles, frames }));
   completed++;
 
   process.stderr.write(
@@ -145,7 +186,18 @@ for (let g = 0; g < numGames; g++) {
   }
 }
 
-// Write final result summary
-fs.writeFileSync(path.join(tmpDir, `result-${workerId}.json`), JSON.stringify({ completed, skipped }));
-writeProgress(numGames);
-process.stderr.write(`[W${workerId}] done — ${completed} recorded, ${skipped} skipped\n`);
+// Run games sequentially (async if NN agent involved)
+async function runAllGames(): Promise<void> {
+  for (let g = 0; g < numGames; g++) {
+    await runGame(g);
+  }
+  // Write final result summary
+  fs.writeFileSync(path.join(tmpDir, `result-${workerId}.json`), JSON.stringify({ completed, skipped }));
+  writeProgress(numGames);
+  process.stderr.write(`[W${workerId}] done — ${completed} recorded, ${skipped} skipped\n`);
+}
+
+runAllGames().catch(err => {
+  process.stderr.write(`[W${workerId}] error: ${err.message}\n`);
+  process.exit(1);
+});

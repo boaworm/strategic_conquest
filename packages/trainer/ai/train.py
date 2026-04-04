@@ -138,29 +138,29 @@ def run_epoch(
     total_loss = action_loss = tile_loss = prod_loss = 0.0
     correct_action = total_samples = 0
 
-    ctx = torch.enable_grad() if training else torch.no_grad()
-    with ctx:
-        for batch in loader:
-            state        = batch["state"].to(device)
-            action_label = batch["action_type"].to(device)
-            tile_label   = batch["target_tile"].to(device)
-            prod_label   = batch["prod_type"].to(device)
+    torch.set_grad_enabled(training)
+    for batch in loader:
+        state        = batch["state"].to(device, non_blocking=True)
+        action_label = batch["action_type"].to(device, non_blocking=True)
+        tile_label   = batch["target_tile"].to(device, non_blocking=True)
+        prod_label   = batch["prod_type"].to(device, non_blocking=True)
 
-            out = model(state)
-            loss, la, lt, lp = compute_loss(out, action_label, tile_label, prod_label, device)
+        out = model(state)
+        loss, la, lt, lp = compute_loss(out, action_label, tile_label, prod_label, device)
 
-            if training:
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+        if training:
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-            n = len(state)
-            total_loss    += loss.item() * n
-            action_loss   += la.item()  * n
-            tile_loss     += lt.item()  * n
-            prod_loss     += lp.item()  * n
-            correct_action += (out["action_type"].argmax(1) == action_label).sum().item()
-            total_samples  += n
+        n = len(state)
+        total_loss    += loss.item() * n
+        action_loss   += la.item()  * n
+        tile_loss     += lt.item()  * n
+        prod_loss     += lp.item()  * n
+        correct_action += (out["action_type"].argmax(1) == action_label).sum().item()
+        total_samples  += n
+    torch.set_grad_enabled(True)
 
     return {
         "loss":        total_loss    / total_samples,
@@ -193,7 +193,14 @@ def train(args: argparse.Namespace) -> None:
     train_size = len(dataset) - val_size
     train_ds, val_ds = random_split(dataset, [train_size, val_size])
 
-    loader_kwargs = dict(batch_size=args.batch_size, num_workers=args.workers, pin_memory=False)
+    loader_kwargs = dict(
+        batch_size=args.batch_size,
+        num_workers=args.workers,
+        pin_memory=False,
+    )
+    if args.workers > 0:
+        loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = 2
     train_loader = DataLoader(train_ds, shuffle=True,  **loader_kwargs)
     val_loader   = DataLoader(val_ds,   shuffle=False, **loader_kwargs)
 
@@ -202,16 +209,43 @@ def train(args: argparse.Namespace) -> None:
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {num_params:,}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    # torch.compile for fused kernels (fallback to eager if unsupported)
+    try:
+        model = torch.compile(model)
+        print("Using torch.compile")
+    except Exception:
+        print("torch.compile unavailable, using eager mode")
+
+    # Scale LR linearly with batch size (base=256)
+    effective_lr = args.lr * (args.batch_size / 256)
+    optimizer = torch.optim.Adam(model.parameters(), lr=effective_lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    print(f"LR: {effective_lr:.1e} (base {args.lr:.1e} scaled for batch {args.batch_size})")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     best_val_loss = float("inf")
+    start_epoch = 1
+
+    # ── Resume from checkpoint ────────────────────────────────────────────────
+    if args.resume:
+        ckpt_path = Path(args.resume)
+        if ckpt_path.exists():
+            ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+            model.load_state_dict(ckpt["model_state"])
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+            best_val_loss = ckpt.get("val_loss", float("inf"))
+            start_epoch = ckpt["epoch"] + 1
+            # Advance scheduler to correct position
+            for _ in range(start_epoch - 1):
+                scheduler.step()
+            print(f"Resumed from epoch {ckpt['epoch']} (val_loss={best_val_loss:.4f})")
+        else:
+            print(f"WARNING: --resume path {ckpt_path} not found, starting fresh")
 
     # ── Epoch loop ────────────────────────────────────────────────────────────
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         t0 = time.time()
         tr = run_epoch(model, train_loader, optimizer, device)
         vl = run_epoch(model, val_loader,   None,      device)
@@ -256,8 +290,9 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir",   default="./data",        help="Directory with states.bin, actions.jsonl, meta.json")
     parser.add_argument("--out-dir",    default="./checkpoints",  help="Directory for saved checkpoints")
     parser.add_argument("--epochs",     type=int,   default=50)
-    parser.add_argument("--batch-size", type=int,   default=256)
-    parser.add_argument("--lr",         type=float, default=1e-3)
-    parser.add_argument("--workers",    type=int,   default=0,    help="DataLoader worker processes (0 for MPS compatibility)")
+    parser.add_argument("--batch-size", type=int,   default=1024)
+    parser.add_argument("--lr",         type=float, default=1e-3, help="Base LR (scaled linearly with batch size, base=256)")
+    parser.add_argument("--workers",    type=int,   default=4,    help="DataLoader worker processes")
+    parser.add_argument("--resume",     type=str,   default=None, help="Path to checkpoint to resume from")
     args = parser.parse_args()
     train(args)

@@ -15,5 +15,4 @@
     "composite": true
   },
   "include": ["src/**/*", "src/*.json"],
-  "exclude": ["src/nnAgent.ts"]
 }

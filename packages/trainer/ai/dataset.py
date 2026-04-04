@@ -14,6 +14,7 @@ File format (all in OUTPUT_DIR/):
 
 import json
 import glob
+from bisect import bisect_right
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +51,26 @@ UNIT_TO_IDX = {u: i for i, u in enumerate(UNIT_TYPES)}
 NUM_UNIT_TYPES = len(UNIT_TYPES)
 
 
+def _encode_actions(actions: list[dict], map_width: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Pre-encode action dicts into numpy arrays for fast __getitem__ access."""
+    n = len(actions)
+    action_types = np.empty(n, dtype=np.int64)
+    target_tiles = np.full(n, -1, dtype=np.int64)
+    prod_types = np.full(n, -1, dtype=np.int64)
+
+    for i, action in enumerate(actions):
+        atype = action.get("type", "END_TURN")
+        action_types[i] = ACTION_TO_IDX.get(atype, 0)
+
+        if atype in ("MOVE", "UNLOAD") and "to" in action:
+            target_tiles[i] = action["to"]["y"] * map_width + action["to"]["x"]
+
+        if atype == "SET_PRODUCTION":
+            prod_types[i] = UNIT_TO_IDX.get(action.get("unitType", ""), -1)
+
+    return action_types, target_tiles, prod_types
+
+
 class GameDataset(Dataset):
     """
     Streams imitation-learning samples from disk.
@@ -78,91 +99,68 @@ class GameDataset(Dataset):
         # Check if consolidated files exist
         if states_file.exists() and actions_file.exists():
             # Consolidated mode — single files
-            self.states = np.memmap(
+            print("Loading states into RAM...", flush=True)
+            mm = np.memmap(
                 states_file,
                 dtype="float32",
                 mode="r",
                 shape=(self.num_samples, self.num_channels, self.map_height, self.map_width),
             )
+            self.states = np.array(mm)  # copy into RAM
+            del mm
+            print(f"  Loaded {self.states.nbytes / 1e9:.1f} GB", flush=True)
+
             with open(actions_file) as f:
-                self.actions = [json.loads(line) for line in f if line.strip()]
+                actions = [json.loads(line) for line in f if line.strip()]
         else:
-            # Per-worker mode — concatenate worker files virtually
+            # Per-worker mode — load all worker files into RAM
             worker_states = sorted(glob.glob(str(data_dir / "worker-*.states.bin")))
-            worker_actions = sorted(glob.glob(str(data_dir / "worker-*.actions.jsonl")))
 
             if not worker_states:
                 raise FileNotFoundError(
                     f"No states.bin or worker-*.states.bin found in {data_dir}"
                 )
 
-            # Memory-map each worker file and track offsets
-            self.worker_files = []
-            self.worker_offsets = [0]
-            self.worker_samples = []
+            sample_size = self.num_channels * self.map_height * self.map_width
+            chunks = []
 
-            sample_size = self.num_channels * self.map_height * self.map_width  # number of elements per sample
+            print("Loading worker states into RAM...", flush=True)
             for wf in worker_states:
                 size = Path(wf).stat().st_size
-                elem_size = 4  # float32 = 4 bytes
-                total_elements = size // elem_size
-                count = total_elements // sample_size
-                self.worker_samples.append(count)
-                self.worker_offsets.append(self.worker_offsets[-1] + count)
-                # Reshape memmap to [num_samples, C, H, W]
-                memmap_arr = np.memmap(wf, dtype="float32", mode="r", shape=(count, self.num_channels, self.map_height, self.map_width))
-                self.worker_files.append(memmap_arr)
+                count = size // (4 * sample_size)
+                mm = np.memmap(wf, dtype="float32", mode="r",
+                               shape=(count, self.num_channels, self.map_height, self.map_width))
+                chunks.append(np.array(mm))  # copy into RAM
+                del mm
+
+            self.states = np.concatenate(chunks, axis=0)
+            del chunks
+            print(f"  Loaded {self.states.nbytes / 1e9:.1f} GB", flush=True)
 
             # Load all actions from worker files
-            self.actions = []
+            actions = []
             for wa in sorted(glob.glob(str(data_dir / "worker-*.actions.jsonl"))):
                 with open(wa) as f:
-                    self.actions.extend([json.loads(line) for line in f if line.strip()])
+                    actions.extend([json.loads(line) for line in f if line.strip()])
 
-            self.states = self.worker_files  # List of memmaps
-
-        if len(self.actions) != self.num_samples:
+        if len(actions) != self.num_samples:
             raise ValueError(
                 f"Data mismatch: meta says {self.num_samples} samples "
-                f"but actions.jsonl has {len(self.actions)} lines"
+                f"but actions has {len(actions)} lines"
             )
+
+        # Pre-encode actions into numpy arrays (eliminates per-sample dict lookups)
+        print("Encoding actions...", flush=True)
+        self.action_types, self.target_tiles, self.prod_types = _encode_actions(actions, self.map_width)
+        del actions  # free the list of dicts
 
     def __len__(self) -> int:
         return self.num_samples
 
     def __getitem__(self, idx: int) -> dict:
-        # Handle per-worker mode vs consolidated mode
-        if isinstance(self.states, list):
-            # Per-worker mode: find which worker file contains this index
-            worker_idx = 0
-            while idx >= self.worker_offsets[worker_idx + 1]:
-                worker_idx += 1
-            local_idx = idx - self.worker_offsets[worker_idx]
-            state = torch.from_numpy(self.states[worker_idx][local_idx].copy())
-        else:
-            # Consolidated mode
-            state = torch.from_numpy(self.states[idx].copy())
-
-        action = self.actions[idx]
-        action_type = action.get("type", "END_TURN")
-
-        action_type_idx = ACTION_TO_IDX.get(action_type, 0)
-
-        # Target tile: flat index y*W + x, only for MOVE / UNLOAD
-        target_tile = -1
-        if action_type in ("MOVE", "UNLOAD") and "to" in action:
-            tx = action["to"]["x"]
-            ty = action["to"]["y"]
-            target_tile = ty * self.map_width + tx
-
-        # Production type: only for SET_PRODUCTION
-        prod_type = -1
-        if action_type == "SET_PRODUCTION":
-            prod_type = UNIT_TO_IDX.get(action.get("unitType", ""), -1)
-
         return {
-            "state":       state,
-            "action_type": torch.tensor(action_type_idx, dtype=torch.long),
-            "target_tile": torch.tensor(target_tile,     dtype=torch.long),
-            "prod_type":   torch.tensor(prod_type,       dtype=torch.long),
+            "state":       torch.from_numpy(self.states[idx].copy()),
+            "action_type": torch.tensor(self.action_types[idx], dtype=torch.long),
+            "target_tile": torch.tensor(self.target_tiles[idx], dtype=torch.long),
+            "prod_type":   torch.tensor(self.prod_types[idx],   dtype=torch.long),
         }

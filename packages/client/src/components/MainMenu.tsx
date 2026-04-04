@@ -48,7 +48,14 @@ const WORLD_SIZES = [
 const AI_PLAYERS = [
   { label: 'Basic (Greedy)', value: 'basic', description: 'Aggressive expansion and combat' },
   { label: 'GunAir (Skeleton)', value: 'gunair', description: 'Random army moves and production — beginner difficulty' },
+  { label: 'Albert (NN Gen1)', value: 'nn', description: 'Neural Network agent' },
 ] as const;
+
+interface NNModel {
+  id: string;
+  name: string;
+  path: string;
+}
 
 export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
   const createGame = useGameStore((s) => s.createGame);
@@ -63,8 +70,23 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [mainWorldSize, setMainWorldSize] = useState(2); // default: Medium
   const [aiPlayer, setAiPlayer] = useState('basic'); // default: Basic
+  const [nnModels, setNnModels] = useState<NNModel[]>([]);
+  const [selectedModel, setSelectedModel] = useState('');
 
   const error = localError || storeError;
+
+  // Fetch available NN models on mount
+  useEffect(() => {
+    fetch('/api/nn-models')
+      .then((r) => r.json())
+      .then((models: NNModel[]) => {
+        setNnModels(models);
+        if (models.length > 0) {
+          setSelectedModel(models[0].id);
+        }
+      })
+      .catch((err) => console.error('Failed to load NN models:', err));
+  }, []);
 
   // Reset connecting state if error occurs or if we finish connecting
   useEffect(() => {
@@ -91,7 +113,20 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
       const size = WORLD_SIZES[mainWorldSize];
       // Map AI player name to type and pass to server
       const aiType = 'ai' as const;
-      const result = await createGame(size.width, size.height, 'pve', 'human', aiType, undefined, aiPlayer as 'basic' | 'gunair');
+      const aiKind = aiPlayer as 'basic' | 'gunair' | 'nn';
+      // Pass model ID if NN agent selected
+      const modelId = aiKind === 'nn' ? selectedModel : undefined;
+      const result = await createGame(
+        size.width,
+        size.height,
+        'pve',
+        'human',
+        aiType,
+        undefined,
+        aiKind,
+        modelId, // p1ModelId
+        undefined, // p2ModelId
+      );
       // Automatically join as player 1 (AI joins automatically via server)
       console.log('Created AI game, joining as player 1...');
       joinGame(result.p1Token);
@@ -231,6 +266,26 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
           </div>
           <p className="text-xs text-gray-400 mt-1">{AI_PLAYERS.find(a => a.value === aiPlayer)?.description}</p>
         </div>
+
+        {/* NN Model Selection - shown only when NN agent selected */}
+        {aiPlayer === 'nn' && (
+          <div className="text-left space-y-2">
+            <label className="text-sm text-gray-300 block">Model Version</label>
+            {nnModels.length === 0 ? (
+              <p className="text-xs text-yellow-500">No models found. Place .onnx files in ./checkpoints/</p>
+            ) : (
+              <select
+                className="w-full bg-gray-700 rounded px-3 py-2 text-sm"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+              >
+                {nnModels.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-col gap-3">
           <button

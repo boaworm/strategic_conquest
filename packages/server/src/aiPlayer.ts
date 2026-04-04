@@ -1,9 +1,10 @@
 import { io, type Socket } from 'socket.io-client';
-import { BasicAgent, GunAirAgent, UNIT_STATS } from '@sc/shared';
+import { BasicAgent, GunAirAgent, NnAgent, UNIT_STATS } from '@sc/shared';
 import type { Agent, AgentAction } from '@sc/shared';
 import type { GameSession } from './gameManager.js';
 import type { PlayerId } from '@sc/shared';
 import { VERBOSE } from './config.js';
+import { modelRegistry } from './routes/game.js';
 
 const TAG = '[AI]';
 const log = VERBOSE ? console.log : () => {};
@@ -15,7 +16,8 @@ const log = VERBOSE ? console.log : () => {};
 export async function spawnAIPlayer(
   session: GameSession,
   playerId: PlayerId,
-  aiName: 'basic' | 'gunair',
+  aiName: 'basic' | 'gunair' | 'nn',
+  modelId?: string,
 ): Promise<Socket> {
   const token = playerId === 'player1' ? session.tokens.p1Token : session.tokens.p2Token;
   const serverUrl = process.env.SERVER_URL || 'http://localhost:4000';
@@ -24,14 +26,36 @@ export async function spawnAIPlayer(
   let agent: Agent;
   if (aiName === 'gunair') {
     agent = new GunAirAgent();
+  } else if (aiName === 'nn') {
+    agent = new NnAgent();
+    // Set model path if modelId provided
+    if (modelId) {
+      const model = modelRegistry.getModelById(modelId);
+      if (model) {
+        process.env.NN_MODEL_PATH = model.path;
+        log(`${TAG} ${playerId} using NN model: ${model.name} (${model.path})`);
+      } else {
+        console.error(`${TAG} ${playerId} NN model not found: ${modelId}`);
+      }
+    }
   } else {
     agent = new BasicAgent();
   }
-  agent.init({
-    playerId,
-    mapWidth: session.state.mapWidth,
-    mapHeight: session.state.mapHeight,
-  });
+
+  // NnAgent.init() is async, others are sync
+  if (aiName === 'nn') {
+    await (agent as NnAgent).init({
+      playerId,
+      mapWidth: session.state.mapWidth,
+      mapHeight: session.state.mapHeight,
+    });
+  } else {
+    agent.init({
+      playerId,
+      mapWidth: session.state.mapWidth,
+      mapHeight: session.state.mapHeight,
+    });
+  }
 
   // Connect the socket and wait for connection
   const socket = io(serverUrl, {
@@ -46,12 +70,12 @@ export async function spawnAIPlayer(
     socket.on('error', (err) => { reject(err); });
   });
 
-  socket.on('gameStart', (view: any) => {
-    triggerAITurn(socket, agent, view, playerId);
+  socket.on('gameStart', async (view: any) => {
+    await triggerAITurn(socket, agent, view, playerId);
   });
 
-  socket.on('stateUpdate', (view: any) => {
-    triggerAITurn(socket, agent, view, playerId);
+  socket.on('stateUpdate', async (view: any) => {
+    await triggerAITurn(socket, agent, view, playerId);
   });
 
   /**
@@ -76,7 +100,7 @@ export async function spawnAIPlayer(
  * Trigger the AI to take its turn.
  * Decides the next action and emits it, with full debug logging.
  */
-function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId: string) {
+async function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId: string) {
   if (view.currentPlayer !== expectedPlayerId) return;
 
   const prefix = `${TAG} ${expectedPlayerId} turn ${view.turn}`;
@@ -111,7 +135,7 @@ function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId
   }
 
   // Let the AI decide and log the chosen action
-  const action: AgentAction = agent.act({
+  const action: AgentAction = await agent.act({
     tiles: view.tiles,
     myUnits: view.myUnits,
     myCities: view.myCities,

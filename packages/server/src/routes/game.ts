@@ -1,16 +1,28 @@
 import { Router } from 'express';
 import type { GameManager } from '../gameManager.js';
 import type { AIDifficulty } from '@sc/shared';
+import { NNModelRegistry } from '../nnModelRegistry.js';
+
+// Model registry - scans ./checkpoints for ONNX files
+export const modelRegistry = new NNModelRegistry('./checkpoints');
 
 export function createGameRoutes(manager: GameManager): Router {
   const router = Router();
+
+  /**
+   * GET /api/nn-models
+   * List available NN models for selection
+   */
+  router.get('/nn-models', (_req, res) => {
+    res.json(modelRegistry.getModels());
+  });
 
   /**
    * POST /api/games
    * Create a new game. Returns gameId + all three tokens.
    */
   router.post('/games', async (req, res) => {
-    const { mapWidth, mapHeight, mode, difficulty, p1Type, p2Type, p1AI, p2AI } = req.body ?? {};
+    const { mapWidth, mapHeight, mode, difficulty, p1Type, p2Type, p1AI, p2AI, p1ModelId, p2ModelId } = req.body ?? {};
     const isPvE = mode === 'pve';
     const isAiVsAi = mode === 'ai_vs_ai';
     const diff: AIDifficulty = (isPvE || isAiVsAi) ? (difficulty ?? 'medium') : 'medium';
@@ -24,6 +36,8 @@ export function createGameRoutes(manager: GameManager): Router {
       p2Type ?? 'human',
       p1AI ?? 'basic',
       p2AI ?? 'basic',
+      p1ModelId,
+      p2ModelId,
     );
 
     const response = {

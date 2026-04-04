@@ -10,4 +10,7 @@ export default defineConfig({
     outDir: path.resolve(__dirname, '../server/public'),
     emptyOutDir: true,
   },
+  optimizeDeps: {
+    exclude: ['onnxruntime-node'],
+  },
 });

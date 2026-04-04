@@ -38,12 +38,12 @@ export interface AgentConfig {
 
 export interface Agent {
   /** Called once at game start with static config. */
-  init(config: AgentConfig): void;
+  init(config: AgentConfig): void | Promise<void>;
 
   /**
    * Called by the runner each time this agent must act.
    * Must return exactly one action. The runner calls this repeatedly
    * until the agent emits END_TURN.
    */
-  act(obs: AgentObservation): AgentAction;
+  act(obs: AgentObservation): AgentAction | Promise<AgentAction>;
 }
