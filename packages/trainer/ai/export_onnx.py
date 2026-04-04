@@ -6,7 +6,10 @@ Usage:
 """
 
 import argparse
+import os
 import torch
+import onnx
+from onnx.external_data_helper import load_external_data_for_model
 from train import PolicyCNN
 
 
@@ -49,6 +52,17 @@ def main():
             "prod_type": {0: "batch"},
         },
     )
+
+    # Reload and re-save to merge any external data into a single inline file.
+    # CoreML (and some other EPs) require inline weights; external data breaks them.
+    model_proto = onnx.load(args.output, load_external_data=False)
+    load_external_data_for_model(model_proto, os.path.dirname(os.path.abspath(args.output)))
+    onnx.save_model(model_proto, args.output, save_as_external_data=False)
+
+    # Remove stale external data file if present
+    data_file = args.output + ".data"
+    if os.path.exists(data_file):
+        os.remove(data_file)
 
     print(f"Exported to {args.output}")
     print(f"Input shape: {config['channels']}x{config['map_height']}x{config['map_width']}")

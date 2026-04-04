@@ -50,8 +50,8 @@
           "action": "disembark"
         },
         {
-          "conditions": ["island_friendly", "transport_on_island"],
-          "action": "move_to_transport_and_board"
+          "conditions": ["island_friendly", "unexplored_land_on_island_exists"],
+          "action": "move_to_nearest_unexplored_land_on_island"
         },
         {
           "conditions": ["island_not_explored"],
@@ -60,6 +60,10 @@
         {
           "conditions": ["island_friendly", "no_transport_on_island"],
           "action": "move_to_nearest_coastal_city"
+        },
+        {
+          "conditions": ["island_friendly", "transport_on_island"],
+          "action": "move_to_transport_and_board"
         }
       ],
 

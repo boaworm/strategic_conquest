@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@sc/shared": "*",
-    "@sc/testing": "*"
+    "@sc/testing": "*",
+    "onnxruntime-node": "1.24.3"
   }
 }

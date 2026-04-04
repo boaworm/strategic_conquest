@@ -12,13 +12,18 @@ import { playerViewToTensor } from './engine/tensorUtils.js';
 import type { PlayerView } from './types.js';
 import { UnitType } from './types.js';
 
-// Lazy-load onnxruntime to avoid bundling issues
-let ort: typeof import('onnxruntime-node') | null = null;
-async function loadOrt(): Promise<typeof import('onnxruntime-node')> {
-  if (!ort) {
-    ort = await import('onnxruntime-node');
+import { resolve } from 'node:path';
+import * as ortNamespace from 'onnxruntime-node';
+const ort = ortNamespace.default;
+
+function getExecutionProviders(): string[] {
+  if (typeof process !== 'undefined' && process.platform === 'darwin') {
+    return ['coreml', 'cpu'];
   }
-  return ort;
+  if (typeof process !== 'undefined' && process.platform === 'linux') {
+    return ['cuda', 'cpu'];
+  }
+  return ['cpu'];
 }
 
 const ACTION_TYPES = [
@@ -56,9 +61,14 @@ export class NnAgent implements Agent {
     this.mapHeight = config.mapHeight;
 
     // Load ONNX runtime and model
-    const ort = await loadOrt();
-    const modelPath = (typeof process !== 'undefined' && process.env?.NN_MODEL_PATH) || './model.onnx';
-    this.session = await ort.InferenceSession.create(modelPath);
+    const modelPath = resolve((typeof process !== 'undefined' && process.env?.NN_MODEL_PATH) || './model.onnx');
+
+    const sessionOptions: any = {
+      executionProviders: getExecutionProviders(),
+      logSeverityLevel: 3, // errors only — suppress CoreML partition warnings
+    };
+
+    this.session = await ort.InferenceSession.create(modelPath, sessionOptions);
   }
 
   async act(observation: AgentObservation): Promise<AgentAction> {
@@ -74,7 +84,6 @@ export class NnAgent implements Agent {
     const tensor = playerViewToTensor(view);
 
     // Create ONNX tensor (1, 14, H, W) - matches export_onnx.py dummy_input shape
-    const ort = await loadOrt();
     const inputTensor = new ort.Tensor('float32', tensor, [1, 14, this.mapHeight, this.mapWidth]);
     const feeds = { input: inputTensor };
 

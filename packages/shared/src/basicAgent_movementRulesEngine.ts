@@ -76,6 +76,12 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     return ctx.map.isIslandFriendly(idx, ctx.obs);
   });
 
+  m.set('unexplored_land_on_island_exists', (ctx) => {
+    const idx = ctx.map.getIslandIdx(ctx.unit.x, ctx.unit.y, ctx.obs);
+    if (idx === undefined) return false;
+    return ctx.map.locateNearestUnexploredLandOnIsland(ctx.unit, idx, ctx.obs) !== null;
+  });
+
   m.set('transport_on_island', (ctx) => {
     return ctx.map.findTransportOnIsland(ctx.unit, ctx.obs) !== null;
   });
@@ -599,6 +605,15 @@ function buildActionResolvers(): Map<string, ActionResolver> {
   });
 
   // ── Generic movement ────────────────────────────────────────
+
+  a.set('move_to_nearest_unexplored_land_on_island', (ctx) => {
+    const idx = ctx.map.getIslandIdx(ctx.unit.x, ctx.unit.y, ctx.obs);
+    if (idx === undefined) return null;
+    const target = ctx.map.locateNearestUnexploredLandOnIsland(ctx.unit, idx, ctx.obs);
+    if (!target) return null;
+    const step = ctx.map.bestStepToward(ctx.obs, ctx.unit, target);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
 
   a.set('move_to_nearest_unexplored_ocean', (ctx) => {
     const target = ctx.map.locateNearestUnexploredOcean(ctx.unit, ctx.obs);
