@@ -140,18 +140,18 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
   map.set(
     'active_transports < max(1, ceil(army_producing_cities_on_this_island / 3))',
     (ctx) => {
-      const { islandOf } = ctx.helpers.classifyIslands(ctx.obs);
-      const cityIslandIdx = islandOf.get(`${ctx.city.x},${ctx.city.y}`);
-      const armyCitiesHere = ctx.obs.myCities.filter(
+      const { islandOf, friendlyIndices } = ctx.helpers.classifyIslands(ctx.obs);
+      // Count army-producing cities on ALL friendly islands (not just this island)
+      const armyCitiesTotal = ctx.obs.myCities.filter(
         (c) =>
           c.id !== ctx.city.id &&
           c.producing === UnitType.Army &&
-          islandOf.get(`${c.x},${c.y}`) === cityIslandIdx,
+          friendlyIndices.has(islandOf.get(`${c.x},${c.y}`) ?? -1)
       ).length;
       const activeTransports = ctx.obs.myUnits.filter(
         (u) => u.type === UnitType.Transport,
       ).length;
-      const target = Math.max(1, Math.ceil(armyCitiesHere / 3));
+      const target = Math.max(1, Math.ceil(armyCitiesTotal / 3));
       return activeTransports < target;
     },
   );
@@ -164,26 +164,6 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
         (u) => u.type === UnitType.Transport,
       ).length;
       return activeTransports < 1;
-    },
-  );
-
-  return map;
-  map.set(
-    'active_transports < max(1, ceil(army_producing_cities_on_this_island / 3))',
-    (ctx) => {
-      const { islandOf } = ctx.helpers.classifyIslands(ctx.obs);
-      const cityIslandIdx = islandOf.get(`${ctx.city.x},${ctx.city.y}`);
-      const armyCitiesHere = ctx.obs.myCities.filter(
-        (c) =>
-          c.id !== ctx.city.id &&
-          c.producing === UnitType.Army &&
-          islandOf.get(`${c.x},${c.y}`) === cityIslandIdx,
-      ).length;
-      const activeTransports = ctx.obs.myUnits.filter(
-        (u) => u.type === UnitType.Transport,
-      ).length;
-      const target = Math.max(1, Math.ceil(armyCitiesHere / 3));
-      return activeTransports < target;
     },
   );
 

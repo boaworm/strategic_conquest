@@ -90,6 +90,10 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     return ctx.map.findTransportOnIsland(ctx.unit, ctx.obs) === null;
   });
 
+  m.set('transport_with_room_on_island', (ctx) => {
+    return ctx.map.findTransportOnIsland(ctx.unit, ctx.obs) !== null;
+  });
+
   m.set('onboard_transport', (ctx) => {
     return ctx.unit.carriedBy !== null;
   });
@@ -162,6 +166,12 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     const idx = ctx.map.getIslandIdxForUnit(ctx.unit.x, ctx.unit.y, ctx.obs);
     const mostIdx = ctx.map.friendlyIslandWithMostArmies(ctx.obs);
     return idx !== undefined && mostIdx === idx;
+  });
+
+  m.set('not_at_island_with_most_armies', (ctx) => {
+    const idx = ctx.map.getIslandIdxForUnit(ctx.unit.x, ctx.unit.y, ctx.obs);
+    const mostIdx = ctx.map.friendlyIslandWithMostArmies(ctx.obs);
+    return idx === undefined || mostIdx === null || mostIdx !== idx;
   });
 
   // ── Combat conditions (shared) ──────────────────────────────
@@ -358,6 +368,13 @@ function buildActionResolvers(): Map<string, ActionResolver> {
 
   a.set('move_to_nearest_coastal_city', (ctx) => {
     const target = ctx.map.locateNearestFriendlyCoastalCity(ctx.unit, ctx.obs);
+    if (!target) return null;
+    const step = ctx.map.bestStepToward(ctx.obs, ctx.unit, target);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
+  a.set('move_to_coastal_city_on_island_with_most_armies', (ctx) => {
+    const target = ctx.map.locateNearestCoastalCityOnIslandWithMostArmies(ctx.unit, ctx.obs);
     if (!target) return null;
     const step = ctx.map.bestStepToward(ctx.obs, ctx.unit, target);
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;

@@ -468,6 +468,23 @@ export class MapQuery {
     return maxIdx;
   }
 
+  /** Locate nearest coastal city on the friendly island with the most armies. */
+  locateNearestCoastalCityOnIslandWithMostArmies(from: Coord, obs: AgentObservation): Coord | null {
+    const targetIslandIdx = this.friendlyIslandWithMostArmies(obs);
+    if (targetIslandIdx === null) return null;
+    const { islandOf } = this.classifyIslands(obs);
+    let best: Coord | null = null;
+    let bestDist = Infinity;
+    for (const city of obs.myCities) {
+      const idx = islandOf.get(`${city.x},${city.y}`);
+      if (idx !== targetIslandIdx) continue;
+      if (!this.isCityCoastal(city, obs)) continue;
+      const dist = this.wrappedDist(from, city);
+      if (dist < bestDist) { bestDist = dist; best = city; }
+    }
+    return best;
+  }
+
   // ── Enemy queries ──────────────────────────────────────────────────────────
 
   /** Find nearest enemy unit of given types within movement range. */

@@ -59,8 +59,8 @@ function loadTestReplayMetas(): TestReplayMeta[] {
     try {
       const raw = JSON.parse(fs.readFileSync(path.join(TEST_REPLAY_DIR, f), 'utf-8'));
       if (raw.meta) {
-        // Determine pass/fail: passed if winner is set or neutralCities === 0
-        const passed = raw.meta.winner !== null || (raw.meta.neutralCities ?? 0) === 0;
+        // Determine pass/fail: passed only if neutralCities === 0 (all cities captured)
+        const passed = (raw.meta.neutralCities ?? 0) === 0;
         metas.push({ ...raw.meta, passed });
       }
     } catch { /* skip corrupt files */ }
@@ -92,6 +92,7 @@ const testFiles = [
   'test_destroyerChasingTransport.ts',
   'test_expansionOfIslandFirst.ts',
   'test_exploreAndExpand_3.ts',
+  'test_exploreManyIslands.ts',
   'test_transportEarlyDeparture.ts',
   'test_transportsInCombatPhase.ts',
 ];
