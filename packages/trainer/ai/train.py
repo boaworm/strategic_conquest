@@ -172,10 +172,8 @@ def run_epoch(
 
 
 def train(args: argparse.Namespace) -> None:
-    # GPU selection: CUDA (NVIDIA) > MPS (Apple Silicon) > CPU
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
+    # GPU selection: MPS (Apple Silicon) > CPU
+    if torch.backends.mps.is_available():
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
@@ -200,7 +198,7 @@ def train(args: argparse.Namespace) -> None:
     )
     if args.workers > 0:
         loader_kwargs["persistent_workers"] = True
-        loader_kwargs["prefetch_factor"] = 2
+        loader_kwargs["prefetch_factor"] = 16
     train_loader = DataLoader(train_ds, shuffle=True,  **loader_kwargs)
     val_loader   = DataLoader(val_ds,   shuffle=False, **loader_kwargs)
 
@@ -208,13 +206,6 @@ def train(args: argparse.Namespace) -> None:
     model = PolicyCNN(dataset.num_channels, dataset.map_height, dataset.map_width).to(device)
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {num_params:,}")
-
-    # torch.compile for fused kernels (fallback to eager if unsupported)
-    try:
-        model = torch.compile(model)
-        print("Using torch.compile")
-    except Exception:
-        print("torch.compile unavailable, using eager mode")
 
     # Scale LR linearly with batch size (base=256)
     effective_lr = args.lr * (args.batch_size / 256)
@@ -233,16 +224,26 @@ def train(args: argparse.Namespace) -> None:
         ckpt_path = Path(args.resume)
         if ckpt_path.exists():
             ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-            model.load_state_dict(ckpt["model_state"])
+            # Strip _orig_mod. prefix if checkpoint was saved from compiled model
+            state_dict = ckpt["model_state"]
+            if any(k.startswith("_orig_mod.") for k in state_dict.keys()):
+                state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+            model.load_state_dict(state_dict)
             optimizer.load_state_dict(ckpt["optimizer_state"])
             best_val_loss = ckpt.get("val_loss", float("inf"))
             start_epoch = ckpt["epoch"] + 1
-            # Advance scheduler to correct position
-            for _ in range(start_epoch - 1):
-                scheduler.step()
+            scheduler.last_epoch = start_epoch - 1
             print(f"Resumed from epoch {ckpt['epoch']} (val_loss={best_val_loss:.4f})")
         else:
             print(f"WARNING: --resume path {ckpt_path} not found, starting fresh")
+
+    # torch.compile has stride bugs on MPS backend, skip for now
+    if device.type != "mps":
+        try:
+            model = torch.compile(model)
+            print("Using torch.compile")
+        except Exception:
+            print("torch.compile unavailable, using eager mode")
 
     # ── Epoch loop ────────────────────────────────────────────────────────────
     for epoch in range(start_epoch, args.epochs + 1):
@@ -292,7 +293,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs",     type=int,   default=50)
     parser.add_argument("--batch-size", type=int,   default=1024)
     parser.add_argument("--lr",         type=float, default=1e-3, help="Base LR (scaled linearly with batch size, base=256)")
-    parser.add_argument("--workers",    type=int,   default=4,    help="DataLoader worker processes")
+    parser.add_argument("--workers",    type=int,   default=0,    help="DataLoader worker processes (0 recommended for MPS)")
     parser.add_argument("--resume",     type=str,   default=None, help="Path to checkpoint to resume from")
     args = parser.parse_args()
     train(args)

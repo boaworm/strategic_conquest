@@ -12,6 +12,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **DO NOT EVER RUN** npm run test_replay   **NEVER EVER DO IT**
 - **DO NOT EVER CLAIM SUCCESS** unless things truly work.
 
+# Hardware requirements
+
+## Development and training
+Apple Silicone, M1 Max with 64G ram
+
+## Runtime
+Must be able to run the nnAgent using CPU only
+If possible, use apple CoreML (if on mac) to run agent.
+Else, fall back to run on CPU.
+
 # GIT
 I do all git commit, push, pull, add, delete, rename/mv
 

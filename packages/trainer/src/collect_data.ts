@@ -108,7 +108,7 @@ async function main(): Promise<void> {
   const pollInterval = setInterval(() => {
     const totalDone = Array.from({ length: WORKERS }, (_, i) => readProgress(i))
       .reduce((a, b) => a + b, 0);
-    const pct = Math.floor((totalDone / NUM_GAMES) * 100);
+    const pct = Math.min(100, Math.floor((totalDone / NUM_GAMES) * 100));
     if (pct > lastReportedPct) {
       lastReportedPct = pct;
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1);

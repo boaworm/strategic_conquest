@@ -98,22 +98,19 @@ class GameDataset(Dataset):
 
         # Check if consolidated files exist
         if states_file.exists() and actions_file.exists():
-            # Consolidated mode — single files
-            print("Loading states into RAM...", flush=True)
-            mm = np.memmap(
-                states_file,
-                dtype="float32",
-                mode="r",
-                shape=(self.num_samples, self.num_channels, self.map_height, self.map_width),
-            )
-            self.states = np.array(mm)  # copy into RAM
-            del mm
-            print(f"  Loaded {self.states.nbytes / 1e9:.1f} GB", flush=True)
+            # Consolidated mode — store path, open memmap lazily
+            self._states_path = str(states_file)
+            self._states_shape = (self.num_samples, self.num_channels, self.map_height, self.map_width)
+            self._worker_paths = None
+            self._worker_shapes = None
+            self._worker_offsets = None
+            self._open_memmaps()
+            print(f"  Mapped {self.num_samples:,} samples (memmap)", flush=True)
 
             with open(actions_file) as f:
                 actions = [json.loads(line) for line in f if line.strip()]
         else:
-            # Per-worker mode — load all worker files into RAM
+            # Per-worker mode — store paths, open memmaps lazily
             worker_states = sorted(glob.glob(str(data_dir / "worker-*.states.bin")))
 
             if not worker_states:
@@ -122,20 +119,21 @@ class GameDataset(Dataset):
                 )
 
             sample_size = self.num_channels * self.map_height * self.map_width
-            chunks = []
+            self._states_path = None
+            self._states_shape = None
+            self._worker_paths = []
+            self._worker_shapes = []
+            self._worker_offsets = [0]
 
-            print("Loading worker states into RAM...", flush=True)
             for wf in worker_states:
                 size = Path(wf).stat().st_size
                 count = size // (4 * sample_size)
-                mm = np.memmap(wf, dtype="float32", mode="r",
-                               shape=(count, self.num_channels, self.map_height, self.map_width))
-                chunks.append(np.array(mm))  # copy into RAM
-                del mm
+                self._worker_paths.append(wf)
+                self._worker_shapes.append((count, self.num_channels, self.map_height, self.map_width))
+                self._worker_offsets.append(self._worker_offsets[-1] + count)
 
-            self.states = np.concatenate(chunks, axis=0)
-            del chunks
-            print(f"  Loaded {self.states.nbytes / 1e9:.1f} GB", flush=True)
+            self._open_memmaps()
+            print(f"  Mapped {len(self._worker_paths)} worker files (memmap)", flush=True)
 
             # Load all actions from worker files
             actions = []
@@ -154,12 +152,43 @@ class GameDataset(Dataset):
         self.action_types, self.target_tiles, self.prod_types = _encode_actions(actions, self.map_width)
         del actions  # free the list of dicts
 
+    def _open_memmaps(self):
+        """Open (or re-open) memmap file handles. Called on init and after unpickling."""
+        if self._worker_paths is not None:
+            self._worker_files = [
+                np.memmap(p, dtype="float32", mode="r", shape=s)
+                for p, s in zip(self._worker_paths, self._worker_shapes)
+            ]
+        else:
+            self._states_mm = np.memmap(
+                self._states_path, dtype="float32", mode="r", shape=self._states_shape
+            )
+
+    def __getstate__(self):
+        """Pickle sends paths, not memmap data."""
+        state = self.__dict__.copy()
+        state.pop("_worker_files", None)
+        state.pop("_states_mm", None)
+        return state
+
+    def __setstate__(self, state):
+        """Unpickle re-opens memmaps from paths."""
+        self.__dict__.update(state)
+        self._open_memmaps()
+
     def __len__(self) -> int:
         return self.num_samples
 
     def __getitem__(self, idx: int) -> dict:
+        if self._worker_paths is not None:
+            worker_idx = bisect_right(self._worker_offsets, idx) - 1
+            local_idx = idx - self._worker_offsets[worker_idx]
+            state = torch.from_numpy(self._worker_files[worker_idx][local_idx].copy())
+        else:
+            state = torch.from_numpy(self._states_mm[idx].copy())
+
         return {
-            "state":       torch.from_numpy(self.states[idx].copy()),
+            "state":       state,
             "action_type": torch.tensor(self.action_types[idx], dtype=torch.long),
             "target_tile": torch.tensor(self.target_tiles[idx], dtype=torch.long),
             "prod_type":   torch.tensor(self.prod_types[idx],   dtype=torch.long),
