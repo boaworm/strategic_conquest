@@ -7,6 +7,14 @@ Usage:
 
 import argparse
 import os
+import warnings
+import logging
+
+# Suppress torch/onnx warnings for cleaner output
+warnings.filterwarnings("ignore")
+logging.getLogger("torch.onnx").setLevel(logging.ERROR)
+logging.getLogger("onnx").setLevel(logging.ERROR)
+
 import torch
 import onnx
 from onnx.external_data_helper import load_external_data_for_model
@@ -35,23 +43,25 @@ def main():
     # Create dummy input (batch_size=1, channels=14, H=22, W=50)
     dummy_input = torch.randn(1, config["channels"], config["map_height"], config["map_width"])
 
-    # Export to ONNX
-    torch.onnx.export(
-        model,
-        dummy_input,
-        args.output,
-        export_params=True,
-        opset_version=14,
-        do_constant_folding=True,
-        input_names=["input"],
-        output_names=["action_type", "target_tile", "prod_type"],
-        dynamic_axes={
-            "input": {0: "batch"},
-            "action_type": {0: "batch"},
-            "target_tile": {0: "batch"},
-            "prod_type": {0: "batch"},
-        },
-    )
+    # Export to ONNX (use opset 18 to avoid version conversion warnings)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        torch.onnx.export(
+            model,
+            dummy_input,
+            args.output,
+            export_params=True,
+            opset_version=18,
+            do_constant_folding=True,
+            input_names=["input"],
+            output_names=["action_type", "target_tile", "prod_type"],
+            dynamic_axes={
+                "input": {0: "batch"},
+                "action_type": {0: "batch"},
+                "target_tile": {0: "batch"},
+                "prod_type": {0: "batch"},
+            },
+        )
 
     # Reload and re-save to merge any external data into a single inline file.
     # CoreML (and some other EPs) require inline weights; external data breaks them.
