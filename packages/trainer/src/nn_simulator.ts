@@ -24,10 +24,10 @@ async function runHeadlessGame() {
   client.on('connect', async () => {
     console.log('Connected to Python NN!');
     
-    // Start game
+    // Start game — must match training size (50×20) for model compatibility
     const state = createGameState({
-      width: 30, // Tiny map size for faster training initially
-      height: 10,
+      width: 50,
+      height: 20,
     });
     
     const oppAgent = new BasicAgent();
