@@ -3,6 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 # Critical Instructions
+- **TRUST ME** If i say something, take that as true. If i say a process is hung, assume it is.
 - **Brevity is mandatory.** Do not explain your reasoning unless explicitly asked.
 - **No Preamble/Postamble.** Do not say "Certainly," "I can help with that," or "Let me know if you need anything else."
 - **Focus on Action.** Execute tool calls (bash, file_edit) immediately.
@@ -215,3 +216,7 @@ const action: AgentAction = agent.act(obs)
 - `MIN_ISLAND_CITIES = 2` for area < 1500, else 3
 - `cityCount ≈ clamp(area/30, 8, 30)`
 - 200 retry attempts before throwing; collect_worker wraps in try/catch and skips failed maps
+
+## Hardware Rules
+
+**NEVER fall back to CPU for NN inference.** Always use MPS (Apple GPU) on Apple Silicon. CPU is unacceptable for production inference.

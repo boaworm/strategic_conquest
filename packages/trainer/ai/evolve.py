@@ -14,19 +14,21 @@ import os
 import sys
 import subprocess
 import tempfile
+import time
+from datetime import datetime
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import random
 
 import torch
 import numpy as np
 import onnxruntime as ort
 
-# Install dependencies first: pip install -r requirements.txt (from project root)
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 from train import PolicyCNN
 
 # Import game evaluator directly
-from game_evaluator import run_game, SimpleGame, player_view_to_tensor
+from game_evaluator import run_game, run_game_torch_mps, SimpleGame, player_view_to_tensor
 
 
 def create_perturbation(base_state_dict, rng, scale=0.1):
@@ -134,36 +136,64 @@ def export_to_onnx(checkpoint_path, perturbations, output_path):
 
 def evaluate_genome(args):
     """Worker process to evaluate a single genome."""
-    perturbations, checkpoint_path, games_per_agent, map_width, map_height, max_turns, worker_id = args
+    perturbations, checkpoint_path, config, games_per_agent, map_width, map_height, max_turns, worker_id = args
+    timing = {}
 
-    # Ensure tmp/ directory exists (relative to project root)
-    tmp_dir = os.path.abspath('tmp')
-    os.makedirs(tmp_dir, exist_ok=True)
+    # Load model in worker process
+    model = PolicyCNN(**config)
+    ckpt = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
 
-    # Export to ONNX (use absolute path)
-    onnx_path = os.path.join(tmp_dir, f'evolve_{worker_id}_{random.randint(0, 10000)}.onnx')
-    try:
-        export_to_onnx(checkpoint_path, perturbations, onnx_path)
+    # Handle evolution checkpoint (references base checkpoint)
+    if 'perturbations' in ckpt and 'base_checkpoint' in ckpt:
+        base_ckpt = torch.load(ckpt['base_checkpoint'], weights_only=False, map_location="cpu")
+        base_state_dict = base_ckpt['model_state']
+    else:
+        base_state_dict = ckpt.get('model_state', ckpt)
 
-        # Run games directly
-        wins = 0
-        draws = 0
-        losses = 0
+    model.load_state_dict(base_state_dict)
 
-        for g in range(games_per_agent):
-            result = run_game(onnx_path, map_width, map_height, max_turns)
-            if result == 1:
-                wins += 1
-            elif result == 0.5:
-                draws += 1
-            else:
-                losses += 1
+    # Run games using PyTorch with MPS (GPU)
+    wins = 0
+    draws = 0
+    losses = 0
 
-        return wins, draws, losses
+    start = time.time()
+    for g in range(games_per_agent):
+        result = run_game_torch_mps(model, perturbations, map_width, map_height, max_turns)
+        if result == 1:
+            wins += 1
+        elif result == 0.5:
+            draws += 1
+        else:
+            losses += 1
+    timing['games'] = time.time() - start
+    timing['export'] = 0  # No export needed
 
-    finally:
-        if os.path.exists(onnx_path):
-            os.unlink(onnx_path)
+    return wins, draws, losses, timing
+
+
+def evaluate_genome_sequential(base_state_dict, perturbations, config, games_per_agent, map_width, map_height, max_turns):
+    """Evaluate genome in main process (for MPS compatibility)."""
+    # Create a fresh model with base weights for this genome
+    model = PolicyCNN(**config)
+    model.load_state_dict(base_state_dict)
+
+    wins = 0
+    draws = 0
+    losses = 0
+
+    start = time.time()
+    for g in range(games_per_agent):
+        result = run_game_torch_mps(model, perturbations, map_width, map_height, max_turns)
+        if result == 1:
+            wins += 1
+        elif result == 0.5:
+            draws += 1
+        else:
+            losses += 1
+    timing = {'games': time.time() - start, 'export': 0}
+
+    return wins, draws, losses, timing
 
 
 def run_evolution(args):
@@ -198,24 +228,31 @@ def run_evolution(args):
     for gen in range(args.gens):
         print(f"\nGeneration {gen + 1}/{args.gens}")
 
-        eval_args = [
-            (g['perturbations'], checkpoint_path, args.games_per_agent,
-             args.map_width, args.map_height, args.max_turns, i % args.workers)
-            for i, g in enumerate(population)
-        ]
+        # Load model once in main process (MPS doesn't work in subprocesses)
+        model = PolicyCNN(**config)
+        ckpt = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
 
-        with ProcessPoolExecutor(max_workers=args.workers) as executor:
-            futures = {executor.submit(evaluate_genome, arg): i for i, arg in enumerate(eval_args)}
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    wins, draws, losses = future.result()
-                    fitness = (wins * 1 + draws * 0.5) / (wins + draws + losses)
-                    population[idx]['fitness'] = fitness
-                    print(f"  Genome {idx}: {wins}W-{draws}D-{losses}L (fitness: {fitness:.4f})")
-                except Exception as e:
-                    print(f"Error evaluating genome {idx}: {e}")
-                    population[idx]['fitness'] = 0
+        # Recursively resolve base checkpoint chain
+        while 'perturbations' in ckpt and 'base_checkpoint' in ckpt:
+            ckpt = torch.load(ckpt['base_checkpoint'], weights_only=False, map_location="cpu")
+
+        base_state_dict = ckpt.get('model_state', ckpt)
+        model.load_state_dict(base_state_dict)
+
+        # Sequential evaluation in main process
+        for idx, genome in enumerate(population):
+            try:
+                wins, draws, losses, timing = evaluate_genome_sequential(
+                    base_state_dict, genome['perturbations'], config, args.games_per_agent,
+                    args.map_width, args.map_height, args.max_turns
+                )
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Genome {idx}: {wins}W-{draws}D-{losses}L (games: {timing['games']*1000:.0f}ms)", flush=True)
+                fitness = (wins * 1 + draws * 0.5) / (wins + draws + losses)
+                population[idx]['fitness'] = fitness
+            except Exception as e:
+                import traceback
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Error evaluating genome {idx}: {e}\n{traceback.format_exc()}", flush=True)
+                population[idx]['fitness'] = 0
 
         best = max(population, key=lambda g: g['fitness'])
         print(f"\nBest: {best['fitness']:.4f}, Mean: {np.mean([g['fitness'] for g in population]):.4f}")
