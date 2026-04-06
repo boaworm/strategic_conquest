@@ -14,7 +14,6 @@ File format (all in OUTPUT_DIR/):
 
 import json
 import glob
-from bisect import bisect_right
 from pathlib import Path
 
 import numpy as np
@@ -82,114 +81,78 @@ class GameDataset(Dataset):
       prod_type   — long scalar ∈ [0, NUM_UNIT_TYPES), or -1 if not applicable
     """
 
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, worker_idx: int | None = None):
         data_dir = Path(data_dir)
 
         with open(data_dir / "meta.json") as f:
             meta = json.load(f)
 
-        self.map_width   = meta["mapWidth"]
-        self.map_height  = meta["mapHeight"]
+        self.map_width    = meta["mapWidth"]
+        self.map_height   = meta["mapHeight"]
         self.num_channels = meta["numChannels"]
-        self.num_samples  = meta["numSamples"]
 
-        states_file = data_dir / "states.bin"
-        actions_file = data_dir / "actions.jsonl"
+        sample_size = self.num_channels * self.map_height * self.map_width
 
-        # Check if consolidated files exist
-        if states_file.exists() and actions_file.exists():
-            # Consolidated mode — store path, open memmap lazily
-            self._states_path = str(states_file)
-            self._states_shape = (self.num_samples, self.num_channels, self.map_height, self.map_width)
-            self._worker_paths = None
-            self._worker_shapes = None
-            self._worker_offsets = None
-            self._open_memmaps()
+        if worker_idx is not None:
+            # Single worker file mode — load into RAM (fits ~33GB)
+            states_path = data_dir / f"worker-{worker_idx}.states.bin"
+            actions_path = data_dir / f"worker-{worker_idx}.actions.jsonl"
+            size = states_path.stat().st_size
+            count = size // (4 * sample_size)
+            shape = (count, self.num_channels, self.map_height, self.map_width)
+            self.num_samples = count
+            print(f"  Loading worker-{worker_idx} into RAM...", flush=True)
+            mm = np.memmap(str(states_path), dtype="float32", mode="r", shape=shape)
+            self.states = np.array(mm)
+            del mm
+            print(f"  Loaded {self.states.nbytes / 1e9:.1f} GB ({count:,} samples)", flush=True)
+
+            with open(actions_path) as f:
+                actions = [json.loads(line) for line in f if line.strip()]
+        elif (data_dir / "states.bin").exists():
+            # Consolidated mode — memmap (may be too large for RAM)
+            self.num_samples = meta["numSamples"]
+            shape = (self.num_samples, self.num_channels, self.map_height, self.map_width)
+            self.states = np.memmap(str(data_dir / "states.bin"), dtype="float32", mode="r", shape=shape)
             print(f"  Mapped {self.num_samples:,} samples (memmap)", flush=True)
 
-            with open(actions_file) as f:
+            with open(data_dir / "actions.jsonl") as f:
                 actions = [json.loads(line) for line in f if line.strip()]
         else:
-            # Per-worker mode — store paths, open memmaps lazily
-            worker_states = sorted(glob.glob(str(data_dir / "worker-*.states.bin")))
-
-            if not worker_states:
-                raise FileNotFoundError(
-                    f"No states.bin or worker-*.states.bin found in {data_dir}"
-                )
-
-            sample_size = self.num_channels * self.map_height * self.map_width
-            self._states_path = None
-            self._states_shape = None
-            self._worker_paths = []
-            self._worker_shapes = []
-            self._worker_offsets = [0]
-
-            for wf in worker_states:
-                size = Path(wf).stat().st_size
-                count = size // (4 * sample_size)
-                self._worker_paths.append(wf)
-                self._worker_shapes.append((count, self.num_channels, self.map_height, self.map_width))
-                self._worker_offsets.append(self._worker_offsets[-1] + count)
-
-            self._open_memmaps()
-            print(f"  Mapped {len(self._worker_paths)} worker files (memmap)", flush=True)
-
-            # Load all actions from worker files
-            actions = []
-            for wa in sorted(glob.glob(str(data_dir / "worker-*.actions.jsonl"))):
-                with open(wa) as f:
-                    actions.extend([json.loads(line) for line in f if line.strip()])
+            raise FileNotFoundError(
+                f"No states.bin or worker_idx specified for {data_dir}"
+            )
 
         if len(actions) != self.num_samples:
             raise ValueError(
-                f"Data mismatch: meta says {self.num_samples} samples "
+                f"Data mismatch: states has {self.num_samples} samples "
                 f"but actions has {len(actions)} lines"
             )
 
         # Pre-encode actions into numpy arrays (eliminates per-sample dict lookups)
         print("Encoding actions...", flush=True)
-        self.action_types, self.target_tiles, self.prod_types = _encode_actions(actions, self.map_width)
+        action_types, target_tiles, prod_types = _encode_actions(actions, self.map_width)
         del actions  # free the list of dicts
 
-    def _open_memmaps(self):
-        """Open (or re-open) memmap file handles. Called on init and after unpickling."""
-        if self._worker_paths is not None:
-            self._worker_files = [
-                np.memmap(p, dtype="float32", mode="r", shape=s)
-                for p, s in zip(self._worker_paths, self._worker_shapes)
-            ]
-        else:
-            self._states_mm = np.memmap(
-                self._states_path, dtype="float32", mode="r", shape=self._states_shape
-            )
+        # Convert everything to torch tensors for fast __getitem__ and shared memory
+        print("Converting to tensors...", flush=True)
+        self.states = torch.from_numpy(self.states) if isinstance(self.states, np.ndarray) else torch.tensor(self.states)
+        self.action_types = torch.from_numpy(action_types)
+        self.target_tiles = torch.from_numpy(target_tiles)
+        self.prod_types   = torch.from_numpy(prod_types)
 
-    def __getstate__(self):
-        """Pickle sends paths, not memmap data."""
-        state = self.__dict__.copy()
-        state.pop("_worker_files", None)
-        state.pop("_states_mm", None)
-        return state
-
-    def __setstate__(self, state):
-        """Unpickle re-opens memmaps from paths."""
-        self.__dict__.update(state)
-        self._open_memmaps()
+    @staticmethod
+    def count_workers(data_dir: str) -> int:
+        """Return the number of worker-*.states.bin files in data_dir."""
+        return len(glob.glob(str(Path(data_dir) / "worker-*.states.bin")))
 
     def __len__(self) -> int:
         return self.num_samples
 
     def __getitem__(self, idx: int) -> dict:
-        if self._worker_paths is not None:
-            worker_idx = bisect_right(self._worker_offsets, idx) - 1
-            local_idx = idx - self._worker_offsets[worker_idx]
-            state = torch.from_numpy(self._worker_files[worker_idx][local_idx].copy())
-        else:
-            state = torch.from_numpy(self._states_mm[idx].copy())
-
         return {
-            "state":       state,
-            "action_type": torch.tensor(self.action_types[idx], dtype=torch.long),
-            "target_tile": torch.tensor(self.target_tiles[idx], dtype=torch.long),
-            "prod_type":   torch.tensor(self.prod_types[idx],   dtype=torch.long),
+            "state":       self.states[idx],
+            "action_type": self.action_types[idx],
+            "target_tile": self.target_tiles[idx],
+            "prod_type":   self.prod_types[idx],
         }

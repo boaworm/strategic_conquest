@@ -21,6 +21,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split
 
+import json
 from dataset import GameDataset, ACTION_TYPES, UNIT_TYPES, NUM_ACTION_TYPES, NUM_UNIT_TYPES
 
 
@@ -179,31 +180,17 @@ def train(args: argparse.Namespace) -> None:
         device = torch.device("cpu")
     print(f"Device: {device}")
 
-    # ── Data ──────────────────────────────────────────────────────────────────
-    dataset = GameDataset(args.data_dir)
-    print(
-        f"Dataset: {len(dataset):,} samples | "
-        f"map {dataset.map_width}×{dataset.map_height} | "
-        f"{dataset.num_channels} channels"
-    )
+    # ── Data: count worker files ────────────────────────────────────────────────
+    num_workers = GameDataset.count_workers(args.data_dir)
+    if num_workers == 0:
+        raise FileNotFoundError(f"No worker-*.states.bin found in {args.data_dir}")
 
-    val_size   = max(1, int(len(dataset) * 0.1))
-    train_size = len(dataset) - val_size
-    train_ds, val_ds = random_split(dataset, [train_size, val_size])
-
-    loader_kwargs = dict(
-        batch_size=args.batch_size,
-        num_workers=args.workers,
-        pin_memory=False,
-    )
-    if args.workers > 0:
-        loader_kwargs["persistent_workers"] = True
-        loader_kwargs["prefetch_factor"] = 16
-    train_loader = DataLoader(train_ds, shuffle=True,  **loader_kwargs)
-    val_loader   = DataLoader(val_ds,   shuffle=False, **loader_kwargs)
+    # Read map dimensions from meta.json
+    with open(Path(args.data_dir) / "meta.json") as f:
+        meta = json.load(f)
 
     # ── Model ─────────────────────────────────────────────────────────────────
-    model = PolicyCNN(dataset.num_channels, dataset.map_height, dataset.map_width).to(device)
+    model = PolicyCNN(meta["numChannels"], meta["mapHeight"], meta["mapWidth"]).to(device)
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {num_params:,}")
 
@@ -213,29 +200,26 @@ def train(args: argparse.Namespace) -> None:
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     print(f"LR: {effective_lr:.1e} (base {args.lr:.1e} scaled for batch {args.batch_size})")
 
-    out_dir = Path(args.out_dir)
+    out_dir = Path(args.data_dir) / "checkpoints"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     best_val_loss = float("inf")
     start_epoch = 1
 
-    # ── Resume from checkpoint ────────────────────────────────────────────────
-    if args.resume:
-        ckpt_path = Path(args.resume)
-        if ckpt_path.exists():
-            ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-            # Strip _orig_mod. prefix if checkpoint was saved from compiled model
-            state_dict = ckpt["model_state"]
-            if any(k.startswith("_orig_mod.") for k in state_dict.keys()):
-                state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
-            model.load_state_dict(state_dict)
-            optimizer.load_state_dict(ckpt["optimizer_state"])
-            best_val_loss = ckpt.get("val_loss", float("inf"))
-            start_epoch = ckpt["epoch"] + 1
-            scheduler.last_epoch = start_epoch - 1
-            print(f"Resumed from epoch {ckpt['epoch']} (val_loss={best_val_loss:.4f})")
-        else:
-            print(f"WARNING: --resume path {ckpt_path} not found, starting fresh")
+    # ── Auto-resume from latest checkpoint ────────────────────────────────────
+    ckpt_path = out_dir / "latest.pt"
+    if ckpt_path.exists():
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        # Strip _orig_mod. prefix if checkpoint was saved from compiled model
+        state_dict = ckpt["model_state"]
+        if any(k.startswith("_orig_mod.") for k in state_dict.keys()):
+            state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+        model.load_state_dict(state_dict)
+        optimizer.load_state_dict(ckpt["optimizer_state"])
+        best_val_loss = ckpt.get("val_loss", float("inf"))
+        start_epoch = ckpt["epoch"] + 1
+        scheduler.last_epoch = start_epoch - 1
+        print(f"Resumed from epoch {ckpt['epoch']} (val_loss={best_val_loss:.4f})")
 
     # torch.compile has stride bugs on MPS backend, skip for now
     if device.type != "mps":
@@ -245,40 +229,83 @@ def train(args: argparse.Namespace) -> None:
         except Exception:
             print("torch.compile unavailable, using eager mode")
 
-    # ── Epoch loop ────────────────────────────────────────────────────────────
-    for epoch in range(start_epoch, args.epochs + 1):
-        t0 = time.time()
-        tr = run_epoch(model, train_loader, optimizer, device)
-        vl = run_epoch(model, val_loader,   None,      device)
-        scheduler.step()
+    # ── Epoch loop — cycle through worker files ──────────────────────────────
+    remaining = args.epochs - start_epoch + 1
+    epochs_per_worker = max(1, remaining // num_workers)
+    print(f"Training plan: {remaining} epochs across {num_workers} workers ({epochs_per_worker} epochs each)")
 
-        elapsed = time.time() - t0
+    epoch = start_epoch
+    for wi in range(num_workers):
+        if epoch > args.epochs:
+            break
+
+        end_epoch = min(epoch + epochs_per_worker - 1, args.epochs)
+        # Last worker picks up any remainder
+        if wi == num_workers - 1:
+            end_epoch = args.epochs
+
+        dataset = GameDataset(args.data_dir, worker_idx=wi)
         print(
-            f"Epoch {epoch:3d}/{args.epochs} | "
-            f"loss {tr['loss']:.4f}/{vl['loss']:.4f} | "
-            f"action_acc {tr['action_acc']:.3f}/{vl['action_acc']:.3f} | "
-            f"act {tr['action_loss']:.3f} tile {tr['tile_loss']:.3f} prod {tr['prod_loss']:.3f} | "
-            f"{elapsed:.1f}s"
+            f"\n── Worker {wi}: {len(dataset):,} samples, "
+            f"epochs {epoch}-{end_epoch} ──"
         )
 
-        if vl["loss"] < best_val_loss:
-            best_val_loss = vl["loss"]
-            torch.save(
-                {
-                    "epoch":           epoch,
-                    "model_state":     model.state_dict(),
-                    "optimizer_state": optimizer.state_dict(),
-                    "val_loss":        best_val_loss,
-                    "val_action_acc":  vl["action_acc"],
-                    "config": {
-                        "channels":    dataset.num_channels,
-                        "map_height":  dataset.map_height,
-                        "map_width":   dataset.map_width,
-                    },
-                },
-                out_dir / "best_model.pt",
+        val_size   = max(1, int(len(dataset) * 0.1))
+        train_size = len(dataset) - val_size
+        train_ds, val_ds = random_split(dataset, [train_size, val_size])
+
+        loader_kwargs = dict(
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+            pin_memory=False,
+        )
+        if args.workers > 0:
+            loader_kwargs["persistent_workers"] = True
+            loader_kwargs["prefetch_factor"] = 16
+        train_loader = DataLoader(train_ds, shuffle=True,  **loader_kwargs)
+        val_loader   = DataLoader(val_ds,   shuffle=False, **loader_kwargs)
+
+        while epoch <= end_epoch:
+            t0 = time.time()
+            tr = run_epoch(model, train_loader, optimizer, device)
+            vl = run_epoch(model, val_loader,   None,      device)
+            scheduler.step()
+            if device.type == "mps":
+                torch.mps.empty_cache()
+
+            elapsed = time.time() - t0
+            print(
+                f"Epoch {epoch:3d}/{args.epochs} [W{wi}] | "
+                f"loss {tr['loss']:.4f}/{vl['loss']:.4f} | "
+                f"action_acc {tr['action_acc']:.3f}/{vl['action_acc']:.3f} | "
+                f"act {tr['action_loss']:.3f} tile {tr['tile_loss']:.3f} prod {tr['prod_loss']:.3f} | "
+                f"{elapsed:.1f}s"
             )
-            print(f"  → Saved best (val_loss={best_val_loss:.4f}, action_acc={vl['action_acc']:.3f})")
+
+            ckpt_data = {
+                "epoch":           epoch,
+                "model_state":     model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "val_loss":        vl["loss"],
+                "val_action_acc":  vl["action_acc"],
+                "config": {
+                    "channels":    meta["numChannels"],
+                    "map_height":  meta["mapHeight"],
+                    "map_width":   meta["mapWidth"],
+                },
+            }
+
+            # Always save latest (for resume)
+            torch.save(ckpt_data, out_dir / "latest.pt")
+
+            if vl["loss"] < best_val_loss:
+                best_val_loss = vl["loss"]
+                torch.save(ckpt_data, out_dir / "best_model.pt")
+                print(f"  → Saved best (val_loss={best_val_loss:.4f}, action_acc={vl['action_acc']:.3f})")
+
+            epoch += 1
+
+        del dataset, train_ds, val_ds, train_loader, val_loader
 
     print(f"\nDone. Best val_loss: {best_val_loss:.4f}")
     print(f"Checkpoint: {out_dir / 'best_model.pt'}")
@@ -288,12 +315,10 @@ def train(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train NN policy from imitation data")
-    parser.add_argument("--data-dir",   default="./data",        help="Directory with states.bin, actions.jsonl, meta.json")
-    parser.add_argument("--out-dir",    default="./checkpoints",  help="Directory for saved checkpoints")
+    parser.add_argument("--data-dir",   default="./data",        help="Directory with worker-*.states.bin, meta.json. Checkpoints saved to data-dir/checkpoints/")
     parser.add_argument("--epochs",     type=int,   default=50)
     parser.add_argument("--batch-size", type=int,   default=1024)
     parser.add_argument("--lr",         type=float, default=1e-3, help="Base LR (scaled linearly with batch size, base=256)")
     parser.add_argument("--workers",    type=int,   default=0,    help="DataLoader worker processes (0 recommended for MPS)")
-    parser.add_argument("--resume",     type=str,   default=None, help="Path to checkpoint to resume from")
     args = parser.parse_args()
     train(args)
