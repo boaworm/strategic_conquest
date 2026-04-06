@@ -14,7 +14,7 @@
     "test_replay": "cd ../client && npm run build 2>/dev/null; cd ../trainer && npx tsx src/test_replay_picker.ts",
     "profile": "npx tsx src/profile_game.ts",
     "profile:cpu": "npx tsx src/profile_game.ts --profile",
-    "nn-evolve": "npx tsx src/nn-evolve.ts",
+    "nn-evolve": "python packages/trainer/ai/evolve.py",
     "nn-server": "python ai/server.py"
   },
   "dependencies": {

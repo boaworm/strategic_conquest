@@ -234,7 +234,14 @@ async function evaluateGenome(
   basicAgent.init({ playerId: 'player2', mapWidth, mapHeight });
 
   for (let g = 0; g < gamesPerAgent; g++) {
-    const state = createGameState({ width: mapWidth, height: mapHeight });
+    const seed = Math.floor(Math.random() * 1000000);
+    let state;
+    try {
+      state = createGameState({ width: mapWidth, height: mapHeight, seed });
+    } catch {
+      // Map generation failed, skip this game
+      continue;
+    }
     let turn = 0;
 
     while (state.winner === null && turn < maxTurns) {
@@ -264,31 +271,50 @@ async function evaluateGenome(
 // ── Export perturbed model to ONNX ──────────────────────────────────────────
 
 async function exportPerturbedModel(
-  checkpointPath: string,
+  resolvedCheckpointPath: string,
   perturbations: LayerPerturbation,
   outputPath: string,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('python', [
-      'ai/evolve_export.py',
-      '--checkpoint', checkpointPath,
+    const pythonPath = process.env.VENV_PYTHON || path.resolve(__dirname, '../../../venv/bin/python');
+    const perturbationsPath = outputPath + '.perturbations.json';
+    fs.writeFileSync(perturbationsPath, JSON.stringify(perturbations));
+
+    const proc = spawn(pythonPath, [
+      'ai/export_onnx.py',
+      '--checkpoint', resolvedCheckpointPath,
       '--output', outputPath,
-      '--perturbations', JSON.stringify(perturbations),
+      '--perturbations-file', perturbationsPath,
     ], { cwd: path.dirname(__dirname) });
 
     let stderr = '';
     proc.stderr.on('data', (d) => { stderr += d; process.stderr.write(d); });
-    proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Export failed: ${stderr}`)));
+    proc.on('close', (code) => {
+      fs.unlinkSync(perturbationsPath);
+      code === 0 ? resolve() : reject(new Error(`Export failed: ${stderr}`));
+    });
   });
 }
 
 // ── Main evolution loop ─────────────────────────────────────────────────────
 
 async function runEvolution(config: EvolutionConfig): Promise<void> {
-  console.log(`Loading base checkpoint: ${config.baseCheckpoint}`);
+  // Resolve checkpoint path (handle both absolute and relative paths)
+  let resolvedCheckpointPath: string;
+  if (path.isAbsolute(config.baseCheckpoint)) {
+    resolvedCheckpointPath = config.baseCheckpoint;
+  } else if (config.baseCheckpoint.startsWith('packages/')) {
+    // Path like "packages/trainer/ai/..." from project root
+    resolvedCheckpointPath = path.resolve(__dirname, '../../..', config.baseCheckpoint);
+  } else {
+    // Path relative to packages/trainer
+    resolvedCheckpointPath = path.resolve(__dirname, '..', config.baseCheckpoint);
+  }
 
-  if (!fs.existsSync(config.baseCheckpoint)) {
-    console.error(`ERROR: Checkpoint not found: ${config.baseCheckpoint}`);
+  console.log(`Loading base checkpoint: ${resolvedCheckpointPath}`);
+
+  if (!fs.existsSync(resolvedCheckpointPath)) {
+    console.error(`ERROR: Checkpoint not found: ${resolvedCheckpointPath}`);
     process.exit(1);
   }
 
@@ -298,8 +324,9 @@ async function runEvolution(config: EvolutionConfig): Promise<void> {
 
   // Load checkpoint to get layer structure for perturbations
   console.log('Loading checkpoint metadata...');
+  const pythonPath = process.env.VENV_PYTHON || path.resolve(__dirname, '../../../venv/bin/python');
   const metaJson = execSync(
-    `python -c "import torch; ckpt=torch.load('${config.baseCheckpoint}', weights_only=False); print(json.dumps({k: list(v.shape) for k,v in ckpt['model_state'].items()}))"`,
+    `"${pythonPath}" -c "import torch, json; ckpt=torch.load('${resolvedCheckpointPath}', weights_only=False); print(json.dumps({k: list(v.shape) for k,v in ckpt['model_state'].items()}))"`,
     { cwd: path.dirname(__dirname), encoding: 'utf8' }
   );
   const layerShapes = JSON.parse(metaJson.trim());
@@ -333,7 +360,7 @@ async function runEvolution(config: EvolutionConfig): Promise<void> {
     for (let i = 0; i < population.length; i++) {
       const onnxPath = path.join(tempDir, `gen${gen}_genome${i}.onnx`);
       onnxPaths.push({ genomeId: i, path: onnxPath });
-      await exportPerturbedModel(config.baseCheckpoint, population[i].perturbations, onnxPath);
+      await exportPerturbedModel(resolvedCheckpointPath, population[i].perturbations, onnxPath);
     }
 
     // Evaluate all genomes
@@ -360,12 +387,12 @@ async function runEvolution(config: EvolutionConfig): Promise<void> {
 
     // Save checkpoint
     if (best.fitness > 0.5) {
-      const checkpointPath = path.join(config.outputDir, `checkpoint_gen${gen}.json`);
-      fs.writeFileSync(checkpointPath, JSON.stringify({
+      const resolvedCheckpointPath = path.join(config.outputDir, `checkpoint_gen${gen}.json`);
+      fs.writeFileSync(resolvedCheckpointPath, JSON.stringify({
         genomeId: best.id, generation: gen, fitness: best.fitness,
         perturbations: clonePerturbations(best.perturbations),
       }, null, 2));
-      console.log(`  Saved checkpoint: ${checkpointPath}`);
+      console.log(`  Saved checkpoint: ${resolvedCheckpointPath}`);
     }
 
     // Cleanup

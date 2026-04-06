@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **NEVER USE ANY OF THESE**: timeout wait sleep
 - **DO NOT EVER RUN** npm run test_replay   **NEVER EVER DO IT**
 - **DO NOT EVER CLAIM SUCCESS** unless things truly work.
+- **NEVER pipe command output to `head`, `tail`, `grep`, etc.** Always pipe to `tee tmp/path` to capture full output.
 
 # Hardware requirements
 
@@ -85,10 +86,12 @@ DATA_DIR=/Volumes/500G/Training NUM_GAMES=1500 MAX_SAMPLES_PER_GAME=3000 WORKERS
 
 ### Python NN training
 ```bash
-cd packages/trainer/ai
 pip install -r requirements.txt
+cd packages/trainer/ai
 python train.py --data-dir /Volumes/500G/Training/training --out-dir ./checkpoints --epochs 50
 ```
+
+**Never run `pip install <package>` directly.** Always add to root `requirements.txt` first, then run `pip install -r requirements.txt`.
 
 See `packages/trainer/ai/README.md` for full documentation.
 

@@ -3,10 +3,12 @@ Export trained PyTorch model to ONNX format for TypeScript inference.
 
 Usage:
     python export_onnx.py --checkpoint checkpoints/best_model.pt --output model.onnx
+    python export_onnx.py --checkpoint model.pt --output model.onnx --perturbations-file perturb.json
 """
 
 import argparse
 import os
+import json
 import warnings
 import logging
 
@@ -17,19 +19,45 @@ logging.getLogger("onnx").setLevel(logging.ERROR)
 
 import torch
 import onnx
+import logging
 from onnx.external_data_helper import load_external_data_for_model
 from train import PolicyCNN
+
+# Suppress all torch/onnx warnings
+torch.set_warn_always(False)
+logging.getLogger("torch").setLevel(logging.ERROR)
+logging.getLogger("onnx").setLevel(logging.ERROR)
+logging.getLogger("onnxruntime").setLevel(logging.ERROR)
+os.environ["TORCH_LOGS"] = "ERROR"
+os.environ["ONNX_LOGGING_LEVEL"] = "ERROR"
 
 
 def main():
     parser = argparse.ArgumentParser(description="Export model to ONNX")
-    parser.add_argument("--checkpoint", required=True, help="Path to best_model.pt")
+    parser.add_argument("--checkpoint", required=True, help="Path to checkpoint")
     parser.add_argument("--output", default="model.onnx", help="Output ONNX file")
+    parser.add_argument("--perturbations-file", help="Optional JSON file with weight perturbations")
     args = parser.parse_args()
 
     # Load checkpoint
     ckpt = torch.load(args.checkpoint, map_location="cpu")
     config = ckpt["config"]
+    base_state = ckpt["model_state"]
+
+    # Apply perturbations if provided
+    state_dict = base_state
+    if args.perturbations_file:
+        with open(args.perturbations_file) as f:
+            perturbations = json.load(f)
+        state_dict = {}
+        for name, param in base_state.items():
+            if name in perturbations:
+                pert_data = perturbations[name]["data"]
+                pert_shape = perturbations[name]["shape"]
+                perturbation = torch.tensor(pert_data, dtype=param.dtype).reshape(pert_shape)
+                state_dict[name] = param + perturbation
+            else:
+                state_dict[name] = param
 
     # Create and load model
     model = PolicyCNN(
@@ -37,7 +65,7 @@ def main():
         map_height=config["map_height"],
         map_width=config["map_width"],
     )
-    model.load_state_dict(ckpt["model_state"])
+    model.load_state_dict(state_dict)
     model.eval()
 
     # Create dummy input (batch_size=1, channels=14, H=22, W=50)
