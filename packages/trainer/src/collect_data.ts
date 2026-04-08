@@ -34,18 +34,19 @@ const TENSOR_BYTES = NUM_CHANNELS * (MAP_HEIGHT + 2) * MAP_WIDTH * 4;  // +2 for
 const workerScript = fileURLToPath(new URL('../dist/collect_worker.js', import.meta.url));
 const tmpDir = path.join(OUTPUT_DIR, 'tmp');
 
-function spawnWorker(workerId: number): Promise<void> {
+function spawnWorker(workerId: number, gameStart: number, gameEnd: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [workerScript], {
       env: {
         ...process.env,
-        WORKER_ID:  String(workerId),
-        TOTAL_GAMES:  String(NUM_GAMES),
-        MAP_WIDTH:  String(MAP_WIDTH),
-        MAP_HEIGHT: String(MAP_HEIGHT),
-        MAX_TURNS:           String(MAX_TURNS),
+        WORKER_ID:   String(workerId),
+        GAME_START:  String(gameStart),
+        GAME_END:    String(gameEnd),
+        MAP_WIDTH:   String(MAP_WIDTH),
+        MAP_HEIGHT:  String(MAP_HEIGHT),
+        MAX_TURNS:   String(MAX_TURNS),
         MAX_SAMPLES_PER_GAME: String(MAX_SAMPLES_PER_GAME),
-        TMP_DIR:             tmpDir,
+        TMP_DIR:     tmpDir,
       },
       stdio: ['ignore', 'ignore', 'inherit'],
     });
@@ -61,9 +62,10 @@ function spawnWorker(workerId: number): Promise<void> {
   });
 }
 
-function readProgress(workerId: number): number {
+function readProgress(workerId: number, gameStart: number, gameEnd: number): number {
   try {
-    return parseInt(fs.readFileSync(path.join(tmpDir, `progress-${workerId}.txt`), 'utf-8')) || 0;
+    const done = parseInt(fs.readFileSync(path.join(tmpDir, `progress-${workerId}.txt`), 'utf-8')) || 0;
+    return Math.max(0, Math.min(done - gameStart + 1, gameEnd - gameStart + 1));
   } catch {
     return 0;
   }
@@ -96,29 +98,39 @@ async function main(): Promise<void> {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  // Initialize shared game counter
-  fs.writeFileSync(path.join(tmpDir, 'game_counter.txt'), '0');
-
   console.log(`Collecting data: ${NUM_GAMES} games across ${WORKERS} worker(s), map ${MAP_WIDTH}×${MAP_HEIGHT}`);
 
   const t0 = Date.now();
   let lastReportedPct = -1;
 
+  // Pre-assign game ranges to each worker - no locking needed
+  const workerRanges = Array.from({ length: WORKERS }, (_, i) => {
+    const gamesPerWorker = Math.ceil(NUM_GAMES / WORKERS);
+    const start = i * gamesPerWorker + 1;
+    const end = Math.min(start + gamesPerWorker - 1, NUM_GAMES);
+    return { start, end };
+  });
+
   // Poll progress files every second
   const pollInterval = setInterval(() => {
-    const totalDone = Array.from({ length: WORKERS }, (_, i) => readProgress(i))
-      .reduce((a, b) => a + b, 0);
+    const workerProgress = workerRanges.map(({ start, end }, i) => ({
+      id: i,
+      done: readProgress(i, start, end),
+      total: end - start + 1,
+    }));
+    const totalDone = workerProgress.reduce((sum, w) => sum + w.done, 0);
     const pct = Math.min(100, Math.floor((totalDone / NUM_GAMES) * 100));
     if (pct > lastReportedPct) {
       lastReportedPct = pct;
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-      console.log(`${pct}% completed (${totalDone.toLocaleString()}/${NUM_GAMES.toLocaleString()} games, ${elapsed}s)`);
+      const status = workerProgress.map(w => `W${w.id}:${w.done}/${w.total}`).join('  ');
+      console.log(`${pct}% (${totalDone}/${NUM_GAMES} games, ${elapsed}s)  ${status}`);
     }
   }, 1000);
 
-  await Promise.all(
-    Array.from({ length: WORKERS }, (_, i) => spawnWorker(i)),
-  );
+  const workers = workerRanges.map(({ start, end }, i) => spawnWorker(i, start, end));
+
+  await Promise.all(workers);
 
   clearInterval(pollInterval);
 

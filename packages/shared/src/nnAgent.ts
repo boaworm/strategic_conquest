@@ -10,7 +10,7 @@
 import type { Agent, AgentObservation, AgentAction } from './agent.js';
 import { playerViewToTensor } from './engine/tensorUtils.js';
 import type { PlayerView } from './types.js';
-import { UnitType } from './types.js';
+import { UnitType, wrapX, wrappedDistX } from './types.js';
 
 import { resolve } from 'node:path';
 import * as ortNamespace from 'onnxruntime-node';
@@ -35,7 +35,6 @@ const ACTION_TYPES = [
   'SLEEP',
   'WAKE',
   'SKIP',
-  'DISBAND',
 ] as const;
 
 const UNIT_TYPES = [
@@ -77,13 +76,10 @@ export class NnAgent implements Agent {
     }
 
     // Convert observation to tensor
-    // Note: observation is AgentObservation, but playerViewToTensor expects PlayerView
-    // For now, cast to PlayerView - this works because AgentObservation has the same fields
-    // that playerViewToTensor uses (tiles, myUnits, myCities, etc.)
     const view = observation as any as PlayerView;
     const tensor = playerViewToTensor(view);
 
-    // Create ONNX tensor (1, 14, H, W) - matches export_onnx.py dummy_input shape
+    // Create ONNX tensor (1, 14, H, W)
     const inputTensor = new ort.Tensor('float32', tensor, [1, 14, this.mapHeight, this.mapWidth]);
     const feeds = { input: inputTensor };
 
@@ -96,28 +92,60 @@ export class NnAgent implements Agent {
     const prodTypeIdx = this.argmax(results.prod_type.data as Float32Array);
 
     const actionType = ACTION_TYPES[actionTypeIdx];
+    const targetX = targetTileIdx % this.mapWidth;
+    const targetY = Math.floor(targetTileIdx / this.mapWidth);
 
-    // Build action based on type
     if (actionType === 'MOVE') {
-      const x = targetTileIdx % this.mapWidth;
-      const y = Math.floor(targetTileIdx / this.mapWidth);
-      return {
-        type: 'MOVE',
-        unitId: this.selectMoveableUnit(observation),
-        to: { x, y },
-      };
+      // Pick the moveable unit closest to the target tile
+      const unit = this.selectUnitClosestTo(observation, targetX, targetY);
+      if (!unit) return { type: 'END_TURN' };
+      // Move one step toward target (or to target if adjacent)
+      const to = this.stepToward(unit.x, unit.y, targetX, targetY);
+      return { type: 'MOVE', unitId: unit.id, to };
     }
 
     if (actionType === 'SET_PRODUCTION') {
       const unitType = UNIT_TYPES[prodTypeIdx];
-      return {
-        type: 'SET_PRODUCTION',
-        cityId: this.selectCity(observation),
-        unitType,
-      };
+      // Pick a city not already producing this type
+      const city = observation.myCities.find(c => c.producing !== unitType) ?? observation.myCities[0];
+      if (!city) return { type: 'END_TURN' };
+      return { type: 'SET_PRODUCTION', cityId: city.id, unitType };
     }
 
-    // Default: END_TURN
+    if (actionType === 'SLEEP') {
+      const unit = this.selectUnitClosestTo(observation, targetX, targetY);
+      if (!unit) return { type: 'END_TURN' };
+      return { type: 'SLEEP', unitId: unit.id };
+    }
+
+    if (actionType === 'WAKE') {
+      const sleepingUnit = observation.myUnits.find(u => u.sleeping && !u.carriedBy);
+      if (!sleepingUnit) return { type: 'END_TURN' };
+      return { type: 'WAKE', unitId: sleepingUnit.id };
+    }
+
+    if (actionType === 'SKIP') {
+      const unit = this.selectUnitClosestTo(observation, targetX, targetY);
+      if (!unit) return { type: 'END_TURN' };
+      return { type: 'SKIP', unitId: unit.id };
+    }
+
+    if (actionType === 'LOAD') {
+      // Find an army and a nearby transport
+      const army = observation.myUnits.find(u => u.type === UnitType.Army && u.movesLeft > 0 && !u.carriedBy);
+      const transport = observation.myUnits.find(u => u.type === UnitType.Transport);
+      if (!army || !transport) return { type: 'END_TURN' };
+      return { type: 'LOAD', unitId: army.id, transportId: transport.id };
+    }
+
+    if (actionType === 'UNLOAD') {
+      // Find a transport with cargo
+      const transport = observation.myUnits.find(u => u.type === UnitType.Transport && u.cargo && u.cargo.length > 0);
+      if (!transport || !transport.cargo?.length) return { type: 'END_TURN' };
+      const to = this.stepToward(transport.x, transport.y, targetX, targetY);
+      return { type: 'UNLOAD', unitId: transport.cargo[0], to };
+    }
+
     return { type: 'END_TURN' };
   }
 
@@ -133,13 +161,44 @@ export class NnAgent implements Agent {
     return maxIdx;
   }
 
-  private selectMoveableUnit(obs: AgentObservation): string {
-    // Find first unit with moves left
-    const unit = obs.myUnits.find((u) => u.movesLeft > 0 && !u.sleeping && !u.carriedBy);
-    return unit?.id ?? obs.myUnits[0]?.id ?? 'unknown';
+  /**
+   * Find the moveable unit closest to (tx, ty), accounting for cylindrical X wrapping.
+   */
+  private selectUnitClosestTo(obs: AgentObservation, tx: number, ty: number): AgentObservation['myUnits'][0] | undefined {
+    const candidates = obs.myUnits.filter(u => u.movesLeft > 0 && !u.sleeping && !u.carriedBy);
+    if (candidates.length === 0) return undefined;
+    return candidates.reduce((best, u) => {
+      const dx = wrappedDistX(u.x, tx, this.mapWidth);
+      const dy = Math.abs(u.y - ty);
+      const distU = dx + dy;
+      const dxB = wrappedDistX(best.x, tx, this.mapWidth);
+      const dyB = Math.abs(best.y - ty);
+      const distB = dxB + dyB;
+      return distU < distB ? u : best;
+    });
   }
 
-  private selectCity(obs: AgentObservation): string {
-    return obs.myCities[0]?.id ?? 'unknown';
+  /**
+   * Compute one adjacent step from (fx, fy) toward (tx, ty), respecting cylindrical X wrap.
+   */
+  private stepToward(fx: number, fy: number, tx: number, ty: number): { x: number; y: number } {
+    let dx = tx - fx;
+    // Adjust for wrap: pick shortest path on X axis
+    if (dx > this.mapWidth / 2) dx -= this.mapWidth;
+    else if (dx < -this.mapWidth / 2) dx += this.mapWidth;
+    const dy = ty - fy;
+
+    let stepX = 0;
+    let stepY = 0;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+    } else {
+      stepY = dy > 0 ? 1 : dy < 0 ? -1 : 0;
+    }
+
+    return {
+      x: wrapX(fx + stepX, this.mapWidth),
+      y: fy + stepY,
+    };
   }
 }

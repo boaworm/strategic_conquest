@@ -40,12 +40,12 @@
       },
       {
         "conditions": ["City has no access to water"],
-        "produce": "balance(Fighter, Bomber)",
-        "note": "Pick whichever of Fighter/Bomber we have fewer of (alive + in production). Random tiebreak."
+        "produce": "balance(Fighter, Bomber, Army)",
+        "note": "Pick whichever of Fighter/Bomber/Army we have fewer of."
       },
       {
         "conditions": ["City has access to water"],
-        "produce": "lowest_score(Transport, Battleship, Submarine, Destroyer, Carrier, Fighter, Bomber)",
+        "produce": "lowest_score(Transport, Battleship, Submarine, Destroyer, Carrier, Fighter, Bomber, Army)",
         "note": "score = (alive + in_production) * buildTime / scalingFactor",
         "scaling_factors": {
           "Transport":  1,
@@ -54,7 +54,8 @@
           "Destroyer":  3,
           "Carrier":    1,
           "Fighter":    1,
-          "Bomber":     1
+          "Bomber":     1,
+          "Army":       1
         }
       }
     ]

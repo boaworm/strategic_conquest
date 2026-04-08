@@ -964,7 +964,7 @@ export class MapQuery {
       if (enemyPositions?.has(`${x},${y}`)) return false;
       const tile = obs.tiles[y]?.[x];
       if (stats.domain === UnitDomain.Land) {
-        return !!tile && tile.visibility !== TileVisibility.Hidden && tile.terrain === Terrain.Land;
+        return !!tile && tile.terrain === Terrain.Land;
       }
       if (stats.domain === UnitDomain.Sea) {
         if (!tile || tile.visibility === TileVisibility.Hidden) {

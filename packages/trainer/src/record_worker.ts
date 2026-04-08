@@ -4,7 +4,7 @@
  * Each completed game is written directly as a JSON file to REPLAY_DIR.
  *
  * P1_AGENT / P2_AGENT — agent name for each player (default: basicAgent).
- * Supported values: basicAgent, gunAirAgent, nnAgent:<model_path>
+ * Supported values: basicAgent, gunAirAgent, nnAgent:<model_path>, nnMoEAgent:<dir>
  */
 import fs from 'fs';
 import path from 'path';
@@ -19,6 +19,7 @@ import {
   BasicAgent,
   GunAirAgent,
   NnAgent,
+  NnMoEAgent,
 } from '@sc/shared';
 import type { Agent, AgentAction } from '@sc/shared';
 import { snapshotGame, type ReplayMeta } from './replayUtils.js';
@@ -54,14 +55,22 @@ function resolveModelPath(modelName: string): string {
 function makeAgent(name: string): Agent {
   const lower = name.toLowerCase();
 
-  // Support nnAgent with model path: nnAgent:<path> or nn:<path>
+  // nnAgent:<model>  or  nn:<model>
   if (lower.startsWith('nnagent:') || lower.startsWith('nn:')) {
-    const modelName = lower.split(':')[1];
+    const modelName = name.split(':')[1];
     if (modelName) {
       const agent = new NnAgent();
-      const modelPath = resolveModelPath(modelName);
-      process.env.NN_MODEL_PATH = modelPath;
+      process.env.NN_MODEL_PATH = resolveModelPath(modelName);
       return agent;
+    }
+  }
+
+  // nnMoEAgent:<dir>  or  moe:<dir>
+  if (lower.startsWith('nnmoeagent:') || lower.startsWith('moe:')) {
+    const dir = name.split(':')[1];
+    if (dir) {
+      process.env.NN_MOE_DIR = dir.startsWith('/') ? dir : path.resolve(__dirname, '..', dir);
+      return new NnMoEAgent();
     }
   }
 

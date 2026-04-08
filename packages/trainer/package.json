@@ -8,6 +8,7 @@
     "start": "node --enable-source-maps dist/index.js",
     "train": "npx tsx src/index.ts",
     "collect": "npx tsc -p ../shared/tsconfig.json && npm run build && npx tsx src/collect_data.ts",
+    "collect-moe": "npx tsc -p ../shared/tsconfig.json && npm run build && npx tsx src/collect_moe_data.ts",
     "nn-sim": "npx tsx src/nn_simulator.ts",
     "record": "npx tsc -p ../shared/tsconfig.json && npm run build && npx tsx src/record_replay.ts",
     "replay": "cd ../client && npm run build 2>/dev/null; cd ../trainer && npx tsx src/replay_picker.ts",

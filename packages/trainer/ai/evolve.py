@@ -1,11 +1,12 @@
 """
 Neuroevolution: Evolve NN weights using Evolution Strategies.
+Exports perturbed models to ONNX and evaluates via Node.js with real BasicAgent.
 
 Usage:
     python packages/trainer/ai/evolve.py \
-        --checkpoint packages/trainer/ai/checkpoints/adam-v2.0.pt \
-        --pop 20 --gens 30 --games-per-agent 3 --workers 4 \
-        --output /Volumes/500G/Training/evolution
+        --checkpoint packages/trainer/ai/checkpoints/bertil-v2.0.pt \
+        --population 30 --generations 20 --games-per-agent 5 --workers 4 \
+        --output ./tmp/evolution
 """
 
 import argparse
@@ -21,14 +22,10 @@ import random
 
 import torch
 import numpy as np
-import onnxruntime as ort
 
-# Add parent directory to path for imports
+# Add parent directory for imports
 sys.path.insert(0, str(Path(__file__).parent))
 from train import PolicyCNN
-
-# Import game evaluator directly
-from game_evaluator import run_game, run_game_torch_mps, SimpleGame, player_view_to_tensor
 
 
 def create_perturbation(base_state_dict, rng, scale=0.1):
@@ -100,11 +97,8 @@ def next_generation(population, elitism=2, rng=None):
 
 def export_to_onnx(checkpoint_path, perturbations, output_path):
     """Export model with perturbations to ONNX."""
-    # Resolve checkpoint path to absolute (relative to project root)
     if not os.path.isabs(checkpoint_path):
         checkpoint_path = os.path.abspath(os.path.join(os.getcwd(), checkpoint_path))
-
-    # Ensure output path is absolute
     if not os.path.isabs(output_path):
         output_path = os.path.abspath(output_path)
 
@@ -113,9 +107,7 @@ def export_to_onnx(checkpoint_path, perturbations, output_path):
         perturbations_file = f.name
 
     try:
-        # Use same Python executable as current process
         python_executable = sys.executable
-
         result = subprocess.run(
             [python_executable, 'evolve_export.py',
              '--checkpoint', checkpoint_path,
@@ -124,7 +116,7 @@ def export_to_onnx(checkpoint_path, perturbations, output_path):
             cwd=Path(__file__).parent,
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=120
         )
         if result.returncode != 0:
             raise Exception(f"Export failed: {result.stderr}")
@@ -134,71 +126,41 @@ def export_to_onnx(checkpoint_path, perturbations, output_path):
         os.unlink(perturbations_file)
 
 
-def evaluate_genome(args):
-    """Worker process to evaluate a single genome."""
-    perturbations, checkpoint_path, config, games_per_agent, map_width, map_height, max_turns, worker_id = args
-    timing = {}
+def evaluate_genome_sequential(base_state_dict, perturbations, config, games_per_agent, map_width, map_height, max_turns, checkpoint_path, output_dir):
+    """Evaluate genome by exporting to ONNX and running via Node.js."""
+    # Export perturbed model to ONNX
+    onnx_path = output_dir / f'tmp_{id(perturbations)}.onnx'
 
-    # Load model in worker process
-    model = PolicyCNN(**config)
-    ckpt = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
+    # Create temp checkpoint with perturbations
+    temp_ckpt = output_dir / f'tmp_{id(perturbations)}.pt'
+    torch.save({
+        'perturbations': perturbations,
+        'base_checkpoint': checkpoint_path,
+        'config': config,
+    }, temp_ckpt)
 
-    # Handle evolution checkpoint (references base checkpoint)
-    if 'perturbations' in ckpt and 'base_checkpoint' in ckpt:
-        base_ckpt = torch.load(ckpt['base_checkpoint'], weights_only=False, map_location="cpu")
-        base_state_dict = base_ckpt['model_state']
-    else:
-        base_state_dict = ckpt.get('model_state', ckpt)
+    try:
+        export_to_onnx(str(temp_ckpt), perturbations, str(onnx_path))
 
-    model.load_state_dict(base_state_dict)
+        # Run games via Node.js
+        from game_evaluator import run_games_sequential
 
-    # Run games using PyTorch with MPS (GPU)
-    wins = 0
-    draws = 0
-    losses = 0
+        start = time.time()
+        results = run_games_sequential(str(onnx_path), map_width, map_height, max_turns, games_per_agent)
+        timing = {'games': time.time() - start, 'export': 0}
 
-    start = time.time()
-    for g in range(games_per_agent):
-        result = run_game_torch_mps(model, perturbations, map_width, map_height, max_turns)
-        if result == 1:
-            wins += 1
-        elif result == 0.5:
-            draws += 1
-        else:
-            losses += 1
-    timing['games'] = time.time() - start
-    timing['export'] = 0  # No export needed
+        return results, timing
 
-    return wins, draws, losses, timing
-
-
-def evaluate_genome_sequential(base_state_dict, perturbations, config, games_per_agent, map_width, map_height, max_turns):
-    """Evaluate genome in main process (for MPS compatibility)."""
-    # Create a fresh model with base weights for this genome
-    model = PolicyCNN(**config)
-    model.load_state_dict(base_state_dict)
-
-    wins = 0
-    draws = 0
-    losses = 0
-
-    start = time.time()
-    for g in range(games_per_agent):
-        result = run_game_torch_mps(model, perturbations, map_width, map_height, max_turns)
-        if result == 1:
-            wins += 1
-        elif result == 0.5:
-            draws += 1
-        else:
-            losses += 1
-    timing = {'games': time.time() - start, 'export': 0}
-
-    return wins, draws, losses, timing
+    finally:
+        # Cleanup
+        if onnx_path.exists():
+            onnx_path.unlink()
+        if temp_ckpt.exists():
+            temp_ckpt.unlink()
 
 
 def run_evolution(args):
     """Main evolution loop."""
-    # Use checkpoint path as-is (already relative to project root)
     checkpoint_path = args.checkpoint
 
     print(f"Loading checkpoint: {checkpoint_path}")
@@ -213,9 +175,9 @@ def run_evolution(args):
 
     rng = np.random.RandomState(args.seed)
 
-    print(f"Initializing population of {args.pop}...")
+    print(f"Initializing population of {args.population}...")
     population = []
-    for i in range(args.pop):
+    for i in range(args.population):
         perturbations = create_perturbation(base_state_dict, rng, scale=args.scale)
         population.append({
             'perturbations': perturbations,
@@ -225,39 +187,47 @@ def run_evolution(args):
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for gen in range(args.gens):
-        print(f"\nGeneration {gen + 1}/{args.gens}")
+    for gen in range(args.generations):
+        print(f"\nGeneration {gen + 1}/{args.generations}")
 
-        # Load model once in main process (MPS doesn't work in subprocesses)
+        # Load base model
         model = PolicyCNN(**config)
         ckpt = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
-
-        # Recursively resolve base checkpoint chain
         while 'perturbations' in ckpt and 'base_checkpoint' in ckpt:
             ckpt = torch.load(ckpt['base_checkpoint'], weights_only=False, map_location="cpu")
-
         base_state_dict = ckpt.get('model_state', ckpt)
         model.load_state_dict(base_state_dict)
 
-        # Sequential evaluation in main process
+        # Evaluate each genome
+        pop_size = len(population)
+        progress_markers = {int(p * pop_size / 10) for p in range(1, 11)}
+
         for idx, genome in enumerate(population):
             try:
-                wins, draws, losses, timing = evaluate_genome_sequential(
-                    base_state_dict, genome['perturbations'], config, args.games_per_agent,
-                    args.map_width, args.map_height, args.max_turns
+                results, timing = evaluate_genome_sequential(
+                    base_state_dict, genome['perturbations'], config,
+                    args.games_per_agent, args.map_width, args.map_height,
+                    args.max_turns, checkpoint_path, output_dir
                 )
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Genome {idx}: {wins}W-{draws}D-{losses}L (games: {timing['games']*1000:.0f}ms)", flush=True)
-                fitness = (wins * 1 + draws * 0.5) / (wins + draws + losses)
+                fitness = float(np.mean(results)) if results else 0.0
                 population[idx]['fitness'] = fitness
+
+                if idx < 3 or fitness > 0.5:
+                    print(f"  Genome {idx}: cities={fitness:.4f} (n={len(results)})", flush=True)
+
             except Exception as e:
                 import traceback
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Error evaluating genome {idx}: {e}\n{traceback.format_exc()}", flush=True)
                 population[idx]['fitness'] = 0
 
+            if idx in progress_markers:
+                pct = (idx + 1) * 100 // pop_size
+                print(f"[{pct}%]", flush=True)
+
         best = max(population, key=lambda g: g['fitness'])
         print(f"\nBest: {best['fitness']:.4f}, Mean: {np.mean([g['fitness'] for g in population]):.4f}")
 
-        if best['fitness'] > 0.5:
+        if best['fitness'] > 0.3:
             new_ckpt_path = str(output_dir / f'checkpoint_gen{gen}.json')
             torch.save({
                 'perturbations': best['perturbations'],
@@ -285,16 +255,16 @@ def run_evolution(args):
 def main():
     parser = argparse.ArgumentParser(description='Neuroevolution for NN policy')
     parser.add_argument('--checkpoint', required=True, help='Base model checkpoint')
-    parser.add_argument('--pop', type=int, default=30, help='Population size')
-    parser.add_argument('--gens', type=int, default=50, help='Number of generations')
+    parser.add_argument('--population', type=int, default=30, help='Population size')
+    parser.add_argument('--generations', type=int, default=20, help='Number of generations')
     parser.add_argument('--games-per-agent', type=int, default=5, help='Games per evaluation')
-    parser.add_argument('--workers', type=int, default=8, help='Parallel workers')
+    parser.add_argument('--workers', type=int, default=4, help='Parallel workers (not yet implemented)')
     parser.add_argument('--elitism', type=int, default=2, help='Elites per generation')
     parser.add_argument('--scale', type=float, default=0.1, help='Initial perturbation scale')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--output', default='./evolved', help='Output directory')
-    parser.add_argument('--map-width', type=int, default=50, help='Map width')
-    parser.add_argument('--map-height', type=int, default=20, help='Map height')
+    parser.add_argument('--map-width', type=int, default=30, help='Map width')
+    parser.add_argument('--map-height', type=int, default=10, help='Map height (playable, excludes ice caps)')
     parser.add_argument('--max-turns', type=int, default=300, help='Max turns per game')
     args = parser.parse_args()
 
