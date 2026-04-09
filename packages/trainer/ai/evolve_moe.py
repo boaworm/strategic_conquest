@@ -34,7 +34,14 @@ logging.getLogger("torch.onnx").setLevel(logging.ERROR)
 
 sys.path.insert(0, str(Path(__file__).parent))
 from models_moe import MovementCNN, ProductionCNN, UNIT_TYPE_NAMES, ALL_MODEL_NAMES, NUM_GLOBAL
-from game_evaluator import run_games_moe_sequential
+
+# Try to import PyTorch evaluator, fall back to Node.js if not available
+try:
+    from game_evaluator import run_games_torch_moe
+    USE_TORCH_EVAL = True
+except ImportError:
+    from game_evaluator import run_games_moe_sequential
+    USE_TORCH_EVAL = False
 
 
 # ── Perturbation helpers ──────────────────────────────────────────────────────
@@ -207,34 +214,49 @@ def run_evolution(args):
         progress_markers = {int(p * pop_size / 10) for p in range(1, 11)}
 
         for idx, genome in enumerate(population):
-            tmp_dir = output_dir / f'tmp_gen{gen}_{idx}'
             try:
-                t_export = time.time()
-                export_moe_genome(base_states, base_configs, genome['perturbations'], tmp_dir)
-                t_export = time.time() - t_export
+                if USE_TORCH_EVAL:
+                    # In-process PyTorch evaluation (faster, uses MPS)
+                    t_eval = time.time()
+                    results = run_games_torch_moe(
+                        base_states, genome['perturbations'], base_configs,
+                        args.map_width, args.map_height,
+                        args.max_turns, args.games_per_agent,
+                    )
+                    t_eval = time.time() - t_eval
+                    t_export = 0
+                else:
+                    # Fallback: export to ONNX and use Node.js
+                    tmp_dir = output_dir / f'tmp_gen{gen}_{idx}'
+                    t_export = time.time()
+                    export_moe_genome(base_states, base_configs, genome['perturbations'], tmp_dir)
+                    t_export = time.time() - t_export
 
-                t_eval = time.time()
-                results = run_games_moe_sequential(
-                    str(tmp_dir), args.map_width, args.map_height,
-                    args.max_turns, args.games_per_agent,
-                )
-                t_eval = time.time() - t_eval
+                    t_eval = time.time()
+                    results = run_games_moe_sequential(
+                        str(tmp_dir), args.map_width, args.map_height,
+                        args.max_turns, args.games_per_agent,
+                    )
+                    t_eval = time.time() - t_eval
+
+                    if tmp_dir.exists():
+                        shutil.rmtree(tmp_dir)
 
                 fitness = float(np.mean(results)) if results else 0.0
                 population[idx]['fitness'] = fitness
 
                 if idx < 3 or fitness > 0.3:
-                    print(f"  Genome {idx:3d}: cities={fitness:.4f}  "
-                          f"(export={t_export:.1f}s eval={t_eval:.1f}s)", flush=True)
+                    if USE_TORCH_EVAL:
+                        print(f"  Genome {idx:3d}: fitness={fitness:.4f}  (eval={t_eval:.1f}s)", flush=True)
+                    else:
+                        print(f"  Genome {idx:3d}: fitness={fitness:.4f}  "
+                              f"(export={t_export:.1f}s eval={t_eval:.1f}s)", flush=True)
 
             except Exception as e:
                 import traceback
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Genome {idx} error: {e}\n"
                       f"{traceback.format_exc()}", flush=True)
                 population[idx]['fitness'] = 0.0
-            finally:
-                if tmp_dir.exists():
-                    shutil.rmtree(tmp_dir)
 
             if idx in progress_markers:
                 pct = (idx + 1) * 100 // pop_size

@@ -15,5 +15,5 @@
     "composite": true,
     "types": ["node"]
   },
-  "include": ["src/**/*", "src/*.json"],
+  "include": ["src/**/*", "src/*.json"]
 }
