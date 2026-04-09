@@ -3,6 +3,7 @@ python -u packages/trainer/ai/evolve_moe.py \
     --population 100 \
     --generations 30 \
     --games-per-agent 10 \
+    --workers 8 \
     --scale 0.05 \
     --map-width 30 \
     --map-height 10 \

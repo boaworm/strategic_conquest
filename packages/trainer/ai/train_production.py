@@ -33,16 +33,17 @@ def train(args):
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Device: {device}  Task: production expert")
 
-    dataset = ProductionDataset(args.data_dir)
-    print(f"Loaded {len(dataset):,} production samples")
+    dataset = ProductionDataset(args.data_dir, file_idx=args.file_idx)
+    file_label = f"file {args.file_idx}" if args.file_idx is not None else "all files"
+    print(f"Loaded {len(dataset):,} production samples ({file_label})")
 
     val_n   = max(1, int(len(dataset) * 0.1))
     train_n = len(dataset) - val_n
     train_ds, val_ds = random_split(dataset, [train_n, val_n],
                                     generator=torch.Generator().manual_seed(42))
 
-    train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=4, pin_memory=True)
-    val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True)
+    train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=0)
+    val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     model = ProductionCNN(
         channels=15,
@@ -57,6 +58,12 @@ def train(args):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     best_val_loss = float('inf')
+    ckpt_path = out_dir / 'production.pt'
+    if args.file_idx is not None and args.file_idx > 0 and ckpt_path.exists():
+        ckpt = torch.load(ckpt_path, weights_only=False, map_location=device)
+        model.load_state_dict(ckpt['model_state'])
+        best_val_loss = ckpt['val_loss']
+        print(f"Warm-started from checkpoint  best_val_loss={best_val_loss:.4f}")
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -112,6 +119,8 @@ def train(args):
             }, out_dir / 'production.pt')
 
     print(f"\nBest val loss: {best_val_loss:.4f}")
+    best_ckpt = torch.load(out_dir / 'production.pt', weights_only=False, map_location='cpu')
+    model.load_state_dict(best_ckpt['model_state'])
     export_onnx(model, dataset.map_height, dataset.map_width, out_dir / 'production.onnx')
     print(f"Exported: {out_dir}/production.onnx")
 
@@ -146,6 +155,8 @@ def main():
     parser.add_argument('--epochs',     type=int,   default=50)
     parser.add_argument('--batch-size', type=int,   default=512)
     parser.add_argument('--lr',         type=float, default=1e-3)
+    parser.add_argument('--file-idx',   type=int,   default=None,
+                        help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')
     args = parser.parse_args()
     train(args)
 

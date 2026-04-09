@@ -51,7 +51,7 @@ class MovementDataset(Dataset):
       target_tile — long scalar in [0, H*W), or -1 if not a MOVE/UNLOAD action
     """
 
-    def __init__(self, data_dir: str, unit_type: str):
+    def __init__(self, data_dir: str, unit_type: str, file_idx: int | None = None):
         data_dir = Path(data_dir)
         meta = _load_meta(data_dir)
         self.map_height = meta.get('mapHeight', 22)
@@ -60,10 +60,11 @@ class MovementDataset(Dataset):
         self.W = self.map_width
         self.HW = self.H * self.W
 
-        # Collect all worker files for this unit type
         state_files = sorted(data_dir.glob(f'worker-*-{unit_type}.states.bin'))
         if not state_files:
             raise FileNotFoundError(f"No data found for unit type '{unit_type}' in {data_dir}")
+        if file_idx is not None:
+            state_files = [state_files[file_idx]]
 
         state_arrays, pos_arrays, action_type_list, tile_idx_list = [], [], [], []
 
@@ -95,22 +96,23 @@ class MovementDataset(Dataset):
 
         assert len(self.states) == len(self.positions) == len(self.action_types) == len(self.tile_idxs)
 
+        # Pre-build and merge 15th channel so __getitem__ is a single contiguous slice
+        N = len(self.states)
+        markers = np.zeros((N, 1, self.H, self.W), dtype=np.float32)
+        xs = self.positions[:, 0].astype(np.int32)
+        ys = self.positions[:, 1].astype(np.int32)
+        valid = (xs >= 0) & (xs < self.W) & (ys >= 0) & (ys < self.H)
+        rows = np.where(valid)[0]
+        markers[rows, 0, ys[rows], xs[rows]] = 1.0
+        self.states15 = np.concatenate([self.states, markers], axis=1)  # [N, 15, H, W]
+        del self.states, markers
+
     def __len__(self) -> int:
-        return len(self.states)
+        return len(self.states15)
 
     def __getitem__(self, idx: int):
-        base14 = torch.from_numpy(self.states[idx].copy())   # [14, H, W]
-        x, y   = int(self.positions[idx, 0]), int(self.positions[idx, 1])
-
-        # Add unit-marker channel (channel 14): 1.0 at the unit's tile
-        marker = torch.zeros(1, self.H, self.W)
-        if 0 <= y < self.H and 0 <= x < self.W:
-            marker[0, y, x] = 1.0
-
-        state15 = torch.cat([base14, marker], dim=0)   # [15, H, W]
-
         return (
-            state15,
+            torch.from_numpy(self.states15[idx].copy()),
             torch.tensor(self.action_types[idx], dtype=torch.long),
             torch.tensor(self.tile_idxs[idx],    dtype=torch.long),
         )
@@ -126,7 +128,7 @@ class ProductionDataset(Dataset):
       unit_type      — long scalar in [0, NUM_UNIT_TYPES)
     """
 
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, file_idx: int | None = None):
         data_dir = Path(data_dir)
         meta = _load_meta(data_dir)
         self.map_height = meta.get('mapHeight', 22)
@@ -137,6 +139,8 @@ class ProductionDataset(Dataset):
         state_files = sorted(data_dir.glob('worker-*-production.states.bin'))
         if not state_files:
             raise FileNotFoundError(f"No production data found in {data_dir}")
+        if file_idx is not None:
+            state_files = [state_files[file_idx]]
 
         state_arrays, city_arrays, global_arrays, unit_type_list = [], [], [], []
 
@@ -170,22 +174,23 @@ class ProductionDataset(Dataset):
         self.globals   = np.concatenate(global_arrays, axis=0)
         self.unit_types = np.array(unit_type_list, dtype=np.int64)
 
+        # Pre-build and merge city-marker channel (15th)
+        N = len(self.states)
+        markers = np.zeros((N, 1, self.H, self.W), dtype=np.float32)
+        cxs = self.cities[:, 0].astype(np.int32)
+        cys = self.cities[:, 1].astype(np.int32)
+        valid = (cxs >= 0) & (cxs < self.W) & (cys >= 0) & (cys < self.H)
+        rows = np.where(valid)[0]
+        markers[rows, 0, cys[rows], cxs[rows]] = 1.0
+        self.states15 = np.concatenate([self.states, markers], axis=1)  # [N, 15, H, W]
+        del self.states, markers
+
     def __len__(self) -> int:
-        return len(self.states)
+        return len(self.states15)
 
     def __getitem__(self, idx: int):
-        base14 = torch.from_numpy(self.states[idx].copy())
-        cx, cy = int(self.cities[idx, 0]), int(self.cities[idx, 1])
-
-        marker = torch.zeros(1, self.H, self.W)
-        if 0 <= cy < self.H and 0 <= cx < self.W:
-            marker[0, cy, cx] = 1.0
-
-        state15 = torch.cat([base14, marker], dim=0)
-        gf      = torch.from_numpy(self.globals[idx].copy())
-
         return (
-            state15,
-            gf,
+            torch.from_numpy(self.states15[idx].copy()),
+            torch.from_numpy(self.globals[idx].copy()),
             torch.tensor(self.unit_types[idx], dtype=torch.long),
         )

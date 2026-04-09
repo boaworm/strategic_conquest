@@ -2,14 +2,18 @@
 Neuroevolution for NnMoEAgent — perturbs all 9 expert models simultaneously.
 
 Each genome is a dict of 9 perturbation dicts (one per model name).
-Fitness = mean city-accumulation score across games (same as single-model evolve.py).
+Fitness = mean city-accumulation score across games (normalized to [0,1]).
+
+Evaluation uses persistent Node.js eval_server.js processes (real game engine).
+--workers N servers run in parallel via ThreadPoolExecutor.
 
 Usage:
     python packages/trainer/ai/evolve_moe.py \
         --checkpoints packages/trainer/ai/checkpoints/moe \
-        --population 50 \
-        --generations 20 \
-        --games-per-agent 5 \
+        --population 100 \
+        --generations 30 \
+        --games-per-agent 10 \
+        --workers 8 \
         --map-width 30 \
         --map-height 10 \
         --output /Volumes/500G/Training/evolution_moe
@@ -20,9 +24,9 @@ import json
 import os
 import shutil
 import sys
-import time
 import warnings
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -33,15 +37,8 @@ warnings.filterwarnings("ignore")
 logging.getLogger("torch.onnx").setLevel(logging.ERROR)
 
 sys.path.insert(0, str(Path(__file__).parent))
-from models_moe import MovementCNN, ProductionCNN, UNIT_TYPE_NAMES, ALL_MODEL_NAMES, NUM_GLOBAL
-
-# Try to import PyTorch evaluator, fall back to Node.js if not available
-try:
-    from game_evaluator import run_games_torch_moe
-    USE_TORCH_EVAL = True
-except ImportError:
-    from game_evaluator import run_games_moe_sequential
-    USE_TORCH_EVAL = False
+from models_moe import MovementCNN, ProductionCNN, UNIT_TYPE_NAMES, ALL_MODEL_NAMES
+from moe_eval_pool import MoEEvalPool
 
 
 # ── Perturbation helpers ──────────────────────────────────────────────────────
@@ -55,69 +52,9 @@ def create_perturbation(state_dict: dict, rng: np.random.RandomState, scale: flo
     return pert
 
 
-def apply_perturbation(state_dict: dict, pert: dict) -> dict:
-    modified = {}
-    for name, param in state_dict.items():
-        if name in pert:
-            noise = torch.tensor(pert[name]['data'], dtype=param.dtype).reshape(pert[name]['shape'])
-            modified[name] = param + noise
-        else:
-            modified[name] = param
-    return modified
-
-
 def create_moe_perturbations(base_states: dict, rng: np.random.RandomState, scale: float) -> dict:
     return {name: create_perturbation(base_states[name], rng, scale)
             for name in ALL_MODEL_NAMES}
-
-
-# ── ONNX export (in-process) ──────────────────────────────────────────────────
-
-def _export_model(model, output_path: Path, model_name: str, config: dict):
-    model.eval().cpu()
-    H, W = config['map_height'], config['map_width']
-
-    if model_name == 'production':
-        dummy_spatial = torch.randn(1, 15, H, W)
-        dummy_global  = torch.randn(1, NUM_GLOBAL)
-        torch.onnx.export(
-            model, (dummy_spatial, dummy_global), str(output_path),
-            export_params=True, opset_version=18, do_constant_folding=True,
-            input_names=["input", "global_features"],
-            output_names=["unit_type"],
-        )
-    else:
-        dummy = torch.randn(1, 15, H, W)
-        torch.onnx.export(
-            model, dummy, str(output_path),
-            export_params=True, opset_version=18, do_constant_folding=True,
-            input_names=["input"],
-            output_names=["action_type", "target_tile"],
-        )
-
-    # Merge external data into single file
-    import onnx
-    from onnx.external_data_helper import load_external_data_for_model
-    proto = onnx.load(str(output_path), load_external_data=False)
-    load_external_data_for_model(proto, str(output_path.parent))
-    onnx.save_model(proto, str(output_path), save_as_external_data=False)
-
-
-def export_moe_genome(base_states: dict, base_configs: dict, perturbations: dict, output_dir: Path):
-    """Apply perturbations to all 9 models and export to output_dir/*.onnx"""
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for name in ALL_MODEL_NAMES:
-        perturbed_state = apply_perturbation(base_states[name], perturbations[name])
-        config = base_configs[name]
-
-        if name == 'production':
-            model = ProductionCNN(**config)
-        else:
-            model = MovementCNN(**config)
-
-        model.load_state_dict(perturbed_state)
-        _export_model(model, output_dir / f'{name}.onnx', name, config)
 
 
 # ── Selection / crossover / mutation ─────────────────────────────────────────
@@ -181,7 +118,6 @@ def next_generation(population: list, elitism: int, rng: np.random.RandomState) 
 def run_evolution(args):
     checkpoints_dir = Path(args.checkpoints)
 
-    # Load all 9 base checkpoints
     print(f"Loading {len(ALL_MODEL_NAMES)} checkpoints from {checkpoints_dir}")
     base_states  = {}
     base_configs = {}
@@ -193,7 +129,8 @@ def run_evolution(args):
         ckpt = torch.load(str(ckpt_path), weights_only=False, map_location='cpu')
         base_states[name]  = ckpt['model_state']
         base_configs[name] = ckpt['config']
-        print(f"  {name}: {sum(p.numel() for p in base_states[name].values()):,} params")
+        n_params = sum(p.numel() for p in base_states[name].values())
+        print(f"  {name}: {n_params:,} params")
 
     rng = np.random.RandomState(args.seed)
 
@@ -206,84 +143,107 @@ def run_evolution(args):
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    print(f"\nStarting {args.workers} eval server(s)...")
+    pool = MoEEvalPool(
+        num_workers=args.workers,
+        map_width=args.map_width,
+        map_height=args.map_height,
+        max_turns=args.max_turns,
+        games_per_agent=args.games_per_agent,
+    )
+
     best_genome = None
 
-    for gen in range(args.generations):
-        print(f"\nGeneration {gen + 1}/{args.generations}")
-        pop_size = len(population)
-        progress_markers = {int(p * pop_size / 10) for p in range(1, 11)}
+    try:
+        for gen in range(args.generations):
+            print(f"\n{'='*60}")
+            print(f"Generation {gen + 1}/{args.generations}")
+            print(f"{'='*60}")
 
-        for idx, genome in enumerate(population):
-            try:
-                if USE_TORCH_EVAL:
-                    # In-process PyTorch evaluation (faster, uses MPS)
-                    t_eval = time.time()
-                    results = run_games_torch_moe(
-                        base_states, genome['perturbations'], base_configs,
-                        args.map_width, args.map_height,
-                        args.max_turns, args.games_per_agent,
-                    )
-                    t_eval = time.time() - t_eval
-                    t_export = 0
-                else:
-                    # Fallback: export to ONNX and use Node.js
-                    tmp_dir = output_dir / f'tmp_gen{gen}_{idx}'
-                    t_export = time.time()
-                    export_moe_genome(base_states, base_configs, genome['perturbations'], tmp_dir)
-                    t_export = time.time() - t_export
+            # Evaluate all genomes in parallel using ThreadPoolExecutor
+            def eval_genome(idx_genome):
+                idx, genome = idx_genome
+                try:
+                    results = pool.evaluate(base_states, genome['perturbations'], base_configs)
+                    fitness = float(np.mean(results)) if results else 0.0
+                    return idx, fitness, None
+                except Exception as e:
+                    import traceback
+                    return idx, 0.0, traceback.format_exc()
 
-                    t_eval = time.time()
-                    results = run_games_moe_sequential(
-                        str(tmp_dir), args.map_width, args.map_height,
-                        args.max_turns, args.games_per_agent,
-                    )
-                    t_eval = time.time() - t_eval
+            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+                futures = {
+                    executor.submit(eval_genome, (idx, genome)): idx
+                    for idx, genome in enumerate(population)
+                }
 
-                    if tmp_dir.exists():
-                        shutil.rmtree(tmp_dir)
+                completed = 0
+                pop_size = len(population)
+                for future in as_completed(futures):
+                    idx, fitness, err = future.result()
+                    population[idx]['fitness'] = fitness
+                    completed += 1
 
-                fitness = float(np.mean(results)) if results else 0.0
-                population[idx]['fitness'] = fitness
+                    if err:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] Genome {idx} error:\n{err}", flush=True)
+                    elif idx < 3 or fitness > 0.3:
+                        print(f"  [{datetime.now().strftime('%H:%M:%S')}] Genome {idx:3d}: fitness={fitness:.4f}", flush=True)
 
-                if idx < 3 or fitness > 0.3:
-                    if USE_TORCH_EVAL:
-                        print(f"  Genome {idx:3d}: fitness={fitness:.4f}  (eval={t_eval:.1f}s)", flush=True)
-                    else:
-                        print(f"  Genome {idx:3d}: fitness={fitness:.4f}  "
-                              f"(export={t_export:.1f}s eval={t_eval:.1f}s)", flush=True)
+                    pct = completed * 100 // pop_size
+                    if completed % max(1, pop_size // 10) == 0:
+                        print(f"  [{pct}%] {completed}/{pop_size} genomes evaluated", flush=True)
 
-            except Exception as e:
-                import traceback
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Genome {idx} error: {e}\n"
-                      f"{traceback.format_exc()}", flush=True)
-                population[idx]['fitness'] = 0.0
+            best_genome = max(population, key=lambda g: g['fitness'])
+            mean_fitness = np.mean([g['fitness'] for g in population])
+            print(f"\nBest: {best_genome['fitness']:.4f}  Mean: {mean_fitness:.4f}")
 
-            if idx in progress_markers:
-                pct = (idx + 1) * 100 // pop_size
-                print(f"[{pct}%]", flush=True)
+            if best_genome['fitness'] > 0.1:
+                ckpt_path = output_dir / f'checkpoint_gen{gen}.json'
+                with open(ckpt_path, 'w') as f:
+                    json.dump({'perturbations': best_genome['perturbations'],
+                               'fitness': best_genome['fitness'],
+                               'generation': gen}, f)
+                print(f"Saved: {ckpt_path}")
 
-        best_genome = max(population, key=lambda g: g['fitness'])
-        mean_fitness = np.mean([g['fitness'] for g in population])
-        print(f"\nBest: {best_genome['fitness']:.4f}  Mean: {mean_fitness:.4f}")
+            population = next_generation(population, args.elitism, rng)
 
-        # Save checkpoint if improved
-        if best_genome['fitness'] > 0.1:
-            ckpt_path = output_dir / f'checkpoint_gen{gen}.json'
-            with open(ckpt_path, 'w') as f:
-                json.dump({'perturbations': best_genome['perturbations'],
-                           'fitness': best_genome['fitness'],
-                           'generation': gen}, f)
-            print(f"Saved: {ckpt_path}")
-
-        population = next_generation(population, args.elitism, rng)
+    finally:
+        pool.close()
 
     # Export champion ONNX directory
     if best_genome:
+        from moe_eval_pool import _build_models_b64
         champion_dir = output_dir / 'champion'
-        export_moe_genome(base_states, base_configs, best_genome['perturbations'], champion_dir)
+        champion_dir.mkdir(exist_ok=True)
+
+        # Re-export champion models to disk for use as agent
+        from models_moe import MovementCNN, ProductionCNN
+        from moe_eval_pool import _export_model_to_bytes
+        for name in ALL_MODEL_NAMES:
+            pert = best_genome['perturbations'].get(name, {})
+            perturbed = {}
+            for layer, param in base_states[name].items():
+                if layer in pert:
+                    noise = torch.tensor(pert[layer]['data'], dtype=param.dtype).reshape(pert[layer]['shape'])
+                    perturbed[layer] = param + noise
+                else:
+                    perturbed[layer] = param
+
+            config = base_configs[name]
+            if name == 'production':
+                model = ProductionCNN(**config)
+            else:
+                model = MovementCNN(**config)
+            model.load_state_dict(perturbed)
+
+            onnx_bytes = _export_model_to_bytes(model, name, config)
+            onnx_path = champion_dir / f'{name}.onnx'
+            onnx_path.write_bytes(onnx_bytes)
+
         with open(output_dir / 'champion.json', 'w') as f:
             json.dump({'fitness': best_genome['fitness'],
-                       'perturbations': best_genome['perturbations']}, f)
+                       'checkpoints_dir': str(checkpoints_dir)}, f)
+
         print(f"\nEvolution complete.")
         print(f"  Champion ONNX: {champion_dir}/")
         print(f"  Fitness: {best_genome['fitness']:.4f}")
@@ -292,18 +252,19 @@ def run_evolution(args):
 
 def main():
     parser = argparse.ArgumentParser(description='Neuroevolution for MoE agent')
-    parser.add_argument('--checkpoints',    required=True, help='Dir with 9 .pt files')
-    parser.add_argument('--population',     type=int,   default=50)
-    parser.add_argument('--generations',    type=int,   default=20)
-    parser.add_argument('--games-per-agent',type=int,   default=5)
-    parser.add_argument('--elitism',        type=int,   default=2)
-    parser.add_argument('--scale',          type=float, default=0.05,
-                        help='Initial perturbation scale (smaller than single-model since 9x params)')
-    parser.add_argument('--seed',           type=int,   default=42)
-    parser.add_argument('--map-width',      type=int,   default=30)
-    parser.add_argument('--map-height',     type=int,   default=10)
-    parser.add_argument('--max-turns',      type=int,   default=300)
-    parser.add_argument('--output',         default='./evolved_moe')
+    parser.add_argument('--checkpoints',     required=True, help='Dir with 9 .pt files')
+    parser.add_argument('--population',      type=int,   default=100)
+    parser.add_argument('--generations',     type=int,   default=30)
+    parser.add_argument('--games-per-agent', type=int,   default=10)
+    parser.add_argument('--workers',         type=int,   default=4,
+                        help='Number of parallel eval servers (Node.js processes)')
+    parser.add_argument('--elitism',         type=int,   default=2)
+    parser.add_argument('--scale',           type=float, default=0.05)
+    parser.add_argument('--seed',            type=int,   default=42)
+    parser.add_argument('--map-width',       type=int,   default=30)
+    parser.add_argument('--map-height',      type=int,   default=10)
+    parser.add_argument('--max-turns',       type=int,   default=300)
+    parser.add_argument('--output',          default='./evolved_moe')
     args = parser.parse_args()
     run_evolution(args)
 

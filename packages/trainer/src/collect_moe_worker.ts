@@ -79,6 +79,38 @@ const totalSamples: Record<string, number> = Object.fromEntries(
 );
 const wins = { player1: 0, player2: 0, draw: 0 };
 
+// ── Write buffers (flush every FLUSH_EVERY samples to reduce syscall count) ───
+
+const FLUSH_EVERY = 256;
+
+type MovementBuf = { states: Buffer[]; positions: Buffer[]; actions: string[] };
+type ProductionBuf = { states: Buffer[]; cities: Buffer[]; globals: Buffer[]; unitTypes: string[] };
+
+const movementBufs = Object.fromEntries(
+  UNIT_TYPE_NAMES.map(n => [n, { states: [] as Buffer[], positions: [] as Buffer[], actions: [] as string[] }])
+) as Record<UnitTypeName, MovementBuf>;
+
+const prodBuf: ProductionBuf = { states: [], cities: [], globals: [], unitTypes: [] };
+
+function flushMovement(unitType: UnitTypeName): void {
+  const buf = movementBufs[unitType];
+  const files = movementFiles[unitType];
+  if (buf.states.length === 0) return;
+  fs.writeSync(files.statesFd,    Buffer.concat(buf.states));
+  fs.writeSync(files.positionsFd, Buffer.concat(buf.positions));
+  files.actionsWs.write(buf.actions.join(''));
+  buf.states = []; buf.positions = []; buf.actions = [];
+}
+
+function flushProduction(): void {
+  if (prodBuf.states.length === 0) return;
+  fs.writeSync(prodFiles.statesFd,  Buffer.concat(prodBuf.states));
+  fs.writeSync(prodFiles.citiesFd,  Buffer.concat(prodBuf.cities));
+  fs.writeSync(prodFiles.globalsFd, Buffer.concat(prodBuf.globals));
+  prodFiles.unitTypesWs.write(prodBuf.unitTypes.join(''));
+  prodBuf.states = []; prodBuf.cities = []; prodBuf.globals = []; prodBuf.unitTypes = [];
+}
+
 // ── Global features for production expert ────────────────────────────────────
 
 function buildGlobalFeatures(view: PlayerView, city: { x: number; y: number; productionTurnsLeft: number; coastal: boolean }, turn: number): Float32Array {
@@ -117,19 +149,12 @@ function saveMovementSample(
   actionType: string,
   tileIdx: number,
 ): void {
-  const files = movementFiles[unitType];
-
-  // states
-  fs.writeSync(files.statesFd, Buffer.from(tensor.buffer));
-
-  // positions: int16 [x, y]
-  const pos = new Int16Array([x, y]);
-  fs.writeSync(files.positionsFd, Buffer.from(pos.buffer));
-
-  // action
-  files.actionsWs.write(JSON.stringify({ actionType, tileIdx }) + '\n');
-
+  const buf = movementBufs[unitType];
+  buf.states.push(Buffer.from(tensor.buffer));
+  buf.positions.push(Buffer.from(new Int16Array([x, y]).buffer));
+  buf.actions.push(JSON.stringify({ actionType, tileIdx }) + '\n');
   totalSamples[unitType]++;
+  if (buf.states.length >= FLUSH_EVERY) flushMovement(unitType);
 }
 
 function saveProductionSample(
@@ -138,16 +163,13 @@ function saveProductionSample(
   globals: Float32Array,
   unitTypeName: string,
 ): void {
-  fs.writeSync(prodFiles.statesFd, Buffer.from(tensor.buffer));
-
-  const cityPos = new Int16Array([cityX, cityY]);
-  fs.writeSync(prodFiles.citiesFd, Buffer.from(cityPos.buffer));
-
-  fs.writeSync(prodFiles.globalsFd, Buffer.from(globals.buffer));
-
-  prodFiles.unitTypesWs.write(JSON.stringify({ unitType: unitTypeName }) + '\n');
+  prodBuf.states.push(Buffer.from(tensor.buffer));
+  prodBuf.cities.push(Buffer.from(new Int16Array([cityX, cityY]).buffer));
+  prodBuf.globals.push(Buffer.from(globals.buffer));
+  prodBuf.unitTypes.push(JSON.stringify({ unitType: unitTypeName }) + '\n');
 
   totalSamples['production']++;
+  if (prodBuf.states.length >= FLUSH_EVERY) flushProduction();
 }
 
 // ── Main game loop ─────────────────────────────────────────────────────────────
@@ -247,6 +269,10 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
 }
 
 // ── Close files ───────────────────────────────────────────────────────────────
+
+// Flush remaining buffered data
+for (const name of UNIT_TYPE_NAMES) flushMovement(name as UnitTypeName);
+flushProduction();
 
 for (const name of UNIT_TYPE_NAMES) {
   const f = movementFiles[name];

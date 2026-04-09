@@ -72,6 +72,25 @@ export class NnMoEAgent implements Agent {
   private pendingCityIds: Set<string> = new Set();
   private pass: 1 | 2 | 'prod' = 1;
 
+  /**
+   * Inject pre-created ONNX sessions directly (used by eval_server.js to avoid file I/O).
+   * sessions: { army: InferenceSession, ..., production: InferenceSession }
+   */
+  initFromSessions(sessions: Record<string, any>, config: AgentConfig): void {
+    this.playerId = config.playerId;
+    this.mapWidth = config.mapWidth;
+    this.mapHeight = config.mapHeight;
+
+    this.movementSessions.clear();
+    for (const ut of Object.values(UnitType)) {
+      const name = ut as string; // UnitType values are the string names e.g. 'army'
+      if (sessions[name]) {
+        this.movementSessions.set(ut as UnitType, sessions[name]);
+      }
+    }
+    this.productionSession = sessions['production'] ?? null;
+  }
+
   async init(config: AgentConfig): Promise<void> {
     this.playerId = config.playerId;
     this.mapWidth = config.mapWidth;
