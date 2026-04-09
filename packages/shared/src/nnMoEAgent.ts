@@ -106,7 +106,7 @@ export class NnMoEAgent implements Agent {
     };
 
     // Load all 9 models in parallel
-    const unitTypes = Object.values(UnitType).filter(v => typeof v === 'number') as UnitType[];
+    const unitTypes = Object.values(UnitType) as UnitType[];
     await Promise.all([
       ...unitTypes.map(async (ut) => {
         const name = UNIT_TYPE_NAMES[ut];
@@ -245,7 +245,8 @@ export class NnMoEAgent implements Agent {
     if (!session) return null;
 
     const tensor15 = this.buildMovementTensor(obs, unit.x, unit.y);
-    const input = new ort.Tensor('float32', tensor15, [1, 15, this.mapHeight, this.mapWidth]);
+    const tensorH = (tensor15.length / 15) / this.mapWidth;
+    const input = new ort.Tensor('float32', tensor15, [1, 15, tensorH, this.mapWidth]);
     const results = await session.run({ input });
 
     const actionIdx = this.argmax(results.action_type.data as Float32Array);
@@ -279,7 +280,8 @@ export class NnMoEAgent implements Agent {
     const tensor15 = this.buildMovementTensor(obs, city.x, city.y);
     const globalFeatures = this.buildGlobalFeatures(city, obs);
 
-    const inputTensor = new ort.Tensor('float32', tensor15, [1, 15, this.mapHeight, this.mapWidth]);
+    const tensorH = (tensor15.length / 15) / this.mapWidth;
+    const inputTensor = new ort.Tensor('float32', tensor15, [1, 15, tensorH, this.mapWidth]);
     const globalTensor = new ort.Tensor('float32', globalFeatures, [1, NUM_GLOBAL]);
     const results = await this.productionSession.run({ input: inputTensor, global_features: globalTensor });
 
@@ -295,15 +297,17 @@ export class NnMoEAgent implements Agent {
    */
   private buildMovementTensor(obs: AgentObservation, markerX: number, markerY: number): Float32Array {
     const view = obs as any as PlayerView;
-    const base14 = playerViewToTensor(view); // length = 14 * H * W
-    const HW = this.mapHeight * this.mapWidth;
+    const base14 = playerViewToTensor(view); // length = 14 * tensorH * mapWidth
+    const HW = base14.length / 14;           // actual tensor H*W (playerViewToTensor crops ice caps)
+    const tensorW = this.mapWidth;
     const out = new Float32Array(15 * HW);
     out.set(base14);
     // Channel 14: marker
-    const markerIdx = 14 * HW + markerY * this.mapWidth + markerX;
+    const markerIdx = 14 * HW + markerY * tensorW + markerX;
     if (markerIdx < out.length) out[markerIdx] = 1.0;
     return out;
   }
+
 
   private buildGlobalFeatures(city: CityView, obs: AgentObservation): Float32Array {
     const f = new Float32Array(NUM_GLOBAL);

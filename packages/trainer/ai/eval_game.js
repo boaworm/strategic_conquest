@@ -31,7 +31,7 @@ const agentType = args.agent || 'nn';          // 'nn' | 'moe'
 const modelPath = args.model || process.env.NN_MODEL_PATH;
 const moeDir    = args.moeDir || process.env.NN_MOE_DIR;
 const mapWidth  = args.width    || 30;
-const mapHeight = args.height   || 12;
+const mapHeight = args.height   || 10;
 const maxTurns  = args.maxTurns || 300;
 const numGames  = args.games    || 1;
 

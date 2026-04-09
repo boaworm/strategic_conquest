@@ -8,8 +8,9 @@ set -e
 
 DATA_DIR=/Volumes/500G/Training/moe
 OUT_DIR=$(pwd)/packages/trainer/ai/checkpoints/moe
-EPOCHS=50
+EPOCHS=40
 NUM_FILES=8
+RESUME=1
 
 cd packages/trainer/ai
 
@@ -22,7 +23,8 @@ for UNIT_TYPE in army fighter bomber transport destroyer submarine carrier battl
       --data-dir  "$DATA_DIR" \
       --out-dir   "$OUT_DIR" \
       --epochs    "$EPOCHS" \
-      --file-idx  "$FILE_IDX"
+      --file-idx  "$FILE_IDX" \
+      ${RESUME:+--resume}
   done
 done
 
@@ -33,7 +35,8 @@ for FILE_IDX in $(seq 0 $((NUM_FILES - 1))); do
     --data-dir "$DATA_DIR" \
     --out-dir  "$OUT_DIR" \
     --epochs   "$EPOCHS" \
-    --file-idx "$FILE_IDX"
+    --file-idx "$FILE_IDX" \
+    ${RESUME:+--resume}
 done
 
 echo "=== All MoE models trained. ONNX files in $OUT_DIR ==="

@@ -160,14 +160,27 @@ def run_evolution(args):
             print(f"Generation {gen + 1}/{args.generations}")
             print(f"{'='*60}")
 
-            # Evaluate all genomes in parallel using ThreadPoolExecutor
+            # Phase 1: export all genomes to ONNX bytes sequentially (not thread-safe)
+            print(f"  Exporting {len(population)} genomes...", flush=True)
+            for idx, genome in enumerate(population):
+                try:
+                    genome['models_b64'] = pool.preexport(base_states, genome['perturbations'], base_configs)
+                except Exception:
+                    import traceback
+                    print(f"  Export failed for genome {idx}:\n{traceback.format_exc()}", flush=True)
+                    genome['models_b64'] = None
+            print(f"  Export done. Running games...", flush=True)
+
+            # Phase 2: evaluate all genomes in parallel (send pre-built bytes to Node.js servers)
             def eval_genome(idx_genome):
                 idx, genome = idx_genome
+                if genome.get('models_b64') is None:
+                    return idx, 0.0, "export failed"
                 try:
-                    results = pool.evaluate(base_states, genome['perturbations'], base_configs)
+                    results = pool.evaluate_b64(genome['models_b64'])
                     fitness = float(np.mean(results)) if results else 0.0
                     return idx, fitness, None
-                except Exception as e:
+                except Exception:
                     import traceback
                     return idx, 0.0, traceback.format_exc()
 

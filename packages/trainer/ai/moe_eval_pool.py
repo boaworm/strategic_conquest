@@ -36,6 +36,8 @@ _SERVER_CWD = str(Path(__file__).parent.parent)
 
 NUM_GLOBAL = 22  # must match models_moe.py
 
+_ONNX_EXPORT_LOCK = threading.Lock()  # torch.onnx.export is not thread-safe
+
 
 def _export_model_to_bytes(model, model_name: str, config: dict) -> bytes:
     """Export a PyTorch model to ONNX bytes (in-memory, no disk I/O)."""
@@ -43,7 +45,7 @@ def _export_model_to_bytes(model, model_name: str, config: dict) -> bytes:
     H, W = config['map_height'], config['map_width']
     buf = io.BytesIO()
 
-    with warnings.catch_warnings():
+    with _ONNX_EXPORT_LOCK, warnings.catch_warnings():
         warnings.simplefilter("ignore")
         if model_name == 'production':
             dummy_spatial = torch.randn(1, 15, H, W)
@@ -163,13 +165,19 @@ class MoEEvalPool:
 
         print(f"[MoEEvalPool] {num_workers} eval servers ready", flush=True)
 
-    def evaluate(self, base_states: dict, perturbations: dict, configs: dict) -> list:
+    def preexport(self, base_states: dict, perturbations: dict, configs: dict) -> dict:
         """
-        Export 9 models in-memory, send to an idle server, return fitness list.
-        Blocks until a server is free and results are returned.
+        Export 9 models to base64 ONNX bytes (CPU, serialized).
+        Call this once per genome before evaluate() — can be done in a single
+        thread upfront to avoid lock contention across ThreadPoolExecutor threads.
         """
-        models_b64 = _build_models_b64(base_states, perturbations, configs)
+        return _build_models_b64(base_states, perturbations, configs)
 
+    def evaluate_b64(self, models_b64: dict) -> list:
+        """
+        Send pre-exported model bytes to an idle server, return fitness list.
+        Thread-safe — multiple threads can call this concurrently.
+        """
         server = self._idle.get()
         try:
             results = server.evaluate(
@@ -178,8 +186,11 @@ class MoEEvalPool:
             )
         finally:
             self._idle.put(server)
-
         return results
+
+    def evaluate(self, base_states: dict, perturbations: dict, configs: dict) -> list:
+        """Export + evaluate in one call (kept for compatibility)."""
+        return self.evaluate_b64(self.preexport(base_states, perturbations, configs))
 
     def close(self):
         for s in self._servers:

@@ -5,6 +5,6 @@ python -u packages/trainer/ai/evolve_moe.py \
     --games-per-agent 10 \
     --workers 8 \
     --scale 0.05 \
-    --map-width 30 \
-    --map-height 10 \
+    --map-width 50 \
+    --map-height 20 \
     --output /Volumes/500G/Training/evolution_moe

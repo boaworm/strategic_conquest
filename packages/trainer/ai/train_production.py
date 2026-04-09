@@ -59,7 +59,8 @@ def train(args):
 
     best_val_loss = float('inf')
     ckpt_path = out_dir / 'production.pt'
-    if args.file_idx is not None and args.file_idx > 0 and ckpt_path.exists():
+    should_resume = ckpt_path.exists() and (args.resume or (args.file_idx is not None and args.file_idx > 0))
+    if should_resume:
         ckpt = torch.load(ckpt_path, weights_only=False, map_location=device)
         model.load_state_dict(ckpt['model_state'])
         best_val_loss = ckpt['val_loss']
@@ -157,6 +158,8 @@ def main():
     parser.add_argument('--lr',         type=float, default=1e-3)
     parser.add_argument('--file-idx',   type=int,   default=None,
                         help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')
+    parser.add_argument('--resume',     action='store_true',
+                        help='Warm-start from existing checkpoint even at file-idx 0.')
     args = parser.parse_args()
     train(args)
 

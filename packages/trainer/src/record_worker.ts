@@ -69,7 +69,7 @@ function makeAgent(name: string): Agent {
   if (lower.startsWith('nnmoeagent:') || lower.startsWith('moe:')) {
     const dir = name.split(':')[1];
     if (dir) {
-      process.env.NN_MOE_DIR = dir.startsWith('/') ? dir : path.resolve(__dirname, '..', dir);
+      process.env.NN_MOE_DIR = dir.startsWith('/') ? dir : path.resolve(__dirname, '../../..', dir);
       return new NnMoEAgent();
     }
   }
@@ -96,8 +96,10 @@ function writeProgress(game: number): void {
 process.stderr.write(`[W${workerId}] started — ${numGames} games (p1=${p1AgentName} p2=${p2AgentName})\n`);
 
 // Check if agents are async
-p1IsAsync = p1AgentName.toLowerCase().startsWith('nnagent:') || p1AgentName.toLowerCase().startsWith('nn:');
-p2IsAsync = p2AgentName.toLowerCase().startsWith('nnagent:') || p2AgentName.toLowerCase().startsWith('nn:');
+const isAsync = (n: string) => n.toLowerCase().startsWith('nnagent:') || n.toLowerCase().startsWith('nn:')
+  || n.toLowerCase().startsWith('nnmoeagent:') || n.toLowerCase().startsWith('moe:');
+p1IsAsync = isAsync(p1AgentName);
+p2IsAsync = isAsync(p2AgentName);
 
 let completed = 0;
 let skipped = 0;
