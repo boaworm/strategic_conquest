@@ -64,6 +64,7 @@ export function createTrainingRoutes(manager: GameManager): Router {
     const session = await manager.createGame(
       mapWidth ?? 30,
       mapHeight ?? 20,
+      undefined, // mapPreset
       true, // isPvE
       difficulty as AIDifficulty,
     );

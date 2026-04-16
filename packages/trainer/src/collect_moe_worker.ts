@@ -36,10 +36,13 @@ const mapWidth    = parseInt(process.env.MAP_WIDTH!);
 const mapHeight   = parseInt(process.env.MAP_HEIGHT!);
 const maxTurns    = parseInt(process.env.MAX_TURNS!);
 const tmpDir      = process.env.TMP_DIR!;
+const prodOnly    = process.env.PROD_ONLY === '1';
 
 // Cap per bucket per game — keeps total output comparable to base collector
 const MAX_SAMPLES_PER_GAME = parseInt(process.env.MAX_SAMPLES_PER_GAME ?? '3000');
 const MAX_PER_BUCKET       = Math.max(50, Math.floor(MAX_SAMPLES_PER_GAME / 9));
+const PROD_SAMPLE_MULTIPLIER = parseInt(process.env.PROD_SAMPLE_MULTIPLIER ?? '3');
+const MAX_PER_PROD_BUCKET    = MAX_PER_BUCKET * PROD_SAMPLE_MULTIPLIER;
 
 const MOVEMENT_ACTION_TYPES = ['MOVE', 'SLEEP', 'SKIP', 'LOAD', 'UNLOAD'] as const;
 const UNIT_TYPE_NAMES = ['army', 'fighter', 'bomber', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'] as const;
@@ -60,9 +63,9 @@ function openFiles(name: string) {
   };
 }
 
-const movementFiles = Object.fromEntries(
+const movementFiles = prodOnly ? null : Object.fromEntries(
   UNIT_TYPE_NAMES.map(name => [name, openFiles(name)])
-) as Record<UnitTypeName, ReturnType<typeof openFiles>>;
+) as Record<UnitTypeName, ReturnType<typeof openFiles>> | null;
 
 const prodBase = path.join(tmpDir, `worker-${workerId}-production`);
 const prodFiles = {
@@ -86,15 +89,16 @@ const FLUSH_EVERY = 256;
 type MovementBuf = { states: Buffer[]; positions: Buffer[]; actions: string[] };
 type ProductionBuf = { states: Buffer[]; cities: Buffer[]; globals: Buffer[]; unitTypes: string[] };
 
-const movementBufs = Object.fromEntries(
+const movementBufs = prodOnly ? null : Object.fromEntries(
   UNIT_TYPE_NAMES.map(n => [n, { states: [] as Buffer[], positions: [] as Buffer[], actions: [] as string[] }])
-) as Record<UnitTypeName, MovementBuf>;
+) as Record<UnitTypeName, MovementBuf> | null;
 
 const prodBuf: ProductionBuf = { states: [], cities: [], globals: [], unitTypes: [] };
 
 function flushMovement(unitType: UnitTypeName): void {
-  const buf = movementBufs[unitType];
-  const files = movementFiles[unitType];
+  if (prodOnly) return;
+  const buf = movementBufs![unitType];
+  const files = movementFiles![unitType];
   if (buf.states.length === 0) return;
   fs.writeSync(files.statesFd,    Buffer.concat(buf.states));
   fs.writeSync(files.positionsFd, Buffer.concat(buf.positions));
@@ -149,7 +153,8 @@ function saveMovementSample(
   actionType: string,
   tileIdx: number,
 ): void {
-  const buf = movementBufs[unitType];
+  if (prodOnly) return;
+  const buf = movementBufs![unitType];
   buf.states.push(Buffer.from(tensor.buffer));
   buf.positions.push(Buffer.from(new Int16Array([x, y]).buffer));
   buf.actions.push(JSON.stringify({ actionType, tileIdx }) + '\n');
@@ -218,8 +223,8 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
     if (pid === 'player1') {
       const tensor = playerViewToTensor(view);
 
-      if (action.type === 'MOVE' || action.type === 'SLEEP' || action.type === 'SKIP' ||
-          action.type === 'LOAD' || action.type === 'UNLOAD') {
+      if (!prodOnly && (action.type === 'MOVE' || action.type === 'SLEEP' || action.type === 'SKIP' ||
+          action.type === 'LOAD' || action.type === 'UNLOAD')) {
 
         const unit = view.myUnits.find(u => u.id === (action as any).unitId);
         if (unit && gameCounts[unit.type] < MAX_PER_BUCKET) {
@@ -233,7 +238,7 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
       } else if (action.type === 'SET_PRODUCTION') {
         const cityId = (action as any).cityId;
         const city = view.myCities.find(c => c.id === cityId);
-        if (city && gameCounts['production'] < MAX_PER_BUCKET) {
+        if (city && gameCounts['production'] < MAX_PER_PROD_BUCKET) {
           const globals = buildGlobalFeatures(view, city, state.turn);
           saveProductionSample(tensor, city.x, city.y, globals, (action as any).unitType);
           gameCounts['production']++;
@@ -271,14 +276,18 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
 // ── Close files ───────────────────────────────────────────────────────────────
 
 // Flush remaining buffered data
-for (const name of UNIT_TYPE_NAMES) flushMovement(name as UnitTypeName);
+if (!prodOnly) {
+  for (const name of UNIT_TYPE_NAMES) flushMovement(name as UnitTypeName);
+}
 flushProduction();
 
-for (const name of UNIT_TYPE_NAMES) {
-  const f = movementFiles[name];
-  fs.closeSync(f.statesFd);
-  fs.closeSync(f.positionsFd);
-  await new Promise<void>(r => f.actionsWs.end(r));
+if (!prodOnly) {
+  for (const name of UNIT_TYPE_NAMES) {
+    const f = movementFiles![name];
+    fs.closeSync(f.statesFd);
+    fs.closeSync(f.positionsFd);
+    await new Promise<void>(r => f.actionsWs.end(r));
+  }
 }
 fs.closeSync(prodFiles.statesFd);
 fs.closeSync(prodFiles.citiesFd);

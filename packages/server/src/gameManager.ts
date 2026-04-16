@@ -55,6 +55,7 @@ export class GameManager {
   async createGame(
     mapWidth = 60,
     mapHeight = 40,
+    mapPreset?: 'world' | 'europe',
     isPvE = false,
     difficulty: AIDifficulty = 'medium',
     p1Type: 'human' | 'ai' = 'human',
@@ -67,7 +68,7 @@ export class GameManager {
     const id = crypto.randomUUID();
     const tokens = generateTokens();
 
-    const state = createGameState({ width: mapWidth, height: mapHeight });
+    const state = createGameState({ width: mapWidth, height: mapHeight, preset: mapPreset });
     // Game starts in lobby phase until both players connect
     state.phase = GamePhase.Lobby;
 

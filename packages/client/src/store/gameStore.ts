@@ -36,6 +36,7 @@ interface GameStore {
   createGame: (
     mapWidth?: number,
     mapHeight?: number,
+    mapPreset?: 'world' | 'europe',
     mode?: 'pvp' | 'pve' | 'ai_vs_ai',
     p1Type?: 'human' | 'ai',
     p2Type?: 'human' | 'ai',
@@ -101,6 +102,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   createGame: async (
     mapWidth?: number,
     mapHeight?: number,
+    mapPreset?: 'world' | 'europe',
     mode: 'pvp' | 'pve' | 'ai_vs_ai' = 'pvp',
     p1Type: 'human' | 'ai' = 'human',
     p2Type: 'human' | 'ai' = 'human',
@@ -112,6 +114,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const body: Record<string, number | string> = {};
     if (mapWidth) body.mapWidth = mapWidth;
     if (mapHeight) body.mapHeight = mapHeight;
+    if (mapPreset) body.mapPreset = mapPreset;
     body.mode = mode;
     if (p1Type) body.p1Type = p1Type;
     if (p2Type) body.p2Type = p2Type;

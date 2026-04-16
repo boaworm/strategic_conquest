@@ -10,6 +10,7 @@ import {
   wrapX,
   wrappedDistX,
 } from '../types.js';
+import { generatePresetMap } from './mapPresets.js';
 
 /**
  * Simple seeded PRNG (mulberry32) for reproducible maps.
@@ -25,7 +26,7 @@ function mulberry32(seed: number): () => number {
 }
 
 let nextId = 1;
-function genId(prefix: string): string {
+export function genId(prefix: string): string {
   return `${prefix}_${nextId++}`;
 }
 
@@ -39,6 +40,7 @@ export interface MapOptions {
   seed?: number;
   landRatio?: number;    // 0-1, default 0.35
   cityCount?: number;    // total neutral cities, default ~15
+  preset?: 'world' | 'europe'; // fixed geography preset (ignores seed/landRatio/cityCount)
 }
 
 /**
@@ -59,6 +61,10 @@ export function generateMap(opts: MapOptions): {
   units: Unit[];
   totalHeight: number;
 } {
+  if (opts.preset) {
+    return generatePresetMap(opts.preset, opts.width, opts.height, genId);
+  }
+
   const {
     width,
     height,

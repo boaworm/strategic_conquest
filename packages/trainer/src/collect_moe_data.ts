@@ -22,6 +22,7 @@ const MAP_WIDTH  = parseInt(process.env.MAP_WIDTH  ?? '50');
 const MAP_HEIGHT = parseInt(process.env.MAP_HEIGHT ?? '20');
 const MAX_TURNS  = parseInt(process.env.MAX_TURNS  ?? '500');
 const MAX_SAMPLES_PER_GAME = parseInt(process.env.MAX_SAMPLES_PER_GAME ?? '3000');
+const PROD_ONLY  = process.env.PROD_ONLY === '1';
 
 const UNIT_TYPE_NAMES = ['army', 'fighter', 'bomber', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'];
 
@@ -40,6 +41,7 @@ function spawnWorker(workerId: number, gameStart: number, gameEnd: number): Prom
         MAP_HEIGHT:  String(MAP_HEIGHT),
         MAX_TURNS:   String(MAX_TURNS),
         MAX_SAMPLES_PER_GAME: String(MAX_SAMPLES_PER_GAME),
+        PROD_ONLY:   String(PROD_ONLY ? 1 : 0),
         TMP_DIR:     tmpDir,
       },
       stdio: ['ignore', 'ignore', 'inherit'],
@@ -106,10 +108,12 @@ async function main(): Promise<void> {
 
   // Move per-worker files into OUTPUT_DIR
   for (let i = 0; i < WORKERS; i++) {
-    for (const type of UNIT_TYPE_NAMES) {
-      for (const ext of ['states.bin', 'positions.bin', 'actions.jsonl']) {
-        const src = path.join(tmpDir, `worker-${i}-${type}.${ext}`);
-        fs.renameSync(src, path.join(OUTPUT_DIR, `worker-${i}-${type}.${ext}`));
+    if (!PROD_ONLY) {
+      for (const type of UNIT_TYPE_NAMES) {
+        for (const ext of ['states.bin', 'positions.bin', 'actions.jsonl']) {
+          const src = path.join(tmpDir, `worker-${i}-${type}.${ext}`);
+          fs.renameSync(src, path.join(OUTPUT_DIR, `worker-${i}-${type}.${ext}`));
+        }
       }
     }
     for (const ext of ['states.bin', 'cities.bin', 'globals.bin', 'unitTypes.jsonl']) {

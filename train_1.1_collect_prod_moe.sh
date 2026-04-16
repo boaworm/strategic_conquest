@@ -1,0 +1,3 @@
+#!/bin/bash
+DATA_DIR=/Volumes/500G/Training/moe NUM_GAMES=12500 MAX_SAMPLES_PER_GAME=5000 WORKERS=8 MAX_TURNS=300 MAP_WIDTH=30 MAP_HEIGHT=10 PROD_SAMPLE_MULTIPLIER=3 PROD_ONLY=1 \
+  npm run collect-moe --workspace=packages/trainer

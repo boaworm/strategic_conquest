@@ -69,6 +69,7 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
   const [localError, setLocalError] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [mainWorldSize, setMainWorldSize] = useState(2); // default: Medium
+  const [mapType, setMapType] = useState<'random' | 'world' | 'europe'>('random');
   const [aiPlayer, setAiPlayer] = useState('basic'); // default: Basic
   const [nnModels, setNnModels] = useState<NNModel[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
@@ -95,11 +96,15 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
     }
   }, [error, connected]);
 
+  // Preset maps only available for the 3 largest sizes (Medium, Large, XL)
+  const presetAvailable = mainWorldSize >= 2;
+  const effectivePreset = presetAvailable && mapType !== 'random' ? mapType : undefined;
+
   async function handleCreate() {
     try {
       setLocalError('');
       const size = WORLD_SIZES[mainWorldSize];
-      const result = await createGame(size.width, size.height, 'pvp');
+      const result = await createGame(size.width, size.height, effectivePreset, 'pvp');
       setCreatedGame(result);
       setMode('create');
     } catch {
@@ -119,6 +124,7 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
       const result = await createGame(
         size.width,
         size.height,
+        effectivePreset,
         'pve',
         'human',
         aiType,
@@ -248,6 +254,32 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
           <p className="text-xs text-gray-400 mt-1">Map: {WORLD_SIZES[mainWorldSize].width}×{WORLD_SIZES[mainWorldSize].height}</p>
         </div>
 
+        {mainWorldSize >= 2 && (
+          <div className="text-left space-y-2">
+            <label className="text-sm text-gray-300 block">Map Type</label>
+            <div className="flex gap-2 justify-center flex-wrap">
+              {(['random', 'world', 'europe'] as const).map(t => (
+                <button
+                  key={t}
+                  className={`px-3 py-1.5 rounded text-sm capitalize ${t === mapType
+                    ? 'bg-green-600 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  onClick={() => setMapType(t)}
+                >
+                  {t === 'random' ? 'Random' : t === 'world' ? 'World' : 'Europe'}
+                </button>
+              ))}
+            </div>
+            {mapType === 'europe' && (
+              <p className="text-xs text-gray-400 mt-1">Includes N. Africa &amp; Turkey. P1: London · P2: Moscow</p>
+            )}
+            {mapType === 'world' && (
+              <p className="text-xs text-gray-400 mt-1">Full globe. P1: Ottawa · P2: Beijing</p>
+            )}
+          </div>
+        )}
+
         <div className="text-left space-y-2">
           <label className="text-sm text-gray-300 block">AI Opponent</label>
           <div className="flex gap-2 justify-center flex-wrap">
@@ -331,6 +363,32 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
           </div>
           <p className="text-xs text-gray-400 mt-1">Selected: {WORLD_SIZES[mainWorldSize].width}×{WORLD_SIZES[mainWorldSize].height}</p>
         </div>
+
+        {mainWorldSize >= 2 && (
+          <div className="text-left space-y-2">
+            <label className="text-sm text-gray-300 block">Map Type</label>
+            <div className="flex gap-2 justify-center flex-wrap">
+              {(['random', 'world', 'europe'] as const).map(t => (
+                <button
+                  key={t}
+                  className={`px-3 py-1.5 rounded text-sm capitalize ${t === mapType
+                    ? 'bg-green-600 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  onClick={() => setMapType(t)}
+                >
+                  {t === 'random' ? 'Random' : t === 'world' ? 'World' : 'Europe'}
+                </button>
+              ))}
+            </div>
+            {mapType === 'europe' && (
+              <p className="text-xs text-gray-400 mt-1">Includes N. Africa &amp; Turkey. P1: London · P2: Moscow</p>
+            )}
+            {mapType === 'world' && (
+              <p className="text-xs text-gray-400 mt-1">Full globe. P1: Ottawa · P2: Beijing</p>
+            )}
+          </div>
+        )}
         <button
           className="px-6 py-3 bg-blue-700 rounded-lg text-lg hover:bg-blue-600"
           onClick={handleCreate}
