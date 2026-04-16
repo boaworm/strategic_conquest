@@ -1,4 +1,5 @@
 import { Terrain, type City, type Unit, UnitType, type PlayerId } from '../types.js';
+import { WORLD_MAP_GRID, EUROPE_MAP_GRID } from '../svgMapData.js';
 
 type GenIdFn = (prefix: string) => string;
 
@@ -429,13 +430,159 @@ const EC: CityDef[] = [
   { nx: 0.816, ny: 0.806, name: 'Cairo' },
 ];
 
+/**
+ * Build world map from SVG-derived grid data (WORLD_MAP_GRID).
+ * The grid is 120x40 (playable area) with ice caps on rows 0 and 41.
+ */
+function buildWorldMapFromGrid(width: number, height: number, genId: GenIdFn): PresetResult {
+  // WORLD_MAP_GRID is 120x40
+  const gridWidth = 120;
+  const gridHeight = 40;
+
+  // Create tiles array with ice caps
+  const totalHeight = height + 2;
+  const tiles: Terrain[][] = [];
+
+  // Top ice cap
+  tiles.push(new Array(width).fill(Terrain.Ocean));
+
+  // Playable area - scale the traced grid
+  for (let y = 0; y < height; y++) {
+    const row: Terrain[] = [];
+    const gridY = Math.floor(y * gridHeight / height);
+    for (let x = 0; x < width; x++) {
+      const gridX = Math.floor(x * gridWidth / width) % gridWidth;
+      const cell = WORLD_MAP_GRID[gridY]?.[gridX] || 'ocean';
+      row.push(cell === 'land' ? Terrain.Land : Terrain.Ocean);
+    }
+    tiles.push(row);
+  }
+
+  // Bottom ice cap
+  tiles.push(new Array(width).fill(Terrain.Ocean));
+
+  // Convert tiles to land mask for city snapping
+  const landMask = tiles.map((row, y) => y === 0 || y === totalHeight - 1 ? row.map(() => false) : row.map(t => t === Terrain.Land));
+
+  // Place cities based on player starting positions
+  // P1: North America (Ottawa area), P2: Asia (Beijing area)
+  const cityDefs: CityDef[] = WC;
+  const placed = snapCities(cityDefs, landMask, width, height);
+
+  const cities: City[] = placed.map(p => ({
+    id: genId('city'),
+    x: p.x,
+    y: p.y + 1, // +1 for ice cap row
+    owner: p.startPlayer ?? null,
+    producing: p.startPlayer ? UnitType.Army : null,
+    productionTurnsLeft: p.startPlayer ? 3 : 0,
+    productionProgress: 0,
+  }));
+
+  const p1City = cities.find(c => c.owner === 'player1');
+  const p2City = cities.find(c => c.owner === 'player2');
+  if (!p1City || !p2City) {
+    throw new Error(`World map failed to place player starting cities (p1=${!!p1City}, p2=${!!p2City})`);
+  }
+
+  const units: Unit[] = [
+    {
+      id: genId('unit'), type: UnitType.Army, owner: 'player1' as PlayerId,
+      x: p1City.x, y: p1City.y, health: 1, movesLeft: 1,
+      sleeping: false, hasAttacked: false, cargo: [], carriedBy: null,
+    },
+    {
+      id: genId('unit'), type: UnitType.Army, owner: 'player2' as PlayerId,
+      x: p2City.x, y: p2City.y, health: 1, movesLeft: 1,
+      sleeping: false, hasAttacked: false, cargo: [], carriedBy: null,
+    },
+  ];
+
+  return { tiles, cities, units, totalHeight };
+}
+
+export const WORLD_CITIES = WC;
+export const EUROPE_CITIES = EC;
+
+/**
+ * Build Europe map from SVG-derived grid data (EUROPE_MAP_GRID).
+ * The grid is 60x40 (playable area) with ice caps on rows 0 and 41.
+ */
+function buildEuropeMapFromGrid(width: number, height: number, genId: GenIdFn): PresetResult {
+  // EUROPE_MAP_GRID is 60x40
+  const gridWidth = 60;
+  const gridHeight = 40;
+
+  // Create tiles array with ice caps
+  const totalHeight = height + 2;
+  const tiles: Terrain[][] = [];
+
+  // Top ice cap
+  tiles.push(new Array(width).fill(Terrain.Ocean));
+
+  // Playable area - scale the traced grid
+  for (let y = 0; y < height; y++) {
+    const row: Terrain[] = [];
+    const gridY = Math.floor(y * gridHeight / height);
+    for (let x = 0; x < width; x++) {
+      const gridX = Math.floor(x * gridWidth / width);
+      const cell = EUROPE_MAP_GRID[gridY]?.[gridX] || 'ocean';
+      row.push(cell === 'land' ? Terrain.Land : Terrain.Ocean);
+    }
+    tiles.push(row);
+  }
+
+  // Bottom ice cap
+  tiles.push(new Array(width).fill(Terrain.Ocean));
+
+  // Convert tiles to land mask for city snapping
+  const landMask = tiles.map((row, y) => y === 0 || y === totalHeight - 1 ? row.map(() => false) : row.map(t => t === Terrain.Land));
+
+  // Place cities based on player starting positions
+  // P1 = London (Western Europe), P2 = Moscow (Eastern Europe)
+  const cityDefs: CityDef[] = EC;
+  const placed = snapCities(cityDefs, landMask, width, height);
+
+  const cities: City[] = placed.map(p => ({
+    id: genId('city'),
+    x: p.x,
+    y: p.y + 1, // +1 for ice cap row
+    owner: p.startPlayer ?? null,
+    producing: p.startPlayer ? UnitType.Army : null,
+    productionTurnsLeft: p.startPlayer ? 3 : 0,
+    productionProgress: 0,
+  }));
+
+  const p1City = cities.find(c => c.owner === 'player1');
+  const p2City = cities.find(c => c.owner === 'player2');
+  if (!p1City || !p2City) {
+    throw new Error(`Europe map failed to place player starting cities (p1=${!!p1City}, p2=${!!p2City})`);
+  }
+
+  const units: Unit[] = [
+    {
+      id: genId('unit'), type: UnitType.Army, owner: 'player1' as PlayerId,
+      x: p1City.x, y: p1City.y, health: 1, movesLeft: 1,
+      sleeping: false, hasAttacked: false, cargo: [], carriedBy: null,
+    },
+    {
+      id: genId('unit'), type: UnitType.Army, owner: 'player2' as PlayerId,
+      x: p2City.x, y: p2City.y, health: 1, movesLeft: 1,
+      sleeping: false, hasAttacked: false, cargo: [], carriedBy: null,
+    },
+  ];
+
+  return { tiles, cities, units, totalHeight };
+}
+
 export function generatePresetMap(
   preset: 'world' | 'europe',
   width: number,
   height: number,
   genId: GenIdFn,
 ): PresetResult {
-  const regions = preset === 'world' ? W : E;
-  const cityDefs = preset === 'world' ? WC : EC;
-  return buildMap(regions, cityDefs, width, height, genId);
+  if (preset === 'world') {
+    return buildWorldMapFromGrid(width, height, genId);
+  }
+  return buildEuropeMapFromGrid(width, height, genId);
 }

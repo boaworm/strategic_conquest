@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Terrain, wrapX, generatePresetMap } from '@sc/shared';
+import { Terrain, wrapX, generatePresetMap, WORLD_CITIES, EUROPE_CITIES } from '@sc/shared';
 
 // Simple ID generator (no dependencies)
 let idCounter = 0;
@@ -291,31 +291,34 @@ export function MapView() {
     }
   }, []);
 
+  // Get city names from preset
+  const cityPreset = preset === 'world' ? WORLD_CITIES : EUROPE_CITIES;
+
   // Generate map when preset or size changes
   useEffect(() => {
     const result = generatePresetMap(preset, mapWidth, mapHeight, genId as GenIdFn);
-    const cityList = result.cities.map((c: { x: number; y: number; owner: 'player1' | 'player2' | null }) => ({
-      x: c.x,
-      y: c.y,
-      owner: c.owner,
-      name: 'City', // Placeholder - we don't have city names from the preset
-    }));
+    const cityList = result.cities.map((c: { x: number; y: number; owner: 'player1' | 'player2' | null }) => {
+      // Find matching city from preset by position (allow some tolerance for scaling)
+      const tolerance = 2;
+      const matched = cityPreset.find(presetCity => {
+        // Scale preset coordinates to current map size
+        const scaledX = Math.round(presetCity.nx * mapWidth);
+        const scaledY = Math.round(presetCity.ny * mapHeight);
+        return Math.abs(scaledX - c.x) <= tolerance && Math.abs(scaledY - c.y) <= tolerance;
+      });
+      return {
+        x: c.x,
+        y: c.y,
+        owner: c.owner,
+        name: matched?.name || (c.owner === 'player1' ? 'P1 Capital' : c.owner === 'player2' ? 'P2 Capital' : `City`),
+      };
+    });
     setMapData({ tiles: result.tiles, cities: cityList });
-  }, [preset, mapWidth, mapHeight]);
-
-  // Get city names from URL hash (format: "London,Paris,Berlin,..." or "P1:London,P2:Moscow,...")
-  const cityNames = useRef<string[]>([]);
-  useEffect(() => {
-    const hash = window.location.hash.slice(1);
-    if (hash) {
-      cityNames.current = hash.split(',').map(s => s.trim()).filter(Boolean);
-    }
-  }, []);
+  }, [preset, mapWidth, mapHeight, cityPreset]);
 
   // Build city list with names
-  const citiesWithNames = mapData?.cities.map((c: { x: number; y: number; owner: 'player1' | 'player2' | null; name: string }, i: number) => ({
+  const citiesWithNames = mapData?.cities.map((c: { x: number; y: number; owner: 'player1' | 'player2' | null; name: string }) => ({
     ...c,
-    name: cityNames.current[i] || (c.owner === 'player1' ? 'P1 Capital' : c.owner === 'player2' ? 'P2 Capital' : `City ${i + 1}`),
   })) || [];
 
   // Preset info
