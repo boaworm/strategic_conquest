@@ -7,6 +7,7 @@ import { HUD } from './components/HUD';
 import { MainMenu } from './components/MainMenu';
 import { ReplayViewer } from './components/ReplayViewer';
 import { TestReplayViewer } from './components/TestReplayViewer';
+import { MapView } from './components/MapView';
 import { GamePhase } from '@sc/shared';
 
 export default function App() {
@@ -22,6 +23,12 @@ export default function App() {
   const cityDialog = cityDialogId
     ? view?.myCities.find((c) => c.id === cityDialogId) ?? null
     : null;
+
+  // Map viewer (no fog of war) - ?map=world or ?map=europe
+  const mapParam = new URLSearchParams(window.location.search).get('map');
+  if (mapParam === 'world' || mapParam === 'europe') {
+    return <MapView />;
+  }
 
   // Test replay viewer
   const testReplayParam = new URLSearchParams(window.location.search).get('testReplay');

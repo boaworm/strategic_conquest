@@ -20,10 +20,38 @@ import type { Agent, AgentAction, AgentConfig, AgentObservation } from './agent.
 import type { PlayerView, UnitView, CityView } from './types.js';
 import { UnitType, UnitDomain, UNIT_STATS, wrapX } from './types.js';
 import { playerViewToTensor } from './engine/tensorUtils.js';
-import { resolve, join } from 'node:path';
 
-import * as ortNamespace from 'onnxruntime-node';
-const ort = ortNamespace.default;
+// Lazy-load node modules to avoid browser build errors
+let _ort: any = null;
+let _resolve: (path: string) => string | null = null;
+let _join: (path: string, ...paths: string[]) => string | null = null;
+
+function getOrt() {
+  if (!_ort) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ortNamespace = require('onnxruntime-node');
+    _ort = ortNamespace.default;
+  }
+  return _ort;
+}
+
+function getResolve() {
+  if (!_resolve) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { resolve } = require('node:path');
+    _resolve = resolve;
+  }
+  return _resolve;
+}
+
+function getJoin() {
+  if (!_join) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { join } = require('node:path');
+    _join = join;
+  }
+  return _join;
+}
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -96,9 +124,13 @@ export class NnMoEAgent implements Agent {
     this.mapWidth = config.mapWidth;
     this.mapHeight = config.mapHeight;
 
+    const resolve = getResolve();
     const dir = resolve(
       (typeof process !== 'undefined' && process.env?.NN_MOE_DIR) || './moe_models'
     );
+
+    const ort = getOrt();
+    const join = getJoin();
 
     const opts: any = {
       executionProviders: getExecutionProviders(),
@@ -246,6 +278,7 @@ export class NnMoEAgent implements Agent {
 
     const tensor15 = this.buildMovementTensor(obs, unit.x, unit.y);
     const tensorH = (tensor15.length / 15) / this.mapWidth;
+    const ort = getOrt();
     const input = new ort.Tensor('float32', tensor15, [1, 15, tensorH, this.mapWidth]);
     const results = await session.run({ input });
 
@@ -281,6 +314,7 @@ export class NnMoEAgent implements Agent {
     const globalFeatures = this.buildGlobalFeatures(city, obs);
 
     const tensorH = (tensor15.length / 15) / this.mapWidth;
+    const ort = getOrt();
     const inputTensor = new ort.Tensor('float32', tensor15, [1, 15, tensorH, this.mapWidth]);
     const globalTensor = new ort.Tensor('float32', globalFeatures, [1, NUM_GLOBAL]);
     const results = await this.productionSession.run({ input: inputTensor, global_features: globalTensor });

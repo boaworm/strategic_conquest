@@ -417,6 +417,18 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
             View Replay
           </button>
         )}
+        <a
+          href="/?map=world"
+          className="px-6 py-3 bg-orange-700 rounded-lg text-lg hover:bg-orange-600 text-center"
+        >
+          View World Map
+        </a>
+        <a
+          href="/?map=europe"
+          className="px-6 py-3 bg-orange-600 rounded-lg text-lg hover:bg-orange-500 text-center"
+        >
+          View Europe Map
+        </a>
       </div>
     </div>
   );

@@ -10,7 +10,9 @@ import {
   wrapX,
   wrappedDistX,
 } from '../types.js';
-import { generatePresetMap } from './mapPresets.js';
+import { generatePresetMap as genPresetMap } from './mapPresets.js';
+
+export { generatePresetMap } from './mapPresets.js';
 
 /**
  * Simple seeded PRNG (mulberry32) for reproducible maps.
@@ -62,7 +64,7 @@ export function generateMap(opts: MapOptions): {
   totalHeight: number;
 } {
   if (opts.preset) {
-    return generatePresetMap(opts.preset, opts.width, opts.height, genId);
+    return genPresetMap(opts.preset, opts.width, opts.height, genId);
   }
 
   const {

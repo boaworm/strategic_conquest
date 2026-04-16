@@ -12,9 +12,27 @@ import { playerViewToTensor } from './engine/tensorUtils.js';
 import type { PlayerView } from './types.js';
 import { UnitType, wrapX, wrappedDistX } from './types.js';
 
-import { resolve } from 'node:path';
-import * as ortNamespace from 'onnxruntime-node';
-const ort = ortNamespace.default;
+// Lazy-load node modules to avoid browser build errors
+let _ort: any = null;
+let _resolve: (path: string) => string | null = null;
+
+function getOrt() {
+  if (!_ort) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ortNamespace = require('onnxruntime-node');
+    _ort = ortNamespace.default;
+  }
+  return _ort;
+}
+
+function getResolve() {
+  if (!_resolve) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { resolve } = require('node:path');
+    _resolve = resolve;
+  }
+  return _resolve;
+}
 
 function getExecutionProviders(): string[] {
   if (typeof process !== 'undefined' && process.platform === 'darwin') {
@@ -60,8 +78,10 @@ export class NnAgent implements Agent {
     this.mapHeight = config.mapHeight;
 
     // Load ONNX runtime and model
+    const resolve = getResolve();
     const modelPath = resolve((typeof process !== 'undefined' && process.env?.NN_MODEL_PATH) || './model.onnx');
 
+    const ort = getOrt();
     const sessionOptions: any = {
       executionProviders: getExecutionProviders(),
       logSeverityLevel: 3, // errors only — suppress CoreML partition warnings
@@ -80,6 +100,7 @@ export class NnAgent implements Agent {
     const tensor = playerViewToTensor(view);
 
     // Create ONNX tensor (1, 14, H, W)
+    const ort = getOrt();
     const inputTensor = new ort.Tensor('float32', tensor, [1, 14, this.mapHeight, this.mapWidth]);
     const feeds = { input: inputTensor };
 
