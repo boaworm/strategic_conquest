@@ -19,6 +19,7 @@
     "replay": "DATA_DIR=${DATA_DIR:-data} && case $DATA_DIR in /*) ;; *) DATA_DIR=$PWD/$DATA_DIR;; esac && export DATA_DIR && npm run replay --workspace=packages/trainer",
     "profile": "npm run profile --workspace=packages/testing",
     "test_replay": "DATA_DIR=${DATA_DIR:-data} && case $DATA_DIR in /*) ;; *) DATA_DIR=$PWD/$DATA_DIR;; esac && export DATA_DIR && npm run test_replay --workspace=packages/trainer",
-"collect": "DATA_DIR=${DATA_DIR:-data} && case $DATA_DIR in /*) ;; *) DATA_DIR=$PWD/$DATA_DIR;; esac && export DATA_DIR && npm run collect --workspace=packages/trainer"
+"collect": "DATA_DIR=${DATA_DIR:-data} && case $DATA_DIR in /*) ;; *) DATA_DIR=$PWD/$DATA_DIR;; esac && export DATA_DIR && npm run collect --workspace=packages/trainer",
+    "gen-maps": "npx tsx packages/server/scripts/generate-default-maps.ts && mv packages/server/maps/*.json maps/ 2>/dev/null || true"
   }
 }

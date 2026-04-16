@@ -22,7 +22,7 @@ export function createGameRoutes(manager: GameManager): Router {
    * Create a new game. Returns gameId + all three tokens.
    */
   router.post('/games', async (req, res) => {
-    const { mapWidth, mapHeight, mapPreset, mode, difficulty, p1Type, p2Type, p1AI, p2AI, p1ModelId, p2ModelId } = req.body ?? {};
+    const { mapWidth, mapHeight, mapPreset, mapId, mode, difficulty, p1Type, p2Type, p1AI, p2AI, p1ModelId, p2ModelId } = req.body ?? {};
     const isPvE = mode === 'pve';
     const isAiVsAi = mode === 'ai_vs_ai';
     const diff: AIDifficulty = (isPvE || isAiVsAi) ? (difficulty ?? 'medium') : 'medium';
@@ -31,6 +31,7 @@ export function createGameRoutes(manager: GameManager): Router {
       mapWidth ?? 60,
       mapHeight ?? 40,
       mapPreset,
+      mapId,
       isPvE,
       diff,
       p1Type ?? 'human',

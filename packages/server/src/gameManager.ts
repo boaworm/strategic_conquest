@@ -56,6 +56,7 @@ export class GameManager {
     mapWidth = 60,
     mapHeight = 40,
     mapPreset?: 'world' | 'europe',
+    mapId?: string,
     isPvE = false,
     difficulty: AIDifficulty = 'medium',
     p1Type: 'human' | 'ai' = 'human',
@@ -68,7 +69,31 @@ export class GameManager {
     const id = crypto.randomUUID();
     const tokens = generateTokens();
 
-    const state = createGameState({ width: mapWidth, height: mapHeight, preset: mapPreset });
+    // Load saved map if mapId is provided
+    let state: GameState;
+    if (mapId) {
+            const { loadSavedMap } = await import('./routes/map.js');
+      const savedMap = await loadSavedMap(mapId);
+      if (savedMap) {
+                // Convert saved map cities to the format expected by createGameState
+        const cities = savedMap.cities.map(c => ({
+          x: c.x,
+          y: c.y,
+          owner: c.owner as PlayerId | undefined,
+        }));
+        state = createGameState({
+          width: savedMap.width,
+          height: savedMap.height,
+          preset: mapPreset,
+          tiles: savedMap.tiles,
+          cities,
+        });
+              } else {
+                state = createGameState({ width: mapWidth, height: mapHeight, preset: mapPreset });
+      }
+    } else {
+      state = createGameState({ width: mapWidth, height: mapHeight, preset: mapPreset });
+    }
     // Game starts in lobby phase until both players connect
     state.phase = GamePhase.Lobby;
 

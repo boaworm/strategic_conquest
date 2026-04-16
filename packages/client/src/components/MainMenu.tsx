@@ -37,13 +37,28 @@ function QuickstartGuide() {
   );
 }
 
-const WORLD_SIZES = [
+const PRESET_SIZES = [
   { label: 'Tiny', width: 30, height: 10 },
   { label: 'Small', width: 50, height: 20 },
   { label: 'Medium', width: 65, height: 25 },
   { label: 'Large', width: 80, height: 30 },
   { label: 'Extra Large', width: 120, height: 40 },
-] as const;
+];
+
+interface SavedMap {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+}
+
+interface MapOption {
+  label: string;
+  width: number;
+  height: number;
+  preset?: 'random' | 'world' | 'europe';
+  mapId?: string; // For saved maps
+}
 
 const AI_PLAYERS = [
   { label: 'Basic (Greedy)', value: 'basic', description: 'Aggressive expansion and combat' },
@@ -68,15 +83,15 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
   const [createdGame, setCreatedGame] = useState<CreateGameResponse | null>(null);
   const [localError, setLocalError] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
-  const [mainWorldSize, setMainWorldSize] = useState(2); // default: Medium
+  const [selectedMapIndex, setSelectedMapIndex] = useState(0);
   const [mapType, setMapType] = useState<'random' | 'world' | 'europe'>('random');
-  const [aiPlayer, setAiPlayer] = useState('basic'); // default: Basic
+  const [aiPlayer, setAiPlayer] = useState('basic');
   const [nnModels, setNnModels] = useState<NNModel[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [savedMaps, setSavedMaps] = useState<SavedMap[]>([]);
 
   const error = localError || storeError;
 
-  // Fetch available NN models on mount
   useEffect(() => {
     fetch('/api/nn-models')
       .then((r) => r.json())
@@ -87,24 +102,33 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
         }
       })
       .catch((err) => console.error('Failed to load NN models:', err));
+
+    fetch('/api/maps')
+      .then((r) => r.json())
+      .then((maps: SavedMap[]) => {
+        setSavedMaps(maps);
+      })
+      .catch((err) => console.error('Failed to load maps:', err));
   }, []);
 
-  // Reset connecting state if error occurs or if we finish connecting
+  const mapOptions: MapOption[] = [
+    ...PRESET_SIZES,
+    ...savedMaps.map(m => ({ label: `${m.name} - ${m.width}×${m.height}`, width: m.width, height: m.height, mapId: m.id })),
+  ];
+
   useEffect(() => {
     if (error || connected) {
       setIsConnecting(false);
     }
   }, [error, connected]);
 
-  // Preset maps only available for the 3 largest sizes (Medium, Large, XL)
-  const presetAvailable = mainWorldSize >= 2;
-  const effectivePreset = presetAvailable && mapType !== 'random' ? mapType : undefined;
-
   async function handleCreate() {
     try {
       setLocalError('');
-      const size = WORLD_SIZES[mainWorldSize];
-      const result = await createGame(size.width, size.height, effectivePreset, 'pvp');
+      const selected = mapOptions[selectedMapIndex];
+      const isPreset = PRESET_SIZES.some(p => p.label === selected.label);
+      const preset = isPreset && mapType !== 'random' ? mapType : undefined;
+      const result = await createGame(selected.width, selected.height, preset, 'pvp', 'human', 'human', 'basic', 'basic', undefined, undefined, selected.mapId);
       setCreatedGame(result);
       setMode('create');
     } catch {
@@ -115,25 +139,25 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
   async function handleCreateAI() {
     try {
       setLocalError('');
-      const size = WORLD_SIZES[mainWorldSize];
-      // Map AI player name to type and pass to server
+      const selected = mapOptions[selectedMapIndex];
+      const isPreset = PRESET_SIZES.some(p => p.label === selected.label);
+      const preset = isPreset && mapType !== 'random' ? mapType : undefined;
       const aiType = 'ai' as const;
       const aiKind = aiPlayer as 'basic' | 'gunair' | 'nn';
-      // Pass model ID if NN agent selected
       const modelId = aiKind === 'nn' ? selectedModel : undefined;
       const result = await createGame(
-        size.width,
-        size.height,
-        effectivePreset,
+        selected.width,
+        selected.height,
+        preset,
         'pve',
         'human',
         aiType,
         undefined,
         aiKind,
-        modelId, // p1ModelId
-        undefined, // p2ModelId
+        modelId,
+        undefined,
+        selected.mapId,
       );
-      // Automatically join as player 1 (AI joins automatically via server)
       console.log('Created AI game, joining as player 1...');
       joinGame(result.p1Token);
     } catch (e) {
@@ -228,57 +252,38 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
   }
 
   if (mode === 'ai-select') {
+    const selected = mapOptions[selectedMapIndex];
     return (
       <div className="max-w-lg mx-auto mt-20 bg-gray-800 text-white rounded-lg p-6 space-y-6">
         <h2 className="text-xl font-bold">Play vs AI</h2>
-        <p className="text-gray-300 text-sm">Select your AI opponent</p>
+        <p className="text-gray-300 text-sm">Select map and AI opponent</p>
         {error && <p className="text-red-400">{error}</p>}
 
         <div className="text-left space-y-2">
-          <label className="text-sm text-gray-300 block">World Size (selected)</label>
-          <div className="flex gap-2 justify-center flex-wrap">
-            {WORLD_SIZES.map((s, i) => (
-              <button
-                key={s.label}
-                className={`px-3 py-1.5 rounded text-sm ${i === mainWorldSize
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  }`}
-                onClick={() => setMainWorldSize(i)}
-              >
-                {s.label}
-                <span className="block text-xs text-gray-400">{s.width}×{s.height}</span>
-              </button>
+          <label className="text-sm text-gray-300 block">Map</label>
+          <select
+            className="w-full bg-gray-700 text-white px-3 py-2 rounded"
+            value={selectedMapIndex}
+            onChange={(e) => setSelectedMapIndex(Number(e.target.value))}
+          >
+            {mapOptions.map((m, i) => (
+              <option key={i} value={i}>{m.label}</option>
             ))}
-          </div>
-          <p className="text-xs text-gray-400 mt-1">Map: {WORLD_SIZES[mainWorldSize].width}×{WORLD_SIZES[mainWorldSize].height}</p>
-        </div>
-
-        {mainWorldSize >= 2 && (
-          <div className="text-left space-y-2">
-            <label className="text-sm text-gray-300 block">Map Type</label>
-            <div className="flex gap-2 justify-center flex-wrap">
+          </select>
+          {PRESET_SIZES.some(p => p.label === selected.label) && (
+            <div className="flex gap-2 mt-2 justify-center">
               {(['random', 'world', 'europe'] as const).map(t => (
                 <button
                   key={t}
-                  className={`px-3 py-1.5 rounded text-sm capitalize ${t === mapType
-                    ? 'bg-green-600 text-white'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    }`}
+                  className={`px-3 py-1.5 rounded text-sm capitalize ${t === mapType ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
                   onClick={() => setMapType(t)}
                 >
                   {t === 'random' ? 'Random' : t === 'world' ? 'World' : 'Europe'}
                 </button>
               ))}
             </div>
-            {mapType === 'europe' && (
-              <p className="text-xs text-gray-400 mt-1">Includes N. Africa &amp; Turkey. P1: London · P2: Moscow</p>
-            )}
-            {mapType === 'world' && (
-              <p className="text-xs text-gray-400 mt-1">Full globe. P1: Ottawa · P2: Beijing</p>
-            )}
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="text-left space-y-2">
           <label className="text-sm text-gray-300 block">AI Opponent</label>
@@ -286,10 +291,7 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
             {AI_PLAYERS.map((ai) => (
               <button
                 key={ai.value}
-                className={`px-4 py-2 rounded ${ai.value === aiPlayer
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  }`}
+                className={`px-4 py-2 rounded ${ai.value === aiPlayer ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
                 onClick={() => setAiPlayer(ai.value)}
               >
                 {ai.label}
@@ -299,7 +301,6 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
           <p className="text-xs text-gray-400 mt-1">{AI_PLAYERS.find(a => a.value === aiPlayer)?.description}</p>
         </div>
 
-        {/* NN Model Selection - shown only when NN agent selected */}
         {aiPlayer === 'nn' && (
           <div className="text-left space-y-2">
             <label className="text-sm text-gray-300 block">Model Version</label>
@@ -345,50 +346,30 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
       <QuickstartGuide />
       <div className="flex flex-col gap-3">
         <div className="text-left space-y-2">
-          <label className="text-sm text-gray-300 block">World Size</label>
-          <div className="flex gap-2 justify-center flex-wrap">
-            {WORLD_SIZES.map((s, i) => (
-              <button
-                key={s.label}
-                className={`px-3 py-1.5 rounded text-sm ${i === mainWorldSize
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  }`}
-                onClick={() => setMainWorldSize(i)}
-              >
-                {s.label}
-                <span className="block text-xs text-gray-400">{s.width}×{s.height}</span>
-              </button>
+          <label className="text-sm text-gray-300 block">Map</label>
+          <select
+            className="w-full bg-gray-700 text-white px-3 py-2 rounded"
+            value={selectedMapIndex}
+            onChange={(e) => setSelectedMapIndex(Number(e.target.value))}
+          >
+            {mapOptions.map((m, i) => (
+              <option key={i} value={i}>{m.label}</option>
             ))}
-          </div>
-          <p className="text-xs text-gray-400 mt-1">Selected: {WORLD_SIZES[mainWorldSize].width}×{WORLD_SIZES[mainWorldSize].height}</p>
-        </div>
-
-        {mainWorldSize >= 2 && (
-          <div className="text-left space-y-2">
-            <label className="text-sm text-gray-300 block">Map Type</label>
-            <div className="flex gap-2 justify-center flex-wrap">
+          </select>
+          {PRESET_SIZES.some(p => p.label === mapOptions[selectedMapIndex].label) && (
+            <div className="flex gap-2 mt-2 justify-center">
               {(['random', 'world', 'europe'] as const).map(t => (
                 <button
                   key={t}
-                  className={`px-3 py-1.5 rounded text-sm capitalize ${t === mapType
-                    ? 'bg-green-600 text-white'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    }`}
+                  className={`px-3 py-1.5 rounded text-sm capitalize ${t === mapType ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
                   onClick={() => setMapType(t)}
                 >
                   {t === 'random' ? 'Random' : t === 'world' ? 'World' : 'Europe'}
                 </button>
               ))}
             </div>
-            {mapType === 'europe' && (
-              <p className="text-xs text-gray-400 mt-1">Includes N. Africa &amp; Turkey. P1: London · P2: Moscow</p>
-            )}
-            {mapType === 'world' && (
-              <p className="text-xs text-gray-400 mt-1">Full globe. P1: Ottawa · P2: Beijing</p>
-            )}
-          </div>
-        )}
+          )}
+        </div>
         <button
           className="px-6 py-3 bg-blue-700 rounded-lg text-lg hover:bg-blue-600"
           onClick={handleCreate}
@@ -418,16 +399,10 @@ export function MainMenu({ onViewReplay }: { onViewReplay?: () => void }) {
           </button>
         )}
         <a
-          href="/?map=world"
-          className="px-6 py-3 bg-orange-700 rounded-lg text-lg hover:bg-orange-600 text-center"
+          href="/?editor=true"
+          className="inline-block px-6 py-3 bg-orange-700 rounded-lg text-lg hover:bg-orange-600 text-center text-white no-underline"
         >
-          View World Map
-        </a>
-        <a
-          href="/?map=europe"
-          className="px-6 py-3 bg-orange-600 rounded-lg text-lg hover:bg-orange-500 text-center"
-        >
-          View Europe Map
+          Map Editor
         </a>
       </div>
     </div>

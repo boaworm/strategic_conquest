@@ -15,6 +15,7 @@ import { GameManager } from './gameManager.js';
 import { createGameRoutes } from './routes/game.js';
 import { createTrainingRoutes } from './routes/training.js';
 import { createReplayRoutes } from './routes/replay.js';
+import { createMapRoutes } from './routes/map.js';
 
 // ── Parse CLI args ────────────────────────────────────────────
 
@@ -95,6 +96,7 @@ manager.io = io;
 app.use('/api', createGameRoutes(manager));
 app.use('/api', createTrainingRoutes(manager));
 app.use('/api', createReplayRoutes());
+app.use('/api', createMapRoutes());
 
 // Health check
 app.get('/health', (_req, res) => {

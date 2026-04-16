@@ -24,9 +24,10 @@ export default function App() {
     ? view?.myCities.find((c) => c.id === cityDialogId) ?? null
     : null;
 
-  // Map viewer (no fog of war) - ?map=world or ?map=europe
+  // Map viewer/editor - ?map=world, ?map=europe, or ?editor=true
   const mapParam = new URLSearchParams(window.location.search).get('map');
-  if (mapParam === 'world' || mapParam === 'europe') {
+  const editorParam = new URLSearchParams(window.location.search).get('editor');
+  if (mapParam === 'world' || mapParam === 'europe' || editorParam === 'true') {
     return <MapView />;
   }
 

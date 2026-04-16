@@ -43,6 +43,8 @@ export interface MapOptions {
   landRatio?: number;    // 0-1, default 0.35
   cityCount?: number;    // total neutral cities, default ~15
   preset?: 'world' | 'europe'; // fixed geography preset (ignores seed/landRatio/cityCount)
+  tiles?: Terrain[][]; // custom tiles (for loaded saved maps)
+  cities?: Array<{ x: number; y: number; owner?: PlayerId }>; // custom cities (for loaded saved maps)
 }
 
 /**
@@ -370,6 +372,137 @@ export function generateMap(opts: MapOptions): {
  */
 export function createGameState(opts: MapOptions): GameState {
   resetIdCounter();
+
+  // Use custom tiles/cities if provided (for loaded saved maps)
+  if (opts.tiles && opts.cities) {
+        const width = opts.width;
+    const playableHeight = opts.tiles.length;
+
+    // Saved maps have only playable area (no ice caps). Add ice cap rows.
+    const tiles: Terrain[][] = [];
+    // Top ice cap (all ice = impassable, use Ocean as placeholder)
+    const iceCap: Terrain[] = new Array(width).fill(Terrain.Ocean);
+    tiles.push([...iceCap]);
+    // Playable area from saved map
+    for (const row of opts.tiles) {
+      tiles.push([...row]);
+    }
+    // Bottom ice cap
+    tiles.push([...iceCap]);
+
+    const totalHeight = tiles.length;
+
+    // Adjust city coordinates: add 1 to y to account for top ice cap
+    const cities: City[] = opts.cities.map(c => ({
+      id: genId('city'),
+      x: c.x,
+      y: c.y + 1,
+      owner: c.owner ?? null,
+      producing: null,
+      productionTurnsLeft: 0,
+      productionProgress: 0,
+    }));
+
+    // Create starting units and assign starting cities
+    const units: Unit[] = [];
+    let player1Cities = cities.filter(c => c.owner === 'player1');
+    let player2Cities = cities.filter(c => c.owner === 'player2');
+
+    // If no starting cities assigned, pick two distant neutral cities
+    if (player1Cities.length === 0 || player2Cities.length === 0) {
+      const neutralCities = cities.filter(c => c.owner === null);
+      if (neutralCities.length >= 2) {
+        // Find two cities far enough apart
+        let bestIdx1 = 0;
+        let bestIdx2 = 1;
+        let bestDist = 0;
+        for (let i = 0; i < neutralCities.length; i++) {
+          for (let j = i + 1; j < neutralCities.length; j++) {
+            const dx = Math.abs(neutralCities[i].x - neutralCities[j].x);
+            const dy = Math.abs(neutralCities[i].y - neutralCities[j].y);
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > bestDist) {
+              bestDist = dist;
+              bestIdx1 = i;
+              bestIdx2 = j;
+            }
+          }
+        }
+        // Assign starting cities (find and update by coordinates)
+        const c1 = neutralCities[bestIdx1];
+        const c2 = neutralCities[bestIdx2];
+        for (const city of cities) {
+          if (city.x === c1.x && city.y === c1.y) {
+            city.owner = 'player1';
+          } else if (city.x === c2.x && city.y === c2.y) {
+            city.owner = 'player2';
+          }
+        }
+        player1Cities = cities.filter(c => c.owner === 'player1');
+        player2Cities = cities.filter(c => c.owner === 'player2');
+      }
+    }
+
+    // Create starting army units
+    if (player1Cities.length > 0) {
+      const city = player1Cities[0];
+      units.push({
+        id: genId('unit'),
+        type: UnitType.Army,
+        owner: 'player1',
+        x: city.x,
+        y: city.y,
+        health: 1,
+        movesLeft: 1,
+        sleeping: false,
+        hasAttacked: false,
+        cargo: [],
+        carriedBy: null,
+      });
+    }
+    if (player2Cities.length > 0) {
+      const city = player2Cities[0];
+      units.push({
+        id: genId('unit'),
+        type: UnitType.Army,
+        owner: 'player2',
+        x: city.x,
+        y: city.y,
+        health: 1,
+        movesLeft: 1,
+        sleeping: false,
+        hasAttacked: false,
+        cargo: [],
+        carriedBy: null,
+      });
+    }
+
+    const result: GameState = {
+      mapWidth: width,
+      mapHeight: totalHeight,
+      tiles,
+      cities,
+      units,
+      currentPlayer: 'player1' as PlayerId,
+      turn: 1,
+      phase: GamePhase.Active,
+      winner: null,
+      explored: {
+        player1: new Set<string>(),
+        player2: new Set<string>(),
+      },
+      bombersProduced: {
+        player1: 0,
+        player2: 0,
+      },
+      seenEnemies: {
+        player1: [],
+        player2: [],
+      },
+    };
+    return result;
+  }
+
   const { tiles, cities, units, totalHeight } = generateMap(opts);
   return {
     mapWidth: opts.width,

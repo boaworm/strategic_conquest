@@ -44,6 +44,7 @@ interface GameStore {
     p2AI?: 'basic' | 'gunair' | 'nn',
     p1ModelId?: string,
     p2ModelId?: string,
+    mapId?: string,
   ) => Promise<CreateGameResponse>;
   joinGame: (token: string) => void;
   sendAction: (action: GameAction) => void;
@@ -110,13 +111,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
     p2AI?: 'basic' | 'gunair' | 'nn',
     p1ModelId?: string,
     p2ModelId?: string,
+    mapId?: string,
   ) => {
-    const body: Record<string, number | string> = {};
+    const body: Record<string, number | string | undefined> = {};
     if (mapWidth) body.mapWidth = mapWidth;
     if (mapHeight) body.mapHeight = mapHeight;
     if (mapPreset) body.mapPreset = mapPreset;
+    if (mapId) body.mapId = mapId;
     body.mode = mode;
-    if (p1Type) body.p1Type = p1Type;
+        if (p1Type) body.p1Type = p1Type;
     if (p2Type) body.p2Type = p2Type;
     if (p1AI) body.p1AI = p1AI;
     if (p2AI) body.p2AI = p2AI;

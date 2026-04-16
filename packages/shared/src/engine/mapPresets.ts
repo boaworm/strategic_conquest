@@ -10,8 +10,6 @@ type LandRegion =
 interface CityDef {
   nx: number;
   ny: number;
-  name: string;
-  startPlayer?: 'player1' | 'player2';
 }
 
 function rasterize(regions: LandRegion[], width: number, height: number): boolean[][] {
@@ -41,14 +39,11 @@ function snapCities(
   land: boolean[][],
   width: number,
   height: number,
-): Array<{ x: number; y: number; startPlayer?: PlayerId }> {
+): Array<{ x: number; y: number }> {
   const MIN_DIST = 3;
-  const result: Array<{ x: number; y: number; startPlayer?: PlayerId }> = [];
+  const result: Array<{ x: number; y: number }> = [];
 
-  // Process start-player cities first so they get guaranteed placement
-  const sorted = [...defs].sort((a, b) => (b.startPlayer ? 1 : 0) - (a.startPlayer ? 1 : 0));
-
-  for (const def of sorted) {
+  for (const def of defs) {
     const tx = Math.min(width - 1, Math.max(0, Math.round(def.nx * width - 0.5)));
     const ty = Math.min(height - 1, Math.max(0, Math.round(def.ny * height - 0.5)));
 
@@ -70,9 +65,9 @@ function snapCities(
       const ddx = Math.min(Math.abs(c.x - bestX), width - Math.abs(c.x - bestX));
       return Math.max(ddx, Math.abs(c.y - bestY)) < MIN_DIST;
     });
-    if (tooClose && !def.startPlayer) continue;
+    if (tooClose) continue;
 
-    result.push({ x: bestX, y: bestY, startPlayer: def.startPlayer as PlayerId | undefined });
+    result.push({ x: bestX, y: bestY });
   }
   return result;
 }
@@ -102,31 +97,80 @@ function buildMap(
 
   const placed = snapCities(cityDefs, land, width, height);
 
-  const cities: City[] = placed.map(p => ({
-    id: genId('city'),
-    x: p.x,
-    y: p.y + 1, // +1 for ice cap row
-    owner: p.startPlayer ?? null,
-    producing: p.startPlayer ? UnitType.Army : null,
-    productionTurnsLeft: p.startPlayer ? 3 : 0,
-    productionProgress: 0,
-  }));
-
-  const p1City = cities.find(c => c.owner === 'player1');
-  const p2City = cities.find(c => c.owner === 'player2');
-  if (!p1City || !p2City) {
-    throw new Error(`Preset map failed to place player starting cities (p1=${!!p1City}, p2=${!!p2City})`);
+  // Pick two random distant cities as starting positions
+  const landTiles: Array<{x: number; y: number}> = [];
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 0; x < width; x++) {
+      if (land[y][x]) landTiles.push({x, y});
+    }
   }
+
+  let p1City: {x: number; y: number} | null = null;
+  let p2City: {x: number; y: number} | null = null;
+
+  if (landTiles.length >= 2) {
+    const attempts = 1000;
+    for (let i = 0; i < attempts; i++) {
+      const idx1 = Math.floor(Math.random() * landTiles.length);
+      let idx2 = Math.floor(Math.random() * landTiles.length);
+      while (idx2 === idx1) idx2 = Math.floor(Math.random() * landTiles.length);
+
+      const c1 = landTiles[idx1];
+      const c2 = landTiles[idx2];
+
+      const ddx = Math.min(Math.abs(c1.x - c2.x), width - Math.abs(c1.x - c2.x));
+      const ddy = Math.abs(c1.y - c2.y);
+      if (Math.max(ddx, ddy) >= 8) {
+        p1City = c1;
+        p2City = c2;
+        break;
+      }
+    }
+    // Fallback: just pick first two distant enough
+    if (!p1City) {
+      for (let i = 0; i < landTiles.length && !p1City; i++) {
+        for (let j = i + 1; j < landTiles.length; j++) {
+          const c1 = landTiles[i];
+          const c2 = landTiles[j];
+          const ddx = Math.min(Math.abs(c1.x - c2.x), width - Math.abs(c1.x - c2.x));
+          const ddy = Math.abs(c1.y - c2.y);
+          if (Math.max(ddx, ddy) >= 5) {
+            p1City = c1;
+            p2City = c2;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  if (!p1City || !p2City) {
+    throw new Error('Failed to find two suitable starting positions');
+  }
+
+  const cities: City[] = placed.map(p => {
+    const isP1 = p.x === p1City!.x && p.y === p1City!.y;
+    const isP2 = p.x === p2City!.x && p.y === p2City!.y;
+    return {
+      id: genId('city'),
+      x: p.x,
+      y: p.y + 1,
+      owner: isP1 ? 'player1' : isP2 ? 'player2' : null,
+      producing: (isP1 || isP2) ? UnitType.Army : null,
+      productionTurnsLeft: (isP1 || isP2) ? 3 : 0,
+      productionProgress: 0,
+    };
+  });
 
   const units: Unit[] = [
     {
       id: genId('unit'), type: UnitType.Army, owner: 'player1' as PlayerId,
-      x: p1City.x, y: p1City.y, health: 1, movesLeft: 1,
+      x: p1City.x, y: p1City.y + 1, health: 1, movesLeft: 1,
       sleeping: false, hasAttacked: false, cargo: [], carriedBy: null,
     },
     {
       id: genId('unit'), type: UnitType.Army, owner: 'player2' as PlayerId,
-      x: p2City.x, y: p2City.y, health: 1, movesLeft: 1,
+      x: p2City.x, y: p2City.y + 1, health: 1, movesLeft: 1,
       sleeping: false, hasAttacked: false, cargo: [], carriedBy: null,
     },
   ];
@@ -276,47 +320,47 @@ const W: LandRegion[] = [
 // World capitals. Player 1 = Ottawa (N. America), Player 2 = Beijing (Asia).
 // nx = (lon_east + 180) / 360,  ny = (80 - lat) / 160
 const WC: CityDef[] = [
-  { nx: 0.290, ny: 0.216, name: 'Ottawa',        startPlayer: 'player1' },
-  { nx: 0.823, ny: 0.251, name: 'Beijing',        startPlayer: 'player2' },
+  { nx: 0.290, ny: 0.216 },
+  { nx: 0.823, ny: 0.251 },
   // Americas
-  { nx: 0.286, ny: 0.257, name: 'Washington DC' },
-  { nx: 0.180, ny: 0.365, name: 'Los Angeles' },
-  { nx: 0.224, ny: 0.379, name: 'Mexico City' },
-  { nx: 0.297, ny: 0.434, name: 'Caracas' },
-  { nx: 0.294, ny: 0.472, name: 'Bogota' },
-  { nx: 0.286, ny: 0.575, name: 'Lima' },
-  { nx: 0.367, ny: 0.599, name: 'Brasilia' },
-  { nx: 0.337, ny: 0.716, name: 'Buenos Aires' },
-  { nx: 0.304, ny: 0.709, name: 'Santiago' },
+  { nx: 0.286, ny: 0.257 },
+  { nx: 0.180, ny: 0.365 },
+  { nx: 0.224, ny: 0.379 },
+  { nx: 0.297, ny: 0.434 },
+  { nx: 0.294, ny: 0.472 },
+  { nx: 0.286, ny: 0.575 },
+  { nx: 0.367, ny: 0.599 },
+  { nx: 0.337, ny: 0.716 },
+  { nx: 0.304, ny: 0.709 },
   // Europe
-  { nx: 0.500, ny: 0.178, name: 'London' },
-  { nx: 0.506, ny: 0.194, name: 'Paris' },
-  { nx: 0.537, ny: 0.172, name: 'Berlin' },
-  { nx: 0.535, ny: 0.238, name: 'Rome' },
-  { nx: 0.490, ny: 0.248, name: 'Madrid' },
-  { nx: 0.558, ny: 0.174, name: 'Warsaw' },
-  { nx: 0.585, ny: 0.184, name: 'Kyiv' },
+  { nx: 0.500, ny: 0.178 },
+  { nx: 0.506, ny: 0.194 },
+  { nx: 0.537, ny: 0.172 },
+  { nx: 0.535, ny: 0.238 },
+  { nx: 0.490, ny: 0.248 },
+  { nx: 0.558, ny: 0.174 },
+  { nx: 0.585, ny: 0.184 },
   // Russia
-  { nx: 0.604, ny: 0.151, name: 'Moscow' },
+  { nx: 0.604, ny: 0.151 },
   // Middle East + Africa
-  { nx: 0.592, ny: 0.251, name: 'Ankara' },
-  { nx: 0.587, ny: 0.312, name: 'Cairo' },
-  { nx: 0.629, ny: 0.346, name: 'Riyadh' },
-  { nx: 0.509, ny: 0.459, name: 'Lagos' },
-  { nx: 0.607, ny: 0.444, name: 'Addis Ababa' },
-  { nx: 0.602, ny: 0.508, name: 'Nairobi' },
-  { nx: 0.543, ny: 0.527, name: 'Kinshasa' },
-  { nx: 0.551, ny: 0.712, name: 'Cape Town' },
+  { nx: 0.592, ny: 0.251 },
+  { nx: 0.587, ny: 0.312 },
+  { nx: 0.629, ny: 0.346 },
+  { nx: 0.509, ny: 0.459 },
+  { nx: 0.607, ny: 0.444 },
+  { nx: 0.602, ny: 0.508 },
+  { nx: 0.543, ny: 0.527 },
+  { nx: 0.551, ny: 0.712 },
   // Asia
-  { nx: 0.643, ny: 0.277, name: 'Tehran' },
-  { nx: 0.703, ny: 0.289, name: 'Islamabad' },
-  { nx: 0.714, ny: 0.322, name: 'Delhi' },
-  { nx: 0.779, ny: 0.414, name: 'Bangkok' },
-  { nx: 0.797, ny: 0.539, name: 'Jakarta' },
-  { nx: 0.852, ny: 0.265, name: 'Seoul' },
-  { nx: 0.888, ny: 0.278, name: 'Tokyo' },
+  { nx: 0.643, ny: 0.277 },
+  { nx: 0.703, ny: 0.289 },
+  { nx: 0.714, ny: 0.322 },
+  { nx: 0.779, ny: 0.414 },
+  { nx: 0.797, ny: 0.539 },
+  { nx: 0.852, ny: 0.265 },
+  { nx: 0.888, ny: 0.278 },
   // Australia
-  { nx: 0.914, ny: 0.722, name: 'Canberra' },
+  { nx: 0.914, ny: 0.722 },
 ];
 
 // ── EUROPE MAP ───────────────────────────────────────────────────────────────
@@ -382,52 +426,52 @@ const E: LandRegion[] = [
   { type: 'rect', x1: 0.727, y1: 0.779, x2: 0.893, y2: 1.000 },
 ];
 
-// Europe capitals. Player 1 = London, Player 2 = Moscow.
+// Europe cities. Player 1 = London, Player 2 = Moscow.
 // nx = (lon_east + 30) / 75,  ny = (72 - lat) / 52
 const EC: CityDef[] = [
-  { nx: 0.399, ny: 0.394, name: 'London',         startPlayer: 'player1' },
-  { nx: 0.901, ny: 0.312, name: 'Moscow',          startPlayer: 'player2' },
+  { nx: 0.399, ny: 0.394 },
+  { nx: 0.901, ny: 0.312 },
   // Western Europe
-  { nx: 0.107, ny: 0.154, name: 'Reykjavik' },
-  { nx: 0.316, ny: 0.360, name: 'Dublin' },
-  { nx: 0.279, ny: 0.640, name: 'Lisbon' },
-  { nx: 0.351, ny: 0.608, name: 'Madrid' },
-  { nx: 0.431, ny: 0.444, name: 'Paris' },
-  { nx: 0.459, ny: 0.408, name: 'Brussels' },
-  { nx: 0.465, ny: 0.377, name: 'Amsterdam' },
-  { nx: 0.499, ny: 0.483, name: 'Bern' },
+  { nx: 0.107, ny: 0.154 },
+  { nx: 0.316, ny: 0.360 },
+  { nx: 0.279, ny: 0.640 },
+  { nx: 0.351, ny: 0.608 },
+  { nx: 0.431, ny: 0.444 },
+  { nx: 0.459, ny: 0.408 },
+  { nx: 0.465, ny: 0.377 },
+  { nx: 0.499, ny: 0.483 },
   // Central Europe
-  { nx: 0.579, ny: 0.375, name: 'Berlin' },
-  { nx: 0.568, ny: 0.313, name: 'Copenhagen' },
-  { nx: 0.543, ny: 0.233, name: 'Oslo' },
-  { nx: 0.641, ny: 0.244, name: 'Stockholm' },
-  { nx: 0.733, ny: 0.227, name: 'Helsinki' },
-  { nx: 0.680, ny: 0.381, name: 'Warsaw' },
-  { nx: 0.592, ny: 0.421, name: 'Prague' },
-  { nx: 0.619, ny: 0.458, name: 'Vienna' },
-  { nx: 0.655, ny: 0.471, name: 'Budapest' },
+  { nx: 0.579, ny: 0.375 },
+  { nx: 0.568, ny: 0.313 },
+  { nx: 0.543, ny: 0.233 },
+  { nx: 0.641, ny: 0.244 },
+  { nx: 0.733, ny: 0.227 },
+  { nx: 0.680, ny: 0.381 },
+  { nx: 0.592, ny: 0.421 },
+  { nx: 0.619, ny: 0.458 },
+  { nx: 0.655, ny: 0.471 },
   // Southern Europe
-  { nx: 0.567, ny: 0.579, name: 'Rome' },
-  { nx: 0.673, ny: 0.523, name: 'Belgrade' },
-  { nx: 0.711, ny: 0.563, name: 'Sofia' },
-  { nx: 0.748, ny: 0.523, name: 'Bucharest' },
-  { nx: 0.716, ny: 0.654, name: 'Athens' },
+  { nx: 0.567, ny: 0.579 },
+  { nx: 0.673, ny: 0.523 },
+  { nx: 0.711, ny: 0.563 },
+  { nx: 0.748, ny: 0.523 },
+  { nx: 0.716, ny: 0.654 },
   // Turkey
-  { nx: 0.787, ny: 0.596, name: 'Istanbul' },
-  { nx: 0.839, ny: 0.617, name: 'Ankara' },
+  { nx: 0.787, ny: 0.596 },
+  { nx: 0.839, ny: 0.617 },
   // Eastern Europe
-  { nx: 0.768, ny: 0.348, name: 'Minsk' },
-  { nx: 0.807, ny: 0.413, name: 'Kyiv' },
-  { nx: 0.737, ny: 0.333, name: 'Vilnius' },
-  { nx: 0.721, ny: 0.290, name: 'Riga' },
-  { nx: 0.730, ny: 0.242, name: 'Tallinn' },
-  { nx: 0.804, ny: 0.233, name: 'St. Petersburg' },
+  { nx: 0.768, ny: 0.348 },
+  { nx: 0.807, ny: 0.413 },
+  { nx: 0.737, ny: 0.333 },
+  { nx: 0.721, ny: 0.290 },
+  { nx: 0.730, ny: 0.242 },
+  { nx: 0.804, ny: 0.233 },
   // North Africa
-  { nx: 0.309, ny: 0.731, name: 'Rabat' },
-  { nx: 0.441, ny: 0.679, name: 'Algiers' },
-  { nx: 0.536, ny: 0.677, name: 'Tunis' },
-  { nx: 0.577, ny: 0.752, name: 'Tripoli' },
-  { nx: 0.816, ny: 0.806, name: 'Cairo' },
+  { nx: 0.309, ny: 0.731 },
+  { nx: 0.441, ny: 0.679 },
+  { nx: 0.536, ny: 0.677 },
+  { nx: 0.577, ny: 0.752 },
+  { nx: 0.816, ny: 0.806 },
 ];
 
 /**
@@ -464,36 +508,72 @@ function buildWorldMapFromGrid(width: number, height: number, genId: GenIdFn): P
   // Convert tiles to land mask for city snapping
   const landMask = tiles.map((row, y) => y === 0 || y === totalHeight - 1 ? row.map(() => false) : row.map(t => t === Terrain.Land));
 
-  // Place cities based on player starting positions
-  // P1: North America (Ottawa area), P2: Asia (Beijing area)
+  // Place cities
   const cityDefs: CityDef[] = WC;
   const placed = snapCities(cityDefs, landMask, width, height);
+
+  // Pick two random distant cities as starting positions
+  let p1City: {x: number; y: number} | null = null;
+  let p2City: {x: number; y: number} | null = null;
+
+  if (placed.length >= 2) {
+    const attempts = 1000;
+    for (let i = 0; i < attempts; i++) {
+      const idx1 = Math.floor(Math.random() * placed.length);
+      let idx2 = Math.floor(Math.random() * placed.length);
+      while (idx2 === idx1) idx2 = Math.floor(Math.random() * placed.length);
+
+      const c1 = placed[idx1];
+      const c2 = placed[idx2];
+
+      const ddx = Math.min(Math.abs(c1.x - c2.x), width - Math.abs(c1.x - c2.x));
+      const ddy = Math.abs(c1.y - c2.y);
+      if (Math.max(ddx, ddy) >= 8) {
+        p1City = c1;
+        p2City = c2;
+        break;
+      }
+    }
+    if (!p1City) {
+      for (let i = 0; i < placed.length && !p1City; i++) {
+        for (let j = i + 1; j < placed.length; j++) {
+          const c1 = placed[i];
+          const c2 = placed[j];
+          const ddx = Math.min(Math.abs(c1.x - c2.x), width - Math.abs(c1.x - c2.x));
+          const ddy = Math.abs(c1.y - c2.y);
+          if (Math.max(ddx, ddy) >= 5) {
+            p1City = c1;
+            p2City = c2;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  if (!p1City || !p2City) {
+    throw new Error('Failed to find two suitable starting positions');
+  }
 
   const cities: City[] = placed.map(p => ({
     id: genId('city'),
     x: p.x,
-    y: p.y + 1, // +1 for ice cap row
-    owner: p.startPlayer ?? null,
-    producing: p.startPlayer ? UnitType.Army : null,
-    productionTurnsLeft: p.startPlayer ? 3 : 0,
+    y: p.y + 1,
+    owner: (p.x === p1City.x && p.y === p1City.y) ? 'player1' : (p.x === p2City.x && p.y === p2City.y) ? 'player2' : null,
+    producing: ((p.x === p1City.x && p.y === p1City.y) || (p.x === p2City.x && p.y === p2City.y)) ? UnitType.Army : null,
+    productionTurnsLeft: ((p.x === p1City.x && p.y === p1City.y) || (p.x === p2City.x && p.y === p2City.y)) ? 3 : 0,
     productionProgress: 0,
   }));
-
-  const p1City = cities.find(c => c.owner === 'player1');
-  const p2City = cities.find(c => c.owner === 'player2');
-  if (!p1City || !p2City) {
-    throw new Error(`World map failed to place player starting cities (p1=${!!p1City}, p2=${!!p2City})`);
-  }
 
   const units: Unit[] = [
     {
       id: genId('unit'), type: UnitType.Army, owner: 'player1' as PlayerId,
-      x: p1City.x, y: p1City.y, health: 1, movesLeft: 1,
+      x: p1City.x, y: p1City.y + 1, health: 1, movesLeft: 1,
       sleeping: false, hasAttacked: false, cargo: [], carriedBy: null,
     },
     {
       id: genId('unit'), type: UnitType.Army, owner: 'player2' as PlayerId,
-      x: p2City.x, y: p2City.y, health: 1, movesLeft: 1,
+      x: p2City.x, y: p2City.y + 1, health: 1, movesLeft: 1,
       sleeping: false, hasAttacked: false, cargo: [], carriedBy: null,
     },
   ];
@@ -538,36 +618,72 @@ function buildEuropeMapFromGrid(width: number, height: number, genId: GenIdFn): 
   // Convert tiles to land mask for city snapping
   const landMask = tiles.map((row, y) => y === 0 || y === totalHeight - 1 ? row.map(() => false) : row.map(t => t === Terrain.Land));
 
-  // Place cities based on player starting positions
-  // P1 = London (Western Europe), P2 = Moscow (Eastern Europe)
+  // Place cities
   const cityDefs: CityDef[] = EC;
   const placed = snapCities(cityDefs, landMask, width, height);
+
+  // Pick two random distant cities as starting positions
+  let p1City: {x: number; y: number} | null = null;
+  let p2City: {x: number; y: number} | null = null;
+
+  if (placed.length >= 2) {
+    const attempts = 1000;
+    for (let i = 0; i < attempts; i++) {
+      const idx1 = Math.floor(Math.random() * placed.length);
+      let idx2 = Math.floor(Math.random() * placed.length);
+      while (idx2 === idx1) idx2 = Math.floor(Math.random() * placed.length);
+
+      const c1 = placed[idx1];
+      const c2 = placed[idx2];
+
+      const ddx = Math.min(Math.abs(c1.x - c2.x), width - Math.abs(c1.x - c2.x));
+      const ddy = Math.abs(c1.y - c2.y);
+      if (Math.max(ddx, ddy) >= 8) {
+        p1City = c1;
+        p2City = c2;
+        break;
+      }
+    }
+    if (!p1City) {
+      for (let i = 0; i < placed.length && !p1City; i++) {
+        for (let j = i + 1; j < placed.length; j++) {
+          const c1 = placed[i];
+          const c2 = placed[j];
+          const ddx = Math.min(Math.abs(c1.x - c2.x), width - Math.abs(c1.x - c2.x));
+          const ddy = Math.abs(c1.y - c2.y);
+          if (Math.max(ddx, ddy) >= 5) {
+            p1City = c1;
+            p2City = c2;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  if (!p1City || !p2City) {
+    throw new Error('Failed to find two suitable starting positions');
+  }
 
   const cities: City[] = placed.map(p => ({
     id: genId('city'),
     x: p.x,
-    y: p.y + 1, // +1 for ice cap row
-    owner: p.startPlayer ?? null,
-    producing: p.startPlayer ? UnitType.Army : null,
-    productionTurnsLeft: p.startPlayer ? 3 : 0,
+    y: p.y + 1,
+    owner: (p.x === p1City.x && p.y === p1City.y) ? 'player1' : (p.x === p2City.x && p.y === p2City.y) ? 'player2' : null,
+    producing: ((p.x === p1City.x && p.y === p1City.y) || (p.x === p2City.x && p.y === p2City.y)) ? UnitType.Army : null,
+    productionTurnsLeft: ((p.x === p1City.x && p.y === p1City.y) || (p.x === p2City.x && p.y === p2City.y)) ? 3 : 0,
     productionProgress: 0,
   }));
-
-  const p1City = cities.find(c => c.owner === 'player1');
-  const p2City = cities.find(c => c.owner === 'player2');
-  if (!p1City || !p2City) {
-    throw new Error(`Europe map failed to place player starting cities (p1=${!!p1City}, p2=${!!p2City})`);
-  }
 
   const units: Unit[] = [
     {
       id: genId('unit'), type: UnitType.Army, owner: 'player1' as PlayerId,
-      x: p1City.x, y: p1City.y, health: 1, movesLeft: 1,
+      x: p1City.x, y: p1City.y + 1, health: 1, movesLeft: 1,
       sleeping: false, hasAttacked: false, cargo: [], carriedBy: null,
     },
     {
       id: genId('unit'), type: UnitType.Army, owner: 'player2' as PlayerId,
-      x: p2City.x, y: p2City.y, health: 1, movesLeft: 1,
+      x: p2City.x, y: p2City.y + 1, health: 1, movesLeft: 1,
       sleeping: false, hasAttacked: false, cargo: [], carriedBy: null,
     },
   ];
