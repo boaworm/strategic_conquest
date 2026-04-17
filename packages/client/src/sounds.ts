@@ -423,7 +423,7 @@ export function playMoveSound(unitType: UnitType): void {
     case UnitType.Fighter:
       playFighterMove();
       break;
-    case UnitType.Bomber:
+    case UnitType.Missile:
       playBomberMove();
       break;
     default: // Transport, Destroyer, Submarine, Carrier, Battleship
@@ -474,7 +474,7 @@ export function playCrashSound(): void {
 
 export function playAttackSound(unitType: UnitType): void {
   switch (unitType) {
-    case UnitType.Bomber:
+    case UnitType.Missile:
       playBomberAttack();
       break;
     case UnitType.Fighter:

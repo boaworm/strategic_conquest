@@ -52,7 +52,7 @@ export function advanceProduction(
       state.units.push(unit);
 
       // Track bomber production for blast radius upgrades
-      if (city.producing === UnitType.Bomber) {
+      if (city.producing === UnitType.Missile) {
         const pid = playerId as 'player1' | 'player2';
         state.bombersProduced[pid] = (state.bombersProduced[pid] ?? 0) + 1;
       }

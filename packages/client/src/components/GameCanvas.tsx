@@ -237,31 +237,23 @@ function drawUnitShape(
       ctx.fill();
       break;
     }
-    case UnitType.Bomber: {
-      // Top-down heavy bomber: wide straight wings, fat fuselage, twin tail
+    case UnitType.Missile: {
+      // Top-down missile: sharp nose, narrow body, swept delta wings, small tail fins
       ctx.beginPath();
-      // Nose (rounded)
-      ctx.moveTo(cx - r * 0.2, cy - r * 0.7);
-      ctx.quadraticCurveTo(cx, cy - r, cx + r * 0.2, cy - r * 0.7);
-      // Right fuselage to wing
-      ctx.lineTo(cx + r * 0.2, cy - r * 0.15);
-      ctx.lineTo(cx + r * 1.1, cy - r * 0.05);  // right wingtip
-      ctx.lineTo(cx + r * 1.1, cy + r * 0.2);
-      ctx.lineTo(cx + r * 0.2, cy + r * 0.15);
-      // Right tail
-      ctx.lineTo(cx + r * 0.2, cy + r * 0.6);
-      ctx.lineTo(cx + r * 0.5, cy + r);
-      ctx.lineTo(cx + r * 0.35, cy + r);
-      ctx.lineTo(cx, cy + r * 0.75);
-      // Left tail (mirror)
-      ctx.lineTo(cx - r * 0.35, cy + r);
-      ctx.lineTo(cx - r * 0.5, cy + r);
-      ctx.lineTo(cx - r * 0.2, cy + r * 0.6);
-      // Left wing
-      ctx.lineTo(cx - r * 0.2, cy + r * 0.15);
-      ctx.lineTo(cx - r * 1.1, cy + r * 0.2);
-      ctx.lineTo(cx - r * 1.1, cy - r * 0.05);
-      ctx.lineTo(cx - r * 0.2, cy - r * 0.15);
+      ctx.moveTo(cx, cy - r);                      // nose tip
+      ctx.lineTo(cx + r * 0.12, cy - r * 0.65);   // right nose edge
+      ctx.lineTo(cx + r * 0.12, cy - r * 0.15);   // right body above wing
+      ctx.lineTo(cx + r * 0.8, cy + r * 0.3);     // right wingtip
+      ctx.lineTo(cx + r * 0.12, cy + r * 0.35);   // right wing trailing
+      ctx.lineTo(cx + r * 0.35, cy + r);           // right tail fin tip
+      ctx.lineTo(cx + r * 0.12, cy + r * 0.75);   // right tail fin inner
+      ctx.lineTo(cx, cy + r * 0.88);              // tail centre
+      ctx.lineTo(cx - r * 0.12, cy + r * 0.75);  // left tail fin inner
+      ctx.lineTo(cx - r * 0.35, cy + r);          // left tail fin tip
+      ctx.lineTo(cx - r * 0.12, cy + r * 0.35);  // left wing trailing
+      ctx.lineTo(cx - r * 0.8, cy + r * 0.3);    // left wingtip
+      ctx.lineTo(cx - r * 0.12, cy - r * 0.15);  // left body above wing
+      ctx.lineTo(cx - r * 0.12, cy - r * 0.65);  // left nose edge
       ctx.closePath();
       ctx.fill();
       break;
@@ -651,7 +643,7 @@ function drawIceCap(
 const UNIT_IMAGE_SRCS: Record<UnitType, string> = {
   [UnitType.Army]:       '/units/army.png',
   [UnitType.Fighter]:    '/units/figher.png',
-  [UnitType.Bomber]:     '/units/bomber.png',
+  [UnitType.Missile]:     '/units/missile.png',
   [UnitType.Transport]:  '/units/transport.png',
   [UnitType.Destroyer]:  '/units/destroyer.png',
   [UnitType.Submarine]:  '/units/submarine.png',
@@ -786,6 +778,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     pathTiles: Coord[]; // index 0 = start position
     startTime: number;
     sentCount: number; // how many MOVE actions already sent
+    knownEnemyIds: Set<string>; // enemies visible when path started
   }
   const moveAnimRef = useRef<MoveAnim | null>(null);
   const MOVE_STEP_DURATION = 333; // ms per tile
@@ -1332,6 +1325,21 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       const sx = interpX * tileSize - originX + tileSize / 2;
       const sy = interpY * tileSize - originY + tileSize / 2;
       drawUnit(ctx, mAnim.unitType, sx, sy, tileSize, ownerColor(mAnim.unitOwner), unitImagesRef.current);
+
+      // Cargo count badge for animating transport/carrier
+      if (
+        (mAnim.unitType === UnitType.Transport || mAnim.unitType === UnitType.Carrier) &&
+        tileSize >= 14
+      ) {
+        const animUnit = view.myUnits.find((u) => u.id === mAnim.unitId);
+        if (animUnit && animUnit.cargo.length > 0) {
+          ctx.fillStyle = '#fff';
+          ctx.font = `bold ${Math.max(8, tileSize * 0.3)}px sans-serif`;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'top';
+          ctx.fillText(`${animUnit.cargo.length}`, sx - tileSize / 2 + 2, sy - tileSize / 2 + 1);
+        }
+      }
     }
 
     // ── Flame hit indicators ──────────────────────────────────
@@ -1505,11 +1513,31 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         const totalSteps = mAnim.pathTiles.length - 1;
         const currentStep = Math.min(Math.floor(elapsed / MOVE_STEP_DURATION) + 1, totalSteps);
 
-        // Send any unsent MOVE actions up to currentStep
+        // Send any unsent MOVE actions up to currentStep, stopping on enemy discovery
+        let pathInterrupted = false;
         while (mAnim.sentCount < currentStep) {
           const step = mAnim.pathTiles[mAnim.sentCount + 1];
+          // Stop if any new enemy has become visible since path started
+          const newEnemySpotted = view.visibleEnemyUnits.some(
+            (e) => !mAnim.knownEnemyIds.has(e.id),
+          );
+          // Stop if next tile now has an enemy
+          const enemyOnStep = view.visibleEnemyUnits.some(
+            (e) => e.x === step.x && e.y === step.y && !e.carriedBy,
+          );
+          if (newEnemySpotted || enemyOnStep) {
+            moveAnimRef.current = null;
+            pathInterrupted = true;
+            forceRender((n) => n + 1);
+            break;
+          }
           sendAction({ type: 'MOVE', unitId: mAnim.unitId, to: step });
           mAnim.sentCount++;
+        }
+        if (pathInterrupted) {
+          draw();
+          if (needsFrame) animFrameRef.current = requestAnimationFrame(animLoop);
+          return;
         }
 
         if (elapsed >= totalSteps * MOVE_STEP_DURATION) {
@@ -1815,12 +1843,22 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const { tileSize } = useGameStore.getState();
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      const newTileSize = Math.max(6, Math.min(64, tileSize * factor));
-      if (newTileSize === tileSize) return;
-      setTileSize(newTileSize);
-      requestRedraw();
+      const { tileSize, cameraX, cameraY } = useGameStore.getState();
+      if (e.ctrlKey) {
+        // Pinch gesture → zoom
+        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        const newTileSize = Math.max(6, Math.min(64, tileSize * factor));
+        if (newTileSize !== tileSize) {
+          setTileSize(newTileSize);
+          requestRedraw();
+        }
+      } else {
+        // Two-finger scroll → pan
+        const newCamX = cameraX + e.deltaX / tileSize;
+        const newCamY = cameraY + e.deltaY / tileSize;
+        setCamera(newCamX, newCamY);
+        requestRedraw();
+      }
     };
 
     canvas.addEventListener('mousedown', onNativeMouseDown);
@@ -1966,20 +2004,10 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
               }
             }
 
-            // If enemy encountered, stop before it and return control to player
+            const knownEnemyIds = new Set(view.visibleEnemyUnits.map((e) => e.id));
+
+            // If enemy is on the path, stop before it — never auto-attack
             if (enemyStepIdx >= 0) {
-              const attackStep = path[enemyStepIdx];
-              const fromStep = enemyStepIdx > 0 ? path[enemyStepIdx - 1] : { x: unit.x, y: unit.y };
-              pendingCombatRef.current = {
-                unitId: unit.id,
-                type: unit.type,
-                owner: unit.owner,
-                fromX: fromStep.x,
-                fromY: fromStep.y,
-                toX: attackStep.x,
-                toY: attackStep.y,
-              };
-              // Only move up to (but not including) the enemy step
               const safePath = path.slice(0, enemyStepIdx);
               if (safePath.length > 0) {
                 playMoveSound(unit.type);
@@ -1990,18 +2018,17 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
                   pathTiles: [{ x: unit.x, y: unit.y }, ...safePath],
                   startTime: performance.now(),
                   sentCount: 0,
+                  knownEnemyIds,
                 };
                 sendAction({ type: 'MOVE', unitId: selectedUnitId, to: safePath[0] });
                 moveAnimRef.current.sentCount = 1;
                 forceRender((n) => n + 1);
-                return;
-              } else {
-                // Enemy is immediately adjacent, just initiate combat
-                return;
               }
+              // If enemy is the very first step, do nothing — player must click it directly
+              return;
             }
 
-            // No enemy on path, proceed with full movement
+            // No enemy on path — proceed with full movement
             playMoveSound(unit.type);
             moveAnimRef.current = {
               unitId: unit.id,
@@ -2010,6 +2037,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
               pathTiles: [{ x: unit.x, y: unit.y }, ...path],
               startTime: performance.now(),
               sentCount: 0,
+              knownEnemyIds,
             };
             sendAction({ type: 'MOVE', unitId: selectedUnitId, to: path[0] });
             moveAnimRef.current.sentCount = 1;

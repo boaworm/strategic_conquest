@@ -132,12 +132,12 @@ function drawUnitShape(ctx: CanvasRenderingContext2D, type: UnitType, cx: number
       ctx.lineTo(cx - r * 0.3, cy + r); ctx.lineTo(cx - r * 0.45, cy + r); ctx.lineTo(cx - r * 0.15, cy + r * 0.55); ctx.lineTo(cx - r * 0.15, cy + r * 0.15);
       ctx.lineTo(cx - r * 0.8, cy + r * 0.35); ctx.lineTo(cx - r, cy + r * 0.1); ctx.lineTo(cx - r * 0.15, cy - r * 0.2); ctx.closePath(); ctx.fill(); break;
     }
-    case UnitType.Bomber: {
-      ctx.beginPath(); ctx.moveTo(cx - r * 0.2, cy - r * 0.7); ctx.quadraticCurveTo(cx, cy - r, cx + r * 0.2, cy - r * 0.7);
-      ctx.lineTo(cx + r * 0.2, cy - r * 0.15); ctx.lineTo(cx + r * 1.1, cy - r * 0.05); ctx.lineTo(cx + r * 1.1, cy + r * 0.2); ctx.lineTo(cx + r * 0.2, cy + r * 0.15);
-      ctx.lineTo(cx + r * 0.2, cy + r * 0.6); ctx.lineTo(cx + r * 0.5, cy + r); ctx.lineTo(cx + r * 0.35, cy + r); ctx.lineTo(cx, cy + r * 0.75);
-      ctx.lineTo(cx - r * 0.35, cy + r); ctx.lineTo(cx - r * 0.5, cy + r); ctx.lineTo(cx - r * 0.2, cy + r * 0.6);
-      ctx.lineTo(cx - r * 0.2, cy + r * 0.15); ctx.lineTo(cx - r * 1.1, cy + r * 0.2); ctx.lineTo(cx - r * 1.1, cy - r * 0.05); ctx.lineTo(cx - r * 0.2, cy - r * 0.15);
+    case UnitType.Missile: {
+      ctx.beginPath(); ctx.moveTo(cx, cy - r);
+      ctx.lineTo(cx + r * 0.12, cy - r * 0.65); ctx.lineTo(cx + r * 0.12, cy - r * 0.15); ctx.lineTo(cx + r * 0.8, cy + r * 0.3); ctx.lineTo(cx + r * 0.12, cy + r * 0.35);
+      ctx.lineTo(cx + r * 0.35, cy + r); ctx.lineTo(cx + r * 0.12, cy + r * 0.75); ctx.lineTo(cx, cy + r * 0.88);
+      ctx.lineTo(cx - r * 0.12, cy + r * 0.75); ctx.lineTo(cx - r * 0.35, cy + r); ctx.lineTo(cx - r * 0.12, cy + r * 0.35);
+      ctx.lineTo(cx - r * 0.8, cy + r * 0.3); ctx.lineTo(cx - r * 0.12, cy - r * 0.15); ctx.lineTo(cx - r * 0.12, cy - r * 0.65);
       ctx.closePath(); ctx.fill(); break;
     }
     case UnitType.Transport: {
@@ -311,7 +311,7 @@ const PlayerViewCanvas = React.memo(({
   const UNIT_IMAGE_SRCS: Record<UnitType, string> = {
     [UnitType.Army]:       '/units/army.png',
     [UnitType.Fighter]:    '/units/figher.png',
-    [UnitType.Bomber]:     '/units/bomber.png',
+    [UnitType.Missile]:     '/units/missile.png',
     [UnitType.Transport]:  '/units/transport.png',
     [UnitType.Destroyer]:  '/units/destroyer.png',
     [UnitType.Submarine]:  '/units/submarine.png',

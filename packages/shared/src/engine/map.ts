@@ -485,9 +485,5 @@ export function createGameState(opts: MapOptions): GameState {
       player1: 0,
       player2: 0,
     },
-    seenEnemies: {
-      player1: [],
-      player2: [],
-    },
   };
 }

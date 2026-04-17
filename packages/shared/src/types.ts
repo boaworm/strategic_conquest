@@ -43,7 +43,7 @@ export enum Terrain {
 export enum UnitType {
   Army = 'army',
   Fighter = 'fighter',
-  Bomber = 'bomber',
+  Missile = 'missile',
   Transport = 'transport',
   Destroyer = 'destroyer',
   Submarine = 'submarine',
@@ -99,8 +99,8 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
     cargoCapacity: 0,
     canCarry: [],
   },
-  [UnitType.Bomber]: {
-    type: UnitType.Bomber,
+  [UnitType.Missile]: {
+    type: UnitType.Missile,
     domain: UnitDomain.Air,
     movesPerTurn: 15,
     vision: 3,
@@ -236,9 +236,7 @@ export interface GameState {
   explored: Record<PlayerId, Set<string>>;
   /** Total bombers produced per player (for blast radius upgrades) */
   bombersProduced: Record<PlayerId, number>;
-  /** Enemy unit snapshots at last known positions (persists across turns). */
-  seenEnemies: Record<PlayerId, { id: string; type: UnitType; owner: PlayerId; x: number; y: number }[]>;
-  /** Test options - only used in test mode */
+/** Test options - only used in test mode */
   testOptions?: {
     /** Override city capture success rate (1 = 100% success) */
     cityCaptureSuccessRate?: number;

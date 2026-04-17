@@ -317,6 +317,41 @@ function handleMove(
     (u) => u.type !== UnitType.Submarine || subDetected,
   );
 
+  // Submarine ambush: undetected subs get a free attack on non-DD/non-SS naval units moving into their tile
+  const isAmbushVulnerable =
+    !subDetected &&
+    unit.type !== UnitType.Submarine &&
+    unit.type !== UnitType.Destroyer &&
+    UNIT_STATS[unit.type].domain === UnitDomain.Sea;
+
+  if (isAmbushVulnerable) {
+    const ambushSubs = allEnemyUnits.filter((u) => u.type === UnitType.Submarine);
+    for (const sub of ambushSubs) {
+      if (sub.hasAttacked) continue;
+      const outcome = resolveCombatFromTable(sub, unit);
+      if (outcome === null) continue;
+      const subDestroyed = outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED;
+      const unitDestroyed = outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED;
+      if (unitDestroyed) unit.health--;
+      if (subDestroyed) sub.health--;
+      sub.hasAttacked = true;
+      const combat = {
+        attackerId: sub.id,
+        defenderId: unit.id,
+        attackerDamage: subDestroyed ? 1 : 0,
+        defenderDamage: unitDestroyed ? 1 : 0,
+        attackerDestroyed: sub.health <= 0,
+        defenderDestroyed: unit.health <= 0,
+      };
+      removeDestroyedUnits(state);
+      if (unit.health <= 0) {
+        checkWinCondition(state);
+        return { success: true, combat };
+      }
+      // Unit survived — sub dives, move continues (fall through)
+    }
+  }
+
   if (enemyUnits.length > 0) {
     if (unit.hasAttacked) {
       return { success: false, error: 'Already attacked this turn' };
@@ -362,7 +397,7 @@ function handleMove(
     // Bomber survives → it has "attacked" and flies back (not destroyed, no bomb dropped).
     // Bomber destroyed → no bomb.
     // No interceptors → bomb drops, kills ALL enemy units in blast area, bomber is destroyed.
-    if (unit.type === UnitType.Bomber) {
+    if (unit.type === UnitType.Missile) {
       const blastRadius = getBomberBlastRadius(state, playerId);
       const affectedTiles = getTilesInRadius(target.x, target.y, blastRadius, state.mapWidth, state.mapHeight);
 
@@ -561,7 +596,7 @@ function handleMove(
   }
 
   // Air units landing on a friendly city end their turn and refuel
-  if (unit.type === UnitType.Fighter || unit.type === UnitType.Bomber) {
+  if (unit.type === UnitType.Fighter || unit.type === UnitType.Missile) {
     const onFriendlyCity = state.cities.some(
       (c) => c.x === unit.x && c.y === unit.y && c.owner === playerId,
     );
@@ -904,7 +939,7 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
   let aircraftCrashed = 0;
   for (const unit of state.units) {
     if (unit.owner !== playerId) continue;
-    if (unit.type !== UnitType.Fighter && unit.type !== UnitType.Bomber) continue;
+    if (unit.type !== UnitType.Fighter && unit.type !== UnitType.Missile) continue;
     if (unit.carriedBy !== null) continue; // safe on carrier
     const onCity = state.cities.some(
       (c) => c.x === unit.x && c.y === unit.y && c.owner === unit.owner,
@@ -917,9 +952,6 @@ function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
   if (aircraftCrashed > 0) {
     removeDestroyedUnits(state);
   }
-
-  // Clear seenEnemies for the player ending their turn — ghosts only persist within a turn
-  state.seenEnemies[playerId] = [];
 
   // Switch player
   if (state.currentPlayer === 'player1') {
@@ -1045,48 +1077,7 @@ export function getPlayerView(
     )
     .map(unitToView);
 
-  // Persist newly visible enemies into seenEnemies for this turn
-  const seen = state.seenEnemies[playerId];
-  for (const ev of currentlyVisible) {
-    const idx = seen.findIndex((s) => s.id === ev.id);
-    if (idx >= 0) {
-      // Update position
-      seen[idx] = { id: ev.id, type: ev.type, owner: ev.owner, x: ev.x, y: ev.y };
-    } else {
-      seen.push({ id: ev.id, type: ev.type, owner: ev.owner, x: ev.x, y: ev.y });
-    }
-  }
-  // Remove entries for units that no longer exist
-  state.seenEnemies[playerId] = seen.filter((s) =>
-    state.units.some((u) => u.id === s.id),
-  );
-
-  // Merge: currently visible + previously-seen-this-turn (at last known position)
-  const visibleIds = new Set(currentlyVisible.map((u) => u.id));
-  const ghostEnemies: UnitView[] = state.seenEnemies[playerId]
-    .filter((s) => !visibleIds.has(s.id))
-    .map((s) => {
-      // The unit still exists but is not currently visible — show at last known position
-      const real = state.units.find((u) => u.id === s.id);
-      if (!real) return null;
-      return {
-        id: s.id,
-        type: s.type,
-        owner: s.owner,
-        x: s.x,
-        y: s.y,
-        health: 1, // don't reveal actual health
-        movesLeft: 0,
-        fuel: undefined,
-        sleeping: false,
-        hasAttacked: false,
-        cargo: [],
-        carriedBy: null,
-      } as UnitView;
-    })
-    .filter((u): u is UnitView => u !== null);
-
-  const visibleEnemyUnits = [...currentlyVisible, ...ghostEnemies];
+  const visibleEnemyUnits = currentlyVisible;
 
   // Visible enemy/neutral cities (include remembered cities on explored tiles)
   const visibleEnemyCities: CityView[] = state.cities

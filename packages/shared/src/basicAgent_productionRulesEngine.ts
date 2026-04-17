@@ -55,7 +55,7 @@ const UNIT_NAME_MAP: Record<string, UnitType> = {
   Battleship: UnitType.Battleship,
   Carrier:    UnitType.Carrier,
   Fighter:    UnitType.Fighter,
-  Bomber:     UnitType.Bomber,
+  Missile:    UnitType.Missile,
 };
 
 /** alive + currently-building count for a unit type */
