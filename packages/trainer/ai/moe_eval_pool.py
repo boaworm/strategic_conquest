@@ -34,7 +34,7 @@ _EVAL_SERVER = str(Path(__file__).parent / 'eval_server.js')
 # Run from packages/trainer so @sc/shared resolves correctly
 _SERVER_CWD = str(Path(__file__).parent.parent)
 
-NUM_GLOBAL = 22  # must match models_moe.py
+NUM_GLOBAL = 28  # must match models_moe.py
 
 _ONNX_EXPORT_LOCK = threading.Lock()  # torch.onnx.export is not thread-safe
 

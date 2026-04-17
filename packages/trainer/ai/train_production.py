@@ -51,7 +51,7 @@ def train(args):
         map_width=dataset.map_width,
     ).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     out_dir = Path(args.out_dir)

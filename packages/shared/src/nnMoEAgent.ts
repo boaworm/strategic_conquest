@@ -75,7 +75,7 @@ const PROD_UNIT_TYPES = [
 ] as const;
 
 // NUM_GLOBAL_FEATURES for production expert — see NN_Agent_MoE.md
-const NUM_GLOBAL = 22;
+const NUM_GLOBAL = 28;
 
 function getExecutionProviders(): string[] {
   if (typeof process !== 'undefined' && process.platform === 'darwin') return ['coreml', 'cpu'];
@@ -366,8 +366,23 @@ export class NnMoEAgent implements Agent {
     f[19] = city.productionTurnsLeft / 10;
     // 20: coastal flag
     f[20] = city.coastal ? 1.0 : 0.0;
-    // 21: bias
-    f[21] = 1.0;
+    // 21: combat contact flag (enemy units or cities visible)
+    f[21] = (obs.visibleEnemyUnits.length > 0 || obs.visibleEnemyCities.length > 0) ? 1.0 : 0.0;
+    // 22: cities producing Army count
+    f[22] = obs.myCities.filter(c => c.producing === UnitType.Army).length / 10;
+    // 23: fighter count (explicit for balance calc)
+    f[23] = obs.myUnits.filter(u => u.type === UnitType.Fighter).length / 20;
+    // 24: bomber count
+    f[24] = obs.myUnits.filter(u => u.type === UnitType.Bomber).length / 20;
+    // 25: army count
+    f[25] = obs.myUnits.filter(u => u.type === UnitType.Army).length / 20;
+    // 26: min(Fighter, Bomber, Army) count
+    const fighterCount = obs.myUnits.filter(u => u.type === UnitType.Fighter).length;
+    const bomberCount = obs.myUnits.filter(u => u.type === UnitType.Bomber).length;
+    const armyCount = obs.myUnits.filter(u => u.type === UnitType.Army).length;
+    f[26] = Math.min(fighterCount, bomberCount, armyCount) / 20;
+    // 27: bias
+    f[27] = 1.0;
     return f;
   }
 

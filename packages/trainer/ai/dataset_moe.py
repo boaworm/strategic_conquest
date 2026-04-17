@@ -30,7 +30,7 @@ UNIT_TYPES = ['army', 'fighter', 'bomber', 'transport', 'destroyer', 'submarine'
 UNIT_TYPE_TO_IDX = {u: i for i, u in enumerate(UNIT_TYPES)}
 NUM_UNIT_TYPES = len(UNIT_TYPES)
 
-NUM_GLOBAL = 22
+NUM_GLOBAL = 28
 
 
 def _load_meta(data_dir: Path) -> dict:

@@ -42,13 +42,13 @@ const prodOnly    = process.env.PROD_ONLY === '1';
 const MAX_SAMPLES_PER_GAME = parseInt(process.env.MAX_SAMPLES_PER_GAME ?? '3000');
 const MAX_PER_BUCKET       = Math.max(50, Math.floor(MAX_SAMPLES_PER_GAME / 9));
 const PROD_SAMPLE_MULTIPLIER = parseInt(process.env.PROD_SAMPLE_MULTIPLIER ?? '3');
-const MAX_PER_PROD_BUCKET    = MAX_PER_BUCKET * PROD_SAMPLE_MULTIPLIER;
+const MAX_PER_PROD_BUCKET    = prodOnly ? Infinity : MAX_PER_BUCKET * PROD_SAMPLE_MULTIPLIER;
 
 const MOVEMENT_ACTION_TYPES = ['MOVE', 'SLEEP', 'SKIP', 'LOAD', 'UNLOAD'] as const;
 const UNIT_TYPE_NAMES = ['army', 'fighter', 'bomber', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'] as const;
 type UnitTypeName = typeof UNIT_TYPE_NAMES[number];
 
-const NUM_GLOBAL = 22;
+const NUM_GLOBAL = 28;
 
 const progressFile = path.join(tmpDir, `progress-${workerId}.txt`);
 
@@ -139,8 +139,23 @@ function buildGlobalFeatures(view: PlayerView, city: { x: number; y: number; pro
   f[19] = city.productionTurnsLeft / 10;
   // 20: coastal flag
   f[20] = city.coastal ? 1.0 : 0.0;
-  // 21: bias
-  f[21] = 1.0;
+  // 21: combat contact flag (enemy units or cities visible)
+  f[21] = (view.visibleEnemyUnits.length > 0 || view.visibleEnemyCities.length > 0) ? 1.0 : 0.0;
+  // 22: cities producing Army count
+  f[22] = view.myCities.filter(c => c.producing === 'army').length / 10;
+  // 23: fighter count (explicit for balance calc)
+  f[23] = view.myUnits.filter(u => u.type === 'fighter').length / 20;
+  // 24: bomber count
+  f[24] = view.myUnits.filter(u => u.type === 'bomber').length / 20;
+  // 25: army count
+  f[25] = view.myUnits.filter(u => u.type === 'army').length / 20;
+  // 26: min(Fighter, Bomber, Army) count
+  const fighterCount = view.myUnits.filter(u => u.type === 'fighter').length;
+  const bomberCount = view.myUnits.filter(u => u.type === 'bomber').length;
+  const armyCount = view.myUnits.filter(u => u.type === 'army').length;
+  f[26] = Math.min(fighterCount, bomberCount, armyCount) / 20;
+  // 27: bias
+  f[27] = 1.0;
   return f;
 }
 
@@ -266,7 +281,11 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
   else if (state.winner === 'player2') wins.player2++;
   else                                  wins.draw++;
 
-  process.stderr.write(`[MoE-W${workerId}] game ${gameNumber}: turns=${state.turn} winner=${state.winner ?? 'draw'}\n`);
+  const movesSampled = Object.entries(totalSamples)
+    .filter(([k]) => k !== 'production')
+    .reduce((sum, [, v]) => sum + v, 0);
+  const prodSampled = totalSamples['production'];
+  process.stderr.write(`[MoE-W${workerId}] game ${gameNumber}: turns=${state.turn} winner=${state.winner ?? 'draw'}  Samples collected: Moves=${movesSampled}, Production=${prodSampled}\n`);
 
   if (gameNumber === gameStart || gameNumber % 50 === 0 || gameNumber === gameEnd) {
     fs.writeFileSync(progressFile, String(gameNumber));

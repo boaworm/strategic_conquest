@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 NUM_MOVEMENT_ACTIONS = 5   # MOVE, SLEEP, SKIP, LOAD, UNLOAD
 NUM_UNIT_TYPES       = 8   # army … battleship
-NUM_GLOBAL           = 22  # production expert global feature vector length
+NUM_GLOBAL           = 28  # production expert global feature vector length
 
 UNIT_TYPE_NAMES = ['army', 'fighter', 'bomber', 'transport',
                    'destroyer', 'submarine', 'carrier', 'battleship']
@@ -85,11 +85,12 @@ class ProductionCNN(nn.Module):
         self.spatial_pool = nn.AdaptiveAvgPool2d(1)
 
         self.global_mlp = nn.Sequential(
-            nn.Linear(num_global, 32), nn.ReLU(),
-            nn.Linear(32, 32),         nn.ReLU(),
+            nn.Linear(num_global, 64), nn.ReLU(),
+            nn.Linear(64, 64),         nn.ReLU(),
+            nn.Linear(64, 64),         nn.ReLU(),
         )
         self.head = nn.Sequential(
-            nn.Linear(128 + 32, 64), nn.ReLU(),
+            nn.Linear(128 + 64, 64), nn.ReLU(),
             nn.Linear(64, NUM_UNIT_TYPES),
         )
 
