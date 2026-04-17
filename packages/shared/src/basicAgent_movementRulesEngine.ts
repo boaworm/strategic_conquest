@@ -271,6 +271,23 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     return ctx.map.huntForEnemyShipping(ctx.unit, ctx.obs) !== null;
   });
 
+  m.set('enemy_army_within_range', (ctx) => {
+    return ctx.obs.visibleEnemyUnits.some((u) => {
+      if (UNIT_STATS[u.type].domain !== UnitDomain.Land) return false;
+      const dist = Math.max(
+        wrappedDistX(ctx.unit.x, u.x, ctx.mapWidth),
+        Math.abs(ctx.unit.y - u.y),
+      );
+      return dist <= ctx.unit.movesLeft + 1; // +1: move adjacent then bombard
+    });
+  });
+
+  m.set('enemy_army_exists', (ctx) => {
+    return ctx.obs.visibleEnemyUnits.some(
+      (u) => UNIT_STATS[u.type].domain === UnitDomain.Land,
+    );
+  });
+
   // ── Bomber conditions ───────────────────────────────────────
 
   m.set('bomber_city_target_available', (ctx) => {
@@ -532,6 +549,44 @@ function buildActionResolvers(): Map<string, ActionResolver> {
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
   });
 
+  a.set('attack_nearest_enemy_army', (ctx) => {
+    // Find nearest visible enemy land unit
+    let best: UnitView | null = null;
+    let bestDist = Infinity;
+    for (const u of ctx.obs.visibleEnemyUnits) {
+      if (UNIT_STATS[u.type].domain !== UnitDomain.Land) continue;
+      const dist = Math.max(
+        wrappedDistX(ctx.unit.x, u.x, ctx.mapWidth),
+        Math.abs(ctx.unit.y - u.y),
+      );
+      if (dist < bestDist) { bestDist = dist; best = u; }
+    }
+    if (!best) return null;
+    // If already adjacent, bombard directly
+    if (bestDist <= 1) {
+      return { type: 'MOVE', unitId: ctx.unit.id, to: { x: best.x, y: best.y } };
+    }
+    // Move adjacent first
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, best);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
+  a.set('move_to_nearest_enemy_army', (ctx) => {
+    let best: UnitView | null = null;
+    let bestDist = Infinity;
+    for (const u of ctx.obs.visibleEnemyUnits) {
+      if (UNIT_STATS[u.type].domain !== UnitDomain.Land) continue;
+      const dist = Math.max(
+        wrappedDistX(ctx.unit.x, u.x, ctx.mapWidth),
+        Math.abs(ctx.unit.y - u.y),
+      );
+      if (dist < bestDist) { bestDist = dist; best = u; }
+    }
+    if (!best) return null;
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, best);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
   // ── Fighter ─────────────────────────────────────────────────
 
   a.set('move_to_city_under_attack', (ctx) => {
@@ -602,11 +657,33 @@ function buildActionResolvers(): Map<string, ActionResolver> {
 
   a.set('move_to_nearest_unexplored_ocean', (ctx) => {
     const target = ctx.map.locateNearestUnexploredOcean(ctx.unit, ctx.obs);
-    if (target) {
-      const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, target);
-      if (step) return { type: 'MOVE', unitId: ctx.unit.id, to: step };
+    if (!target) return null;
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, target);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
+  a.set('patrol_ocean', (ctx) => {
+    // Pick a random reachable ocean tile as patrol destination; persist across calls via a simple hash
+    const mapW = ctx.mapWidth;
+    const mapH = ctx.mapHeight;
+    const candidates: Coord[] = [];
+    for (let y = 1; y < mapH - 1; y++) {
+      for (let x = 0; x < mapW; x++) {
+        if (ctx.obs.tiles[y]?.[x]?.terrain === Terrain.Ocean) {
+          candidates.push({ x, y });
+        }
+      }
     }
-    return { type: 'SKIP', unitId: ctx.unit.id };
+    if (candidates.length === 0) return { type: 'SKIP', unitId: ctx.unit.id };
+    // Use unit id + turn as seed so the same unit picks consistently within a turn
+    const seed = ctx.unit.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0) + ctx.obs.turn * 7;
+    const target = candidates[seed % candidates.length];
+    // If already there, pick a different one
+    const dest = (target.x === ctx.unit.x && target.y === ctx.unit.y)
+      ? candidates[(seed + 1) % candidates.length]
+      : target;
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, dest);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : { type: 'SKIP', unitId: ctx.unit.id };
   });
 
   // ── Patrol actions ──────────────────────────────────────────

@@ -1,7 +1,7 @@
 {
   "army": {
     "army": { "attackerDestroyed": 50, "defenderDestroyed": 50 },
-    "fighter": "n/a",
+    "fighter": { "attackerDestroyed": 40, "defenderDestroyed": 40 },
     "missile": "n/a",
     "transport": "n/a",
     "destroyer": "n/a",

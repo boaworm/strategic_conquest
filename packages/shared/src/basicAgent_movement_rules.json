@@ -4,263 +4,384 @@
     "actions": "Each action is a verb: move_to, attack, load, disembark, wait. The target is resolved by the MapQuery helper named in the action.",
     "unit_order": "Sea units first (transports with cargo > other sea), then air, then land."
   },
-
   "phases": {
     "Explore": "Fully explore starting island and take all cities.",
-    "Expand": "Home island secure — build transports, push armies to other islands.",
-    "Combat": "First enemy contact made — prioritize combat."
+    "Expand": "Home island secure \u2014 build transports, push armies to other islands.",
+    "Combat": "First enemy contact made \u2014 prioritize combat."
   },
-
   "movement": {
     "army": {
       "Explore": [
         {
-          "conditions": ["neutral_city_reachable_on_island"],
+          "conditions": [
+            "neutral_city_reachable_on_island"
+          ],
           "action": "move_to_nearest_neutral_city_on_island"
         },
         {
-          "conditions": ["island_has_enemy_cities"],
+          "conditions": [
+            "island_has_enemy_cities"
+          ],
           "action": "move_to_nearest_enemy_city_on_island"
         },
         {
-          "conditions": ["island_not_explored"],
+          "conditions": [
+            "island_not_explored"
+          ],
           "action": "move_to_nearest_unexplored_land_on_island"
         },
         {
-          "conditions": ["island_friendly_and_explored", "transport_on_island"],
+          "conditions": [
+            "island_friendly_and_explored",
+            "transport_on_island"
+          ],
           "action": "move_to_transport_and_board"
         },
         {
-          "conditions": ["island_friendly_and_explored"],
+          "conditions": [
+            "island_friendly_and_explored"
+          ],
           "action": "move_to_nearest_coastal_city"
         }
       ],
-
       "Expand": [
         {
-          "conditions": ["neutral_city_reachable_on_island"],
+          "conditions": [
+            "neutral_city_reachable_on_island"
+          ],
           "action": "move_to_nearest_neutral_city_on_island"
         },
         {
-          "conditions": ["island_has_enemy_cities"],
+          "conditions": [
+            "island_has_enemy_cities"
+          ],
           "action": "move_to_nearest_enemy_city_on_island"
         },
         {
-          "conditions": ["onboard_transport", "can_disembark"],
+          "conditions": [
+            "onboard_transport",
+            "can_disembark"
+          ],
           "action": "disembark"
         },
         {
-          "conditions": ["island_friendly", "transport_on_island"],
+          "conditions": [
+            "island_friendly",
+            "transport_on_island"
+          ],
           "action": "move_to_transport_and_board"
         },
         {
-          "conditions": ["island_not_explored"],
+          "conditions": [
+            "island_not_explored"
+          ],
           "action": "move_to_nearest_unexplored_land_on_island"
         },
         {
-          "conditions": ["island_friendly", "no_transport_on_island"],
+          "conditions": [
+            "island_friendly",
+            "no_transport_on_island"
+          ],
           "action": "move_to_nearest_coastal_city"
         }
       ],
-
       "Combat": [
         {
-          "conditions": ["neutral_city_reachable_on_island"],
+          "conditions": [
+            "neutral_city_reachable_on_island"
+          ],
           "action": "move_to_nearest_neutral_city_on_island"
         },
         {
-          "conditions": ["island_has_enemy_cities"],
+          "conditions": [
+            "island_has_enemy_cities"
+          ],
           "action": "move_to_nearest_enemy_city_on_island"
         },
         {
-          "conditions": ["island_not_explored"],
+          "conditions": [
+            "island_not_explored"
+          ],
           "action": "move_to_nearest_unexplored_land_on_island"
         },
         {
-          "conditions": ["onboard_transport", "can_disembark"],
+          "conditions": [
+            "onboard_transport",
+            "can_disembark"
+          ],
           "action": "disembark"
         },
         {
-          "conditions": ["island_friendly", "transport_on_island"],
+          "conditions": [
+            "island_friendly",
+            "transport_on_island"
+          ],
           "action": "move_to_transport_and_board"
         },
         {
-          "conditions": ["island_friendly", "no_transport_on_island"],
+          "conditions": [
+            "island_friendly",
+            "no_transport_on_island"
+          ],
           "action": "move_to_nearest_coastal_city"
         }
       ]
     },
-
     "transport": {
       "Explore": [],
-
       "Expand": [
         {
-          "conditions": ["has_active_target"],
+          "conditions": [
+            "has_active_target"
+          ],
           "action": "continue_toward_target"
         },
         {
-          "conditions": ["no_cargo", "in_city"],
+          "conditions": [
+            "no_cargo",
+            "in_city"
+          ],
           "action": "move_to_adjacent_ocean"
         },
         {
-          "conditions": ["no_cargo", "parked_at_coastal"],
+          "conditions": [
+            "no_cargo",
+            "parked_at_coastal"
+          ],
           "action": "wait"
         },
         {
-          "conditions": ["no_cargo", "at_friendly_island"],
+          "conditions": [
+            "no_cargo",
+            "at_friendly_island"
+          ],
           "action": "park_at_nearest_friendly_coastal"
         },
         {
-          "conditions": ["has_cargo", "cargo_full", "unexplored_islands_exist"],
+          "conditions": [
+            "has_cargo",
+            "cargo_full",
+            "unexplored_islands_exist"
+          ],
           "action": "sail_to_nearest_unexplored_island"
         },
         {
-          "conditions": ["has_cargo", "cargo_full"],
+          "conditions": [
+            "has_cargo",
+            "cargo_full"
+          ],
           "action": "sail_to_unexplored_ocean"
         },
         {
-          "conditions": ["has_cargo", "cargo_not_full", "unexplored_islands_exist"],
+          "conditions": [
+            "has_cargo",
+            "cargo_not_full",
+            "unexplored_islands_exist"
+          ],
           "action": "sail_to_nearest_unexplored_island"
         },
         {
-          "conditions": ["has_cargo", "cargo_not_full", "another_transport_fewer_armies"],
+          "conditions": [
+            "has_cargo",
+            "cargo_not_full",
+            "another_transport_fewer_armies"
+          ],
           "action": "sail_to_unexplored_ocean"
         },
         {
-          "conditions": ["no_cargo", "at_island_with_most_armies"],
+          "conditions": [
+            "no_cargo",
+            "at_island_with_most_armies"
+          ],
           "action": "wait"
         },
         {
-          "conditions": ["no_cargo"],
+          "conditions": [
+            "no_cargo"
+          ],
           "action": "sail_to_friendly_island_most_armies"
         },
         {
-          "conditions": ["has_cargo"],
+          "conditions": [
+            "has_cargo"
+          ],
           "action": "sail_to_unexplored_ocean"
         }
       ],
-
       "Combat": [
         {
-          "conditions": ["has_active_target"],
+          "conditions": [
+            "has_active_target"
+          ],
           "action": "continue_toward_target"
         },
         {
-          "conditions": ["no_cargo", "at_friendly_island"],
+          "conditions": [
+            "no_cargo",
+            "at_friendly_island"
+          ],
           "action": "park_at_nearest_friendly_coastal"
         },
         {
-          "conditions": ["has_cargo", "at_contested_island"],
+          "conditions": [
+            "has_cargo",
+            "at_contested_island"
+          ],
           "action": "wait"
         },
         {
-          "conditions": ["has_cargo", "contested_islands_exist"],
+          "conditions": [
+            "has_cargo",
+            "contested_islands_exist"
+          ],
           "action": "sail_to_nearest_contested_island"
         },
         {
-          "conditions": ["has_cargo", "unexplored_islands_exist"],
+          "conditions": [
+            "has_cargo",
+            "unexplored_islands_exist"
+          ],
           "action": "sail_to_nearest_unexplored_island"
         },
         {
-          "conditions": ["has_cargo"],
+          "conditions": [
+            "has_cargo"
+          ],
           "action": "sail_to_unexplored_ocean"
         },
         {
-          "conditions": ["no_cargo", "in_city"],
+          "conditions": [
+            "no_cargo",
+            "in_city"
+          ],
           "action": "move_to_adjacent_ocean"
         },
         {
-          "conditions": ["no_cargo"],
+          "conditions": [
+            "no_cargo"
+          ],
           "action": "sail_to_friendly_island_most_armies"
         }
       ]
     },
-
     "destroyer": {
       "Explore": [
         {
-          "conditions": ["enemy_loaded_transport_in_range"],
+          "conditions": [
+            "enemy_loaded_transport_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_transport_in_range"],
+          "conditions": [
+            "enemy_transport_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_submarine_in_range"],
+          "conditions": [
+            "enemy_submarine_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_destroyer_in_range"],
+          "conditions": [
+            "enemy_destroyer_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_ship_in_range"],
+          "conditions": [
+            "enemy_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_shipping_exists"],
+          "conditions": [
+            "enemy_shipping_exists"
+          ],
           "action": "hunt_for_enemy_shipping"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
         }
       ],
-
       "Expand": [
         {
-          "conditions": ["enemy_loaded_transport_in_range"],
+          "conditions": [
+            "enemy_loaded_transport_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_transport_in_range"],
+          "conditions": [
+            "enemy_transport_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_submarine_in_range"],
+          "conditions": [
+            "enemy_submarine_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_destroyer_in_range"],
+          "conditions": [
+            "enemy_destroyer_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_ship_in_range"],
+          "conditions": [
+            "enemy_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_shipping_exists"],
+          "conditions": [
+            "enemy_shipping_exists"
+          ],
           "action": "hunt_for_enemy_shipping"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
         }
       ],
-
       "Combat": [
         {
-          "conditions": ["enemy_loaded_transport_in_range"],
+          "conditions": [
+            "enemy_loaded_transport_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_transport_in_range"],
+          "conditions": [
+            "enemy_transport_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_submarine_in_range"],
+          "conditions": [
+            "enemy_submarine_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_destroyer_in_range"],
+          "conditions": [
+            "enemy_destroyer_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_ship_in_range"],
+          "conditions": [
+            "enemy_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_shipping_exists"],
+          "conditions": [
+            "enemy_shipping_exists"
+          ],
           "action": "hunt_for_enemy_shipping"
         },
         {
@@ -268,250 +389,362 @@
         }
       ]
     },
-
     "fighter": {
       "Explore": [
         {
-          "conditions": ["enemy_ship_in_range"],
+          "conditions": [
+            "enemy_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["friendly_city_under_attack"],
+          "conditions": [
+            "friendly_city_under_attack"
+          ],
           "action": "move_to_city_under_attack"
         },
         {
-          "conditions": ["friendly_city_on_contested_island_exists"],
+          "conditions": [
+            "friendly_city_on_contested_island_exists"
+          ],
           "action": "move_to_friendly_city_on_contested_island"
         },
         {
-          "conditions": ["friendly_city_with_enemy_nearby_exists"],
+          "conditions": [
+            "friendly_city_with_enemy_nearby_exists"
+          ],
           "action": "move_to_friendly_city_with_enemy_nearby"
         },
         {
-          "conditions": ["enemy_shipping_exists"],
+          "conditions": [
+            "enemy_shipping_exists"
+          ],
           "action": "hunt_for_enemy_shipping"
         },
         {
-          "conditions": ["no_combat_targets", "has_patrol_waypoint", "at_patrol_waypoint"],
+          "conditions": [
+            "no_combat_targets",
+            "has_patrol_waypoint",
+            "at_patrol_waypoint"
+          ],
           "action": "select_next_patrol_waypoint"
         },
         {
-          "conditions": ["no_combat_targets", "has_patrol_waypoint"],
+          "conditions": [
+            "no_combat_targets",
+            "has_patrol_waypoint"
+          ],
           "action": "continue_patrol"
         },
         {
-          "conditions": ["no_combat_targets", "patrol_routes_exist"],
+          "conditions": [
+            "no_combat_targets",
+            "patrol_routes_exist"
+          ],
           "action": "select_patrol_route"
         }
       ],
-
       "Expand": [
         {
-          "conditions": ["enemy_ship_in_range"],
+          "conditions": [
+            "enemy_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["friendly_city_under_attack"],
+          "conditions": [
+            "friendly_city_under_attack"
+          ],
           "action": "move_to_city_under_attack"
         },
         {
-          "conditions": ["friendly_city_on_contested_island_exists"],
+          "conditions": [
+            "friendly_city_on_contested_island_exists"
+          ],
           "action": "move_to_friendly_city_on_contested_island"
         },
         {
-          "conditions": ["friendly_city_with_enemy_nearby_exists"],
+          "conditions": [
+            "friendly_city_with_enemy_nearby_exists"
+          ],
           "action": "move_to_friendly_city_with_enemy_nearby"
         },
         {
-          "conditions": ["enemy_shipping_exists"],
+          "conditions": [
+            "enemy_shipping_exists"
+          ],
           "action": "hunt_for_enemy_shipping"
         },
         {
-          "conditions": ["no_combat_targets", "has_patrol_waypoint", "at_patrol_waypoint"],
+          "conditions": [
+            "no_combat_targets",
+            "has_patrol_waypoint",
+            "at_patrol_waypoint"
+          ],
           "action": "select_next_patrol_waypoint"
         },
         {
-          "conditions": ["no_combat_targets", "has_patrol_waypoint"],
+          "conditions": [
+            "no_combat_targets",
+            "has_patrol_waypoint"
+          ],
           "action": "continue_patrol"
         },
         {
-          "conditions": ["no_combat_targets", "patrol_routes_exist"],
+          "conditions": [
+            "no_combat_targets",
+            "patrol_routes_exist"
+          ],
           "action": "select_patrol_route"
         }
       ],
-
       "Combat": [
         {
-          "conditions": ["enemy_ship_in_range"],
+          "conditions": [
+            "enemy_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["friendly_city_under_attack"],
+          "conditions": [
+            "friendly_city_under_attack"
+          ],
           "action": "move_to_city_under_attack"
         },
         {
-          "conditions": ["friendly_city_on_contested_island_exists"],
+          "conditions": [
+            "friendly_city_on_contested_island_exists"
+          ],
           "action": "move_to_friendly_city_on_contested_island"
         },
         {
-          "conditions": ["friendly_city_with_enemy_nearby_exists"],
+          "conditions": [
+            "friendly_city_with_enemy_nearby_exists"
+          ],
           "action": "move_to_friendly_city_with_enemy_nearby"
         },
         {
-          "conditions": ["enemy_shipping_exists"],
+          "conditions": [
+            "enemy_shipping_exists"
+          ],
           "action": "hunt_for_enemy_shipping"
         },
         {
-          "conditions": ["no_combat_targets", "has_patrol_waypoint", "at_patrol_waypoint"],
+          "conditions": [
+            "no_combat_targets",
+            "has_patrol_waypoint",
+            "at_patrol_waypoint"
+          ],
           "action": "select_next_patrol_waypoint"
         },
         {
-          "conditions": ["no_combat_targets", "has_patrol_waypoint"],
+          "conditions": [
+            "no_combat_targets",
+            "has_patrol_waypoint"
+          ],
           "action": "continue_patrol"
         },
         {
-          "conditions": ["no_combat_targets", "patrol_routes_exist"],
+          "conditions": [
+            "no_combat_targets",
+            "patrol_routes_exist"
+          ],
           "action": "select_patrol_route"
         }
       ]
     },
-
     "battleship": {
       "Explore": [
         {
-          "conditions": ["enemy_ship_in_range"],
+          "conditions": [
+            "enemy_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_city_with_defenders_in_range"],
+          "conditions": [
+            "enemy_city_with_defenders_in_range"
+          ],
           "action": "attack_enemy_city_with_defenders"
         },
         {
-          "conditions": ["enemy_city_with_defenders_exists"],
+          "conditions": [
+            "enemy_city_with_defenders_exists"
+          ],
           "action": "move_to_enemy_city_with_defenders"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
+        },
+        {
+          "action": "patrol_ocean"
         }
       ],
-
       "Expand": [
         {
-          "conditions": ["enemy_ship_in_range"],
+          "conditions": [
+            "enemy_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_city_with_defenders_in_range"],
+          "conditions": [
+            "enemy_city_with_defenders_in_range"
+          ],
           "action": "attack_enemy_city_with_defenders"
         },
         {
-          "conditions": ["enemy_city_with_defenders_exists"],
+          "conditions": [
+            "enemy_city_with_defenders_exists"
+          ],
           "action": "move_to_enemy_city_with_defenders"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
+        },
+        {
+          "action": "patrol_ocean"
         }
       ],
-
       "Combat": [
         {
-          "conditions": ["enemy_loaded_transport_in_range"],
+          "conditions": [
+            "enemy_loaded_transport_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_city_with_troops_adjacent"],
+          "conditions": [
+            "enemy_city_with_troops_adjacent"
+          ],
           "action": "bombard_enemy_city_with_troops"
         },
         {
-          "conditions": ["enemy_city_with_troops_in_range"],
+          "conditions": [
+            "enemy_city_with_troops_in_range"
+          ],
           "action": "bombard_enemy_city_with_troops"
         },
         {
-          "conditions": ["enemy_city_with_troops_exists"],
+          "conditions": [
+            "enemy_city_with_troops_exists"
+          ],
           "action": "move_to_enemy_city_with_troops"
         },
         {
-          "conditions": ["enemy_ship_in_range"],
+          "conditions": [
+            "enemy_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_shipping_exists"],
+          "conditions": [
+            "enemy_shipping_exists"
+          ],
           "action": "hunt_for_enemy_shipping"
         },
         {
-          "conditions": ["enemy_city_with_defenders_in_range"],
-          "action": "attack_enemy_city_with_defenders"
+          "conditions": [
+            "enemy_army_within_range"
+          ],
+          "action": "attack_nearest_enemy_army"
         },
         {
-          "conditions": ["enemy_city_with_defenders_exists"],
-          "action": "move_to_enemy_city_with_defenders"
+          "conditions": [
+            "enemy_army_exists"
+          ],
+          "action": "move_to_nearest_enemy_army"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
+        },
+        {
+          "action": "patrol_ocean"
         }
       ]
     },
-
     "submarine": {
       "Explore": [
         {
-          "conditions": ["enemy_loaded_transport_in_range"],
+          "conditions": [
+            "enemy_loaded_transport_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_capital_ship_in_range"],
+          "conditions": [
+            "enemy_capital_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_submarine_in_range"],
+          "conditions": [
+            "enemy_submarine_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
         }
       ],
-
       "Expand": [
         {
-          "conditions": ["enemy_loaded_transport_in_range"],
+          "conditions": [
+            "enemy_loaded_transport_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_capital_ship_in_range"],
+          "conditions": [
+            "enemy_capital_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_submarine_in_range"],
+          "conditions": [
+            "enemy_submarine_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_destroyer_in_range"],
+          "conditions": [
+            "enemy_destroyer_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
         }
       ],
-
       "Combat": [
         {
-          "conditions": ["enemy_loaded_transport_in_range"],
+          "conditions": [
+            "enemy_loaded_transport_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_capital_ship_in_range"],
+          "conditions": [
+            "enemy_capital_ship_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_submarine_in_range"],
+          "conditions": [
+            "enemy_submarine_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_destroyer_in_range"],
+          "conditions": [
+            "enemy_destroyer_in_range"
+          ],
           "action": "attack_nearest_enemy_ship"
         },
         {
-          "conditions": ["enemy_shipping_exists"],
+          "conditions": [
+            "enemy_shipping_exists"
+          ],
           "action": "hunt_for_enemy_shipping"
         },
         {
@@ -519,55 +752,70 @@
         }
       ]
     },
-
     "bomber": {
       "Explore": [
         {
-          "conditions": ["bomber_city_target_available"],
+          "conditions": [
+            "bomber_city_target_available"
+          ],
           "action": "bomb_city"
         },
         {
-          "conditions": ["enemy_transport_with_cargo_in_fuel_range"],
+          "conditions": [
+            "enemy_transport_with_cargo_in_fuel_range"
+          ],
           "action": "bomb_transport"
         },
         {
-          "conditions": ["high_value_enemy_cluster"],
+          "conditions": [
+            "high_value_enemy_cluster"
+          ],
           "action": "bomb_area"
         },
         {
           "action": "move_to_conflict_zone"
         }
       ],
-
       "Expand": [
         {
-          "conditions": ["bomber_city_target_available"],
+          "conditions": [
+            "bomber_city_target_available"
+          ],
           "action": "bomb_city"
         },
         {
-          "conditions": ["enemy_transport_with_cargo_in_fuel_range"],
+          "conditions": [
+            "enemy_transport_with_cargo_in_fuel_range"
+          ],
           "action": "bomb_transport"
         },
         {
-          "conditions": ["high_value_enemy_cluster"],
+          "conditions": [
+            "high_value_enemy_cluster"
+          ],
           "action": "bomb_area"
         },
         {
           "action": "move_to_conflict_zone"
         }
       ],
-
       "Combat": [
         {
-          "conditions": ["bomber_city_target_available"],
+          "conditions": [
+            "bomber_city_target_available"
+          ],
           "action": "bomb_city"
         },
         {
-          "conditions": ["enemy_transport_with_cargo_in_fuel_range"],
+          "conditions": [
+            "enemy_transport_with_cargo_in_fuel_range"
+          ],
           "action": "bomb_transport"
         },
         {
-          "conditions": ["high_value_enemy_cluster"],
+          "conditions": [
+            "high_value_enemy_cluster"
+          ],
           "action": "bomb_area"
         },
         {
@@ -575,20 +823,17 @@
         }
       ]
     },
-
     "carrier": {
       "Explore": [
         {
           "action": "move_to_nearest_unexplored_ocean"
         }
       ],
-
       "Expand": [
         {
           "action": "move_to_nearest_unexplored_ocean"
         }
       ],
-
       "Combat": [
         {
           "action": "move_to_nearest_unexplored_ocean"

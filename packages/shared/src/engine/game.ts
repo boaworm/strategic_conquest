@@ -306,6 +306,42 @@ function handleMove(
   }
 
   const check = canMoveTo(state, unit, target);
+
+  // Naval bombardment: sea unit attacking an adjacent land tile it can't enter
+  if (!check.ok && UNIT_STATS[unit.type].domain === UnitDomain.Sea) {
+    const wx = wrapX(target.x, state.mapWidth);
+    const terrain = state.tiles[target.y]?.[wx];
+    if (terrain === Terrain.Land) {
+      const dx = wrappedDistX(wx, unit.x, state.mapWidth);
+      const dy = Math.abs(target.y - unit.y);
+      const adjacent = dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0);
+      if (adjacent && unit.movesLeft > 0 && !unit.hasAttacked) {
+        const landTargets = getUnitsAt(state, target).filter(
+          (u) => u.owner !== playerId && UNIT_STATS[u.type].domain === UnitDomain.Land,
+        );
+        if (landTargets.length > 0) {
+          const defender = landTargets[Math.floor(Math.random() * landTargets.length)];
+          const outcome = resolveCombatFromTable(unit, defender);
+          if (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) unit.health--;
+          if (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) defender.health--;
+          unit.hasAttacked = true;
+          unit.movesLeft = 0;
+          const combat = {
+            attackerId: unit.id,
+            defenderId: defender.id,
+            attackerDamage: (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+            defenderDamage: (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) ? 1 : 0,
+            attackerDestroyed: unit.health <= 0,
+            defenderDestroyed: defender.health <= 0,
+          };
+          removeDestroyedUnits(state);
+          checkWinCondition(state);
+          return { success: true, combat };
+        }
+      }
+    }
+  }
+
   if (!check.ok) return { success: false, error: check.error };
 
   // Check for enemy units at destination
@@ -682,6 +718,7 @@ function tryCaptureCity(
   city.productionProgress = 0;
   unit.health = 0;
   removeDestroyedUnits(state);
+  checkWinCondition(state);
   return { captured: city.id };
 }
 

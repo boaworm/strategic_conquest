@@ -806,7 +806,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       };
     }
   }, []);
-  const [, setImagesLoaded] = useState(0);
+  const [imagesLoaded, setImagesLoaded] = useState(0);
 
   // "Your turn" banner: stores the timestamp when the current player's turn began
   const yourTurnStartRef = useRef<number | null>(null);
@@ -1171,8 +1171,10 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         // Attacker is already drawn by normal unit rendering at its new position
         // No need to draw it here - this prevents double-drawing and flickering
       } else if (combatAnim.phase === 'result') {
-        // Unit stays at target position during result display
-        drawUnit(ctx, combatAnim.attackerType, toSX, toSY, tileSize, ownerColor(combatAnim.attackerOwner), unitImagesRef.current);
+        // Only draw attacker at target if it survived
+        if (!combatAnim.result?.attackerDestroyed) {
+          drawUnit(ctx, combatAnim.attackerType, toSX, toSY, tileSize, ownerColor(combatAnim.attackerOwner), unitImagesRef.current);
+        }
       }
     }
 
@@ -1649,15 +1651,18 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     setTimeout(() => {
       let text: string;
       let color: string;
-      if (combat.attackerDamage < combat.defenderDamage) {
-        text = 'WIN';
-        color = '#2ecc71'; // green
-      } else if (combat.attackerDamage === combat.defenderDamage) {
-        text = 'DRAW';
+      if (combat.attackerDestroyed && combat.defenderDestroyed) {
+        text = 'Mutual destruction';
         color = '#f39c12'; // orange
-      } else {
-        text = 'LOSS';
+      } else if (combat.defenderDestroyed) {
+        text = 'Victory';
+        color = '#2ecc71'; // green
+      } else if (combat.attackerDestroyed) {
+        text = 'Defeat';
         color = '#e74c3c'; // red
+      } else {
+        text = 'Draw';
+        color = '#aaaaaa'; // grey
       }
       combatResultRef.current = {
         text,
@@ -1739,16 +1744,19 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     setTimeout(() => {
       let text: string;
       let color: string;
-      // From our perspective: we win if attacker took more damage
-      if (combat.attackerDamage > combat.defenderDamage) {
-        text = 'WIN';
-        color = '#2ecc71'; // green
-      } else if (combat.attackerDamage === combat.defenderDamage) {
-        text = 'DRAW';
+      // From our perspective: attacker is the enemy, defender is our unit
+      if (combat.attackerDestroyed && combat.defenderDestroyed) {
+        text = 'Mutual destruction';
         color = '#f39c12'; // orange
-      } else {
-        text = 'LOSS';
+      } else if (combat.attackerDestroyed) {
+        text = 'Victory';
+        color = '#2ecc71'; // green
+      } else if (combat.defenderDestroyed) {
+        text = 'Defeat';
         color = '#e74c3c'; // red
+      } else {
+        text = 'Draw';
+        color = '#aaaaaa'; // grey
       }
       combatResultRef.current = {
         text,
@@ -1763,10 +1771,10 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     forceRender((n) => n + 1);
   }, [lastEnemyCombat]);
 
-  // Redraw whenever dependencies change
+  // Redraw whenever dependencies change (imagesLoaded ensures redraw after sprites arrive)
   useEffect(() => {
     draw();
-  }, [draw]);
+  }, [draw, imagesLoaded]);
 
   // Resize observer to adapt canvas to container
   useEffect(() => {

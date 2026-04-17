@@ -10,7 +10,28 @@ import type {
   ServerToClientEvents,
   ClientToServerEvents,
   UnitType,
+  UnitView,
 } from '@sc/shared';
+import { Terrain } from '@sc/shared';
+
+/** Returns true if a carried unit's transport has at least one adjacent land tile. */
+function carriedNearLand(unit: UnitView, view: PlayerView): boolean {
+  if (unit.carriedBy === null) return false;
+  const transport = view.myUnits.find((t) => t.id === unit.carriedBy);
+  if (!transport) return false;
+  const mapW = view.tiles[0]?.length ?? 60;
+  const mapH = view.tiles.length;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = ((transport.x + dx) % mapW + mapW) % mapW;
+      const ny = transport.y + dy;
+      if (ny < 0 || ny >= mapH) continue;
+      if (view.tiles[ny]?.[nx]?.terrain === Terrain.Land) return true;
+    }
+  }
+  return false;
+}
 
 interface GameStore {
   // Connection state
@@ -214,11 +235,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (get().autoSelectNext && view.currentPlayer === pid) {
         const selId = get().selectedUnitId;
         const selUnit = selId ? view.myUnits.find((u) => u.id === selId) : null;
-        const needNext = !selUnit || selUnit.movesLeft <= 0 || selUnit.sleeping || selUnit.carriedBy !== null;
+        const needNext = !selUnit || selUnit.movesLeft <= 0 || selUnit.sleeping ||
+          (selUnit.carriedBy !== null && !carriedNearLand(selUnit, view));
         if (needNext) {
+          // Prefer uncarried moveable units; fall back to a transport with disembarkable cargo
           const next = view.myUnits.find(
             (u) => u.movesLeft > 0 && !u.sleeping && u.carriedBy === null,
-          );
+          ) ?? (() => {
+            const carriedUnit = view.myUnits.find(
+              (u) => u.movesLeft > 0 && !u.sleeping && u.carriedBy !== null && carriedNearLand(u, view),
+            );
+            return carriedUnit ? view.myUnits.find((t) => t.id === carriedUnit.carriedBy) ?? null : null;
+          })();
           set({ selectedUnitId: next?.id ?? null });
           if (next) get().centerIfOffScreen(next.x, next.y);
         }
@@ -226,10 +254,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
       // Auto end turn: if it's my turn and all my units have 0 moves (or are sleeping/carried)
       // BUT skip if any city is idle — give the player a chance to set production
+      // Also skip if a carried army is adjacent to land (it may want to disembark)
       if (get().autoEndTurn && view.currentPlayer === pid) {
         const hasIdleCity = view.myCities.some((c) => c.producing === null);
         const allDone = view.myUnits.length > 0 && view.myUnits.every(
-          (u) => u.movesLeft <= 0 || u.sleeping || u.carriedBy !== null,
+          (u) => u.movesLeft <= 0 || u.sleeping ||
+            (u.carriedBy !== null && !carriedNearLand(u, view)),
         );
         if (allDone && !hasIdleCity) {
           const s = get().socket;
