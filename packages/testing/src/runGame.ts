@@ -54,11 +54,11 @@ const MAX_ACTIONS_PER_TURN = 500; // safety limit to prevent infinite loops
  * Run a complete headless game between two agents.
  * Returns outcome data for both players.
  */
-export function runGame(
+export async function runGame(
   agent1: Agent,
   agent2: Agent,
   opts: RunGameOptions = {},
-): GameResult {
+): Promise<GameResult> {
   const {
     mapWidth = 30,
     mapHeight = 20,
@@ -105,14 +105,14 @@ export function runGame(
       visibleEnemyCities: view.visibleEnemyCities,
       turn: view.turn,
       myPlayerId: currentPlayer,
-      myBomberBlastRadius: view.myBomberBlastRadius,
+      myMissileBlastRadius: view.myMissileBlastRadius,
     };
 
     // Let agent take actions until it ends its turn
     let actionCount = 0;
     while (actionCount < MAX_ACTIONS_PER_TURN) {
       const tAct = performance.now();
-      const action = agent.act(obs);
+      const action = await agent.act(obs);
       if (profilePhases) profilePhases.agentAct += performance.now() - tAct;
       actionCount++;
 

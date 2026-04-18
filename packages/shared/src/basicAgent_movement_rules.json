@@ -770,11 +770,11 @@
         }
       ]
     },
-    "bomber": {
+    "missile": {
       "Explore": [
         {
           "conditions": [
-            "bomber_city_target_available"
+            "missile_city_target_available"
           ],
           "action": "bomb_city"
         },
@@ -797,7 +797,7 @@
       "Expand": [
         {
           "conditions": [
-            "bomber_city_target_available"
+            "missile_city_target_available"
           ],
           "action": "bomb_city"
         },
@@ -820,7 +820,7 @@
       "Combat": [
         {
           "conditions": [
-            "bomber_city_target_available"
+            "missile_city_target_available"
           ],
           "action": "bomb_city"
         },

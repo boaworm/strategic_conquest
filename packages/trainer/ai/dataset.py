@@ -39,7 +39,7 @@ NUM_ACTION_TYPES = len(ACTION_TYPES)
 UNIT_TYPES = [
     "army",
     "fighter",
-    "bomber",
+    "missile",
     "transport",
     "destroyer",
     "submarine",

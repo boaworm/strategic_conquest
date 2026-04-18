@@ -24,7 +24,7 @@ const MAX_TURNS  = parseInt(process.env.MAX_TURNS  ?? '500');
 const MAX_SAMPLES_PER_GAME = parseInt(process.env.MAX_SAMPLES_PER_GAME ?? '3000');
 const PROD_ONLY  = process.env.PROD_ONLY === '1';
 
-const UNIT_TYPE_NAMES = ['army', 'fighter', 'bomber', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'];
+const UNIT_TYPE_NAMES = ['army', 'fighter', 'missile', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'];
 
 const workerScript = fileURLToPath(new URL('../dist/collect_moe_worker.js', import.meta.url));
 const tmpDir = path.join(OUTPUT_DIR, 'tmp');

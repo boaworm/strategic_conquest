@@ -428,13 +428,13 @@ function handleMove(
       defender = enemyUnits[Math.floor(Math.random() * enemyUnits.length)];
     }
 
-    // Bomber: check for intercepting fighters anywhere in the blast area.
-    // If interceptors are present, the bomber fights them instead of bombing.
-    // Bomber survives → it has "attacked" and flies back (not destroyed, no bomb dropped).
-    // Bomber destroyed → no bomb.
-    // No interceptors → bomb drops, kills ALL enemy units in blast area, bomber is destroyed.
+    // Missile: check for intercepting fighters anywhere in the blast area.
+    // If interceptors are present, the missile fights them instead of bombing.
+    // Missile survives → it has "attacked" and flies back (not destroyed, no bomb dropped).
+    // Missile destroyed → no bomb.
+    // No interceptors → bomb drops, kills ALL enemy units in blast area, missile is destroyed.
     if (unit.type === UnitType.Missile) {
-      const blastRadius = getBomberBlastRadius(state, playerId);
+      const blastRadius = getMissileBlastRadius(state, playerId);
       const affectedTiles = getTilesInRadius(target.x, target.y, blastRadius, state.mapWidth, state.mapHeight);
 
       // Gather all enemy fighters in the blast area
@@ -455,15 +455,15 @@ function handleMove(
           defenderDestroyed: false,
         };
         for (const fighter of interceptors) {
-          const bomberHits = Math.floor(Math.random() * 6) + 1 <= 1; // bomber attack = 1
+          const missileHits = Math.floor(Math.random() * 6) + 1 <= 1; // missile attack = 1
           const fighterHits = Math.floor(Math.random() * 6) + 1 <= UNIT_STATS[fighter.type].defense;
-          if (bomberHits) fighter.health--;
+          if (missileHits) fighter.health--;
           if (fighterHits) unit.health--;
           lastInterceptCombat = {
             attackerId: unit.id,
             defenderId: fighter.id,
             attackerDamage: fighterHits ? 1 : 0,
-            defenderDamage: bomberHits ? 1 : 0,
+            defenderDamage: missileHits ? 1 : 0,
             attackerDestroyed: unit.health <= 0,
             defenderDestroyed: fighter.health <= 0,
           };
@@ -473,13 +473,13 @@ function handleMove(
             return { success: true, combat: lastInterceptCombat };
           }
         }
-        // Bomber survived — intercepted, no bomb; bomber flies back alive
+        // Missile survived — intercepted, no bomb; missile flies back alive
         unit.movesLeft = 0;
         unit.hasAttacked = true;
         return { success: true, combat: lastInterceptCombat };
       }
 
-      // No interceptors — drop the bomb; kill ALL enemy units in blast area, bomber is destroyed
+      // No interceptors — drop the bomb; kill ALL enemy units in blast area, missile is destroyed
       const enemiesInArea = affectedTiles.flatMap((pos) =>
         state.units.filter(
           (u) => u.x === pos.x && u.y === pos.y && u.owner !== playerId &&
@@ -500,7 +500,7 @@ function handleMove(
       };
       removeDestroyedUnits(state);
       checkWinCondition(state);
-      return { success: true, combat: bombCombat, bomberBlastRadius: blastRadius, bomberBlastCenter: target };
+      return { success: true, combat: bombCombat, missileBlastRadius: blastRadius, missileBlastCenter: target };
     }
 
     // Normal combat with the selected defender
@@ -977,7 +977,7 @@ function handleBeginOfTurn(state: GameState, playerId: PlayerId): void {
 }
 
 function handleEndTurn(state: GameState, playerId: PlayerId): ActionResult {
-  // Crash fighters and bombers not on a friendly city or carrier
+  // Crash fighters and missiles not on a friendly city or carrier
   let aircraftCrashed = 0;
   for (const unit of state.units) {
     if (unit.owner !== playerId) continue;
@@ -1022,9 +1022,9 @@ function checkWinCondition(state: GameState): void {
   }
 }
 
-/** Get bomber blast radius based on total bombers produced by this player. */
-function getBomberBlastRadius(state: GameState, playerId: PlayerId): number {
-  const count = state.bombersProduced[playerId] ?? 0;
+/** Get missile blast radius based on total missiles produced by this player. */
+function getMissileBlastRadius(state: GameState, playerId: PlayerId): number {
+  const count = state.missilesProduced[playerId] ?? 0;
   if (count >= 20) return 2;
   if (count >= 10) return 1;
   return 0;
@@ -1147,7 +1147,7 @@ export function getPlayerView(
     currentPlayer: state.currentPlayer,
     phase: state.phase,
     winner: state.winner,
-    myBomberBlastRadius: getBomberBlastRadius(state, playerId),
+    myMissileBlastRadius: getMissileBlastRadius(state, playerId),
   };
 }
 

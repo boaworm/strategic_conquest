@@ -9,21 +9,21 @@ import {
 import { runTest, TestConfig, createIslandMap } from './testRunner.js';
 
 /**
- * Test: Bombers should attack highest-value enemy targets
+ * Test: Missiles should attack highest-value enemy targets
  *
  * Setup:
  * - Map: 30x8
- * - P1 city at (5, 3) with 2 bombers starting there
+ * - P1 city at (5, 3) with 2 missiles starting there
  * - Tiny 2x2 island at (14, 2) with P2 city
  * - P2 Battleship at (11, 4) - leftmost
  * - P1 Destroyer at (13, 4) - middle, provides vision for both targets
  * - P2 Transport at (15, 4) - rightmost, with cargo (higher priority)
  *
- * Success: Both bombers attack their correct targets (transport + battleship)
+ * Success: Both missiles attack their correct targets (transport + battleship)
  * Replay: Turn 0 shows all units, Turn 2 shows P1 victory with only destroyer remaining
  */
 
-export function createBomberDecisionTestMap(): GameState {
+export function createMissileDecisionTestMap(): GameState {
   const mapWidth = 30;
   const mapHeight = 8;
 
@@ -49,8 +49,9 @@ export function createBomberDecisionTestMap(): GameState {
     phase: GamePhase.Active,
     winner: null,
     explored: { player1: new Set(), player2: new Set() },
+    seenEnemies: { player1: [], player2: [] },
     turnVisible: { player1: new Set(), player2: new Set() },
-    bombersProduced: { player1: 0, player2: 0 },
+    missilesProduced: { player1: 0, player2: 0 },
     testOptions: {
       cityCaptureSuccessRate: 1,
     },
@@ -67,7 +68,7 @@ export function createBomberDecisionTestMap(): GameState {
     productionProgress: 0,
   });
 
-  // P1 city at (5, 3) - bomber starting position
+  // P1 city at (5, 3) - missile starting position
   state.cities.push({
     id: 'city_p1_1',
     x: 5,
@@ -126,9 +127,9 @@ export function createBomberDecisionTestMap(): GameState {
     carriedBy: null,
   });
 
-  // P1 Bomber #1 at P1 city (5, 3) - should attack transport (higher priority)
+  // P1 Missile #1 at P1 city (5, 3) - should attack transport (higher priority)
   state.units.push({
-    id: 'unit_p1_bomber1',
+    id: 'unit_p1_missile1',
     type: UnitType.Missile,
     owner: 'player1' as PlayerId,
     x: 5,
@@ -141,9 +142,9 @@ export function createBomberDecisionTestMap(): GameState {
     carriedBy: null,
   });
 
-  // P1 Bomber #2 at P1 city (5, 3) - should attack battleship (second priority)
+  // P1 Missile #2 at P1 city (5, 3) - should attack battleship (second priority)
   state.units.push({
-    id: 'unit_p1_bomber2',
+    id: 'unit_p1_missile2',
     type: UnitType.Missile,
     owner: 'player1' as PlayerId,
     x: 5,
@@ -175,7 +176,7 @@ export function createBomberDecisionTestMap(): GameState {
   return state;
 }
 
-export function getBomberDecisionTestConfig(): TestConfig {
+export function getMissileDecisionTestConfig(): TestConfig {
   const mapWidth = 30;
   const mapHeight = 8;
 
@@ -194,7 +195,7 @@ export function getBomberDecisionTestConfig(): TestConfig {
   const p1Explored: string[] = ['3,1', '4,1', '5,1', '6,1', '7,1', '3,2', '4,2', '5,2', '6,2', '7,2', '3,3', '4,3', '5,3', '6,3', '7,3', '3,4', '4,4', '5,4', '6,4', '7,4', '3,5', '4,5', '5,5', '6,5', '7,5'];
 
   return {
-    testName: 'bomberDecision',
+    testName: 'missileDecision',
     mapConfig: {
       width: mapWidth,
       height: mapHeight,
@@ -241,9 +242,9 @@ export function getBomberDecisionTestConfig(): TestConfig {
         cargo: ['unit_p2_army'],
         carriedBy: null,
       },
-      // P1 Bomber #1 at P1 city (5, 3)
+      // P1 Missile #1 at P1 city (5, 3)
       {
-        id: 'unit_p1_bomber1',
+        id: 'unit_p1_missile1',
         type: 'missile',
         owner: 'player1',
         x: 5,
@@ -253,9 +254,9 @@ export function getBomberDecisionTestConfig(): TestConfig {
         cargo: [],
         carriedBy: null,
       },
-      // P1 Bomber #2 at P1 city (5, 3)
+      // P1 Missile #2 at P1 city (5, 3)
       {
-        id: 'unit_p1_bomber2',
+        id: 'unit_p1_missile2',
         type: 'missile',
         owner: 'player1',
         x: 5,
@@ -282,7 +283,7 @@ export function getBomberDecisionTestConfig(): TestConfig {
     p1ExploredTiles: p1Explored,
     p2ExploredTiles: p1Explored, // P2 also sees the island
     victoryCondition: (state) => {
-      // Check if both bombers attacked their correct targets
+      // Check if both missiles attacked their correct targets
       const transportAlive = state.units.some(
         (u) => u.id === 'unit_p2_trans' && u.health > 0,
       );
@@ -300,7 +301,7 @@ export function getBomberDecisionTestConfig(): TestConfig {
 
 // Run test if executed directly
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const config = getBomberDecisionTestConfig();
+  const config = getMissileDecisionTestConfig();
   runTest(config, { verbose: true, saveReplay: true })
     .then((result) => {
       console.log('\nTest Result:', result);

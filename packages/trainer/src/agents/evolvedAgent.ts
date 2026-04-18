@@ -62,7 +62,7 @@ export class EvolvedAgent implements Agent {
       UnitType.Carrier, UnitType.Battleship,
     ];
     const prodFeatureNames = [
-      'prodArmy', 'prodFighter', 'prodBomber',
+      'prodArmy', 'prodFighter', 'prodMissile',
       'prodTransport', 'prodDestroyer', 'prodSubmarine',
       'prodCarrier', 'prodBattleship',
     ] as const;

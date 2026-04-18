@@ -618,13 +618,13 @@ export class MapQuery {
   }
 
   /**
-   * Find highest-priority bomber target across the entire visible map.
+   * Find highest-priority missile target across the entire visible map.
    * Score = production cost (buildTime), with special multipliers:
    * - Enemy city with defenders AND friendly unit within 2 squares: *999
    * - Enemy transport with >=1 army: *3
    * Returns the target coordinate (unit or city location).
    */
-  findBomberTarget(unit: UnitView, obs: AgentObservation): Coord | null {
+  findMissileTarget(unit: UnitView, obs: AgentObservation): Coord | null {
     const maxFuel = UNIT_STATS[unit.type].maxFuel ?? 100;
     type Target = { x: number; y: number; score: number; dist: number };
     const targets: Target[] = [];
@@ -672,7 +672,7 @@ export class MapQuery {
     return { x: targets[0].x, y: targets[0].y };
   }
 
-  /** Find enemy transport with cargo (bomber/fighter target). */
+  /** Find enemy transport with cargo (missile/fighter target). */
   findEnemyTransportWithCargo(from: Coord, obs: AgentObservation, maxRange: number): UnitView | null {
     let best: UnitView | null = null;
     let bestDist = Infinity;
@@ -685,7 +685,7 @@ export class MapQuery {
     return best;
   }
 
-  /** Find area with at least `minValue` enemy production value (bomber area target). */
+  /** Find area with at least `minValue` enemy production value (missile area target). */
   findHighValueEnemyCluster(from: Coord, obs: AgentObservation, maxRange: number, minValue: number): UnitView | null {
     let best: UnitView | null = null;
     let bestValue = -1;

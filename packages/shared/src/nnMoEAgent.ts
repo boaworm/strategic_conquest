@@ -2,7 +2,7 @@
  * Mixture-of-Experts Neural Network Agent.
  *
  * Loads 9 specialist ONNX models from a directory:
- *   army.onnx, fighter.onnx, bomber.onnx, transport.onnx,
+ *   army.onnx, fighter.onnx, missile.onnx, transport.onnx,
  *   destroyer.onnx, submarine.onnx, carrier.onnx, battleship.onnx,
  *   production.onnx
  *
@@ -58,7 +58,7 @@ type MovementActionType = typeof MOVEMENT_ACTION_TYPES[number];
 const UNIT_TYPE_NAMES: Record<UnitType, string> = {
   [UnitType.Army]:       'army',
   [UnitType.Fighter]:    'fighter',
-  [UnitType.Bomber]:     'bomber',
+  [UnitType.Missile]:    'missile',
   [UnitType.Transport]:  'transport',
   [UnitType.Destroyer]:  'destroyer',
   [UnitType.Submarine]:  'submarine',
@@ -67,7 +67,7 @@ const UNIT_TYPE_NAMES: Record<UnitType, string> = {
 };
 
 const PROD_UNIT_TYPES = [
-  UnitType.Army, UnitType.Fighter, UnitType.Bomber, UnitType.Transport,
+  UnitType.Army, UnitType.Fighter, UnitType.Missile, UnitType.Transport,
   UnitType.Destroyer, UnitType.Submarine, UnitType.Carrier, UnitType.Battleship,
 ] as const;
 
@@ -369,15 +369,15 @@ export class NnMoEAgent implements Agent {
     f[22] = obs.myCities.filter(c => c.producing === UnitType.Army).length / 10;
     // 23: fighter count (explicit for balance calc)
     f[23] = obs.myUnits.filter(u => u.type === UnitType.Fighter).length / 20;
-    // 24: bomber count
-    f[24] = obs.myUnits.filter(u => u.type === UnitType.Bomber).length / 20;
+    // 24: missile count
+    f[24] = obs.myUnits.filter(u => u.type === UnitType.Missile).length / 20;
     // 25: army count
     f[25] = obs.myUnits.filter(u => u.type === UnitType.Army).length / 20;
-    // 26: min(Fighter, Bomber, Army) count
+    // 26: min(Fighter, Missile, Army) count
     const fighterCount = obs.myUnits.filter(u => u.type === UnitType.Fighter).length;
-    const bomberCount = obs.myUnits.filter(u => u.type === UnitType.Bomber).length;
+    const missileCount = obs.myUnits.filter(u => u.type === UnitType.Missile).length;
     const armyCount = obs.myUnits.filter(u => u.type === UnitType.Army).length;
-    f[26] = Math.min(fighterCount, bomberCount, armyCount) / 20;
+    f[26] = Math.min(fighterCount, missileCount, armyCount) / 20;
     // 27: bias
     f[27] = 1.0;
     return f;

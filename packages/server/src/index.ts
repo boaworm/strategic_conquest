@@ -247,7 +247,7 @@ io.on('connection', (socket) => {
     const ANIM_DELAY_MS = 2000;
     if (
       enemyCombatCapture &&
-      (result.combat || result.cityCaptured || result.bomberBlastRadius !== undefined)
+      (result.combat || result.cityCaptured || result.missileBlastRadius !== undefined)
     ) {
       const { humanId, ...combatData } = enemyCombatCapture;
       const humanView = manager.getPlayerView(session, humanId);
@@ -257,8 +257,8 @@ io.on('connection', (socket) => {
           ...combatData,
           combat: result.combat ?? null,
           cityCaptured: !!result.cityCaptured,
-          bomberBlastRadius: result.bomberBlastRadius,
-          bomberBlastCenter: result.bomberBlastCenter,
+          missileBlastRadius: result.missileBlastRadius,
+          missileBlastCenter: result.missileBlastCenter,
         });
         io.to(sid).emit('stateUpdate', humanView);
       }

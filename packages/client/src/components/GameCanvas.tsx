@@ -129,7 +129,7 @@ function computeReachableTiles(
         if (!view.myCities.some((c) => c.x === nx && c.y === ny)) continue;
       }
 
-      // Fuel constraint for bombers (and any other air unit with limited fuel)
+      // Fuel constraint for missiles (and any other air unit with limited fuel)
       const newFuel = fuel - 1; // Infinity - 1 = Infinity, so unconstrained units are fine
       if (newFuel < 0) continue;
       if (hasFuel && distToLanding(nx, ny) > newFuel) continue;
@@ -739,7 +739,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     result: CombatResult | null;  // filled once server responds
     phase: 'waiting' | 'clashing' | 'flash' | 'result' | 'done';
   }
-  interface BomberBlastAnim {
+  interface MissileBlastAnim {
     centerX: number;       // tile coords
     centerY: number;
     radius: number;        // blast radius in tiles (0, 1, or 2)
@@ -748,7 +748,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     phase: 'expanding' | 'fading' | 'done';
   }
   const combatAnimRef = useRef<CombatAnim | null>(null);
-  const bomberBlastRef = useRef<BomberBlastAnim | null>(null);
+  const missileBlastRef = useRef<MissileBlastAnim | null>(null);
   const pendingCombatRef = useRef<{ unitId: string; type: UnitType; owner: string; fromX: number; fromY: number; toX: number; toY: number } | null>(null);
   const animFrameRef = useRef<number>(0);
   const [, forceRender] = useState(0);
@@ -1265,8 +1265,8 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       }
     }
 
-    // ── Bomber blast: mushroom cloud animation ───────────────
-    const blast = bomberBlastRef.current;
+    // ── Missile blast: mushroom cloud animation ───────────────
+    const blast = missileBlastRef.current;
     if (blast && blast.phase !== 'done') {
       const bSX = blast.centerX * tileSize - originX + tileSize / 2;
       const bSY = blast.centerY * tileSize - originY + tileSize / 2;
@@ -1511,7 +1511,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         needsFrame = true;
       }
 
-      const blast = bomberBlastRef.current;
+      const blast = missileBlastRef.current;
       if (blast && blast.phase === 'expanding') {
         const elapsed = performance.now() - blast.startTime;
         blast.progress = Math.min(elapsed / BLAST_EXPAND_DURATION, 1);
@@ -1526,7 +1526,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         blast.progress = Math.min(elapsed / BLAST_FADE_DURATION, 1);
         if (blast.progress >= 1) {
           blast.phase = 'done';
-          bomberBlastRef.current = null;
+          missileBlastRef.current = null;
           forceRender((n) => n + 1);
         }
         needsFrame = true;
@@ -1603,7 +1603,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     };
   }, [draw]);
 
-  // ── Kick off clash / bomber blast when actionResult arrives with combat ───
+  // ── Kick off clash / missile blast when actionResult arrives with combat ───
   useEffect(() => {
     if (!lastActionResult) return;
     const isMyTurn = view.currentPlayer === playerId;
@@ -1638,13 +1638,13 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     // Cancel any in-progress move animation when combat starts
     moveAnimRef.current = null;
 
-    // Bomber blast: skip normal clash, show expanding red circle
-    if (lastActionResult.bomberBlastRadius !== undefined && lastActionResult.bomberBlastCenter) {
-      const bc = lastActionResult.bomberBlastCenter;
-      bomberBlastRef.current = {
+    // Missile blast: skip normal clash, show expanding red circle
+    if (lastActionResult.missileBlastRadius !== undefined && lastActionResult.missileBlastCenter) {
+      const bc = lastActionResult.missileBlastCenter;
+      missileBlastRef.current = {
         centerX: bc.x,
         centerY: bc.y,
-        radius: lastActionResult.bomberBlastRadius,
+        radius: lastActionResult.missileBlastRadius,
         progress: 0,
         startTime: performance.now(),
         phase: 'expanding',
@@ -1724,7 +1724,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       attackerUnitId, attackerType, attackerOwner,
       fromX, fromY, toX, toY,
       combat, cityCaptured,
-      bomberBlastRadius, bomberBlastCenter,
+      missileBlastRadius, missileBlastCenter,
     } = lastEnemyCombat;
 
     // Center camera on the attack location
@@ -1737,13 +1737,13 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       return;
     }
 
-    // Bomber blast
-    if (bomberBlastRadius !== undefined && bomberBlastCenter) {
+    // Missile blast
+    if (missileBlastRadius !== undefined && missileBlastCenter) {
       moveAnimRef.current = null;
-      bomberBlastRef.current = {
-        centerX: bomberBlastCenter.x,
-        centerY: bomberBlastCenter.y,
-        radius: bomberBlastRadius,
+      missileBlastRef.current = {
+        centerX: missileBlastCenter.x,
+        centerY: missileBlastCenter.y,
+        radius: missileBlastRadius,
         progress: 0,
         startTime: performance.now(),
         phase: 'expanding',

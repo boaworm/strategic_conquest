@@ -236,8 +236,10 @@ export interface GameState {
   explored: Record<PlayerId, Set<string>>;
   /** Tiles visible at any point this turn (reset at turn start) */
   turnVisible: Record<PlayerId, Set<string>>;
-  /** Total bombers produced per player (for blast radius upgrades) */
-  bombersProduced: Record<PlayerId, number>;
+  /** Total missiles produced per player (for blast radius upgrades) */
+  missilesProduced: Record<PlayerId, number>;
+  /** Enemy units seen this turn (reset each turn) */
+  seenEnemies: Record<PlayerId, { id: string; type: UnitType; owner: PlayerId; x: number; y: number }[]>;
 /** Test options - only used in test mode */
   testOptions?: {
     /** Override city capture success rate (1 = 100% success) */
@@ -300,8 +302,8 @@ export interface PlayerView {
   currentPlayer: PlayerId;
   phase: GamePhase;
   winner: PlayerId | null;
-  /** Blast radius for this player's bombers (0 = single tile, 1 = nuclear, 2 = mega). */
-  myBomberBlastRadius: number;
+  /** Blast radius for this player's missiles (0 = single tile, 1 = nuclear, 2 = mega). */
+  myMissileBlastRadius: number;
 }
 
 // ── Actions ──────────────────────────────────────────────────
@@ -324,10 +326,10 @@ export interface ActionResult {
   combat?: CombatResult;
   /** City captured as a result of the action */
   cityCaptured?: string;
-  /** Bomber blast radius (0 = single tile, 1 = adjacent, 2 = two rings) */
-  bomberBlastRadius?: number;
-  /** Center of bomber explosion */
-  bomberBlastCenter?: Coord;
+  /** Missile blast radius (0 = single tile, 1 = adjacent, 2 = two rings) */
+  missileBlastRadius?: number;
+  /** Center of missile explosion */
+  missileBlastCenter?: Coord;
   /** Number of fighters that crashed (ran out of fuel / not on city or carrier) */
   /** Number of fighters that crashed (ran out of fuel / not on city or carrier) */
   fightersCrashed?: number;
@@ -357,8 +359,8 @@ export interface EnemyCombatEvent {
   toY: number;
   combat: CombatResult | null;
   cityCaptured: boolean;
-  bomberBlastRadius?: number;
-  bomberBlastCenter?: Coord;
+  missileBlastRadius?: number;
+  missileBlastCenter?: Coord;
 }
 
 export interface ServerToClientEvents {

@@ -131,7 +131,7 @@ async function main() {
         vsBaseline: true,
       });
     } else {
-      ranked = runTournament(population, tournamentConfig);
+      ranked = await runTournament(population, tournamentConfig);
     }
 
     const genTime = ((Date.now() - genStart) / 1000).toFixed(1);

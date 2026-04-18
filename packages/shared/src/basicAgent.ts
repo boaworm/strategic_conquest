@@ -31,7 +31,7 @@ const PRODUCTION_RULES: ProductionRulesSchema = {
  *  2. Explore unexplored land areas on the current island.
  *  3. Board transports to reach other islands and claim their cities.
  *  4. Only when no free cities remain: fight for defended enemy cities using
- *     bombers/fighters/battleships to weaken defenders, then armies to capture.
+ *     missiles/fighters/battleships to weaken defenders, then armies to capture.
  */
 export class BasicAgent implements Agent {
   private playerId!: string;

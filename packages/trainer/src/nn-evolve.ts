@@ -85,7 +85,7 @@ class EvolutionNnAgent {
     const prodTypeIdx = this.argmax(results.prod_type.data as Float32Array);
 
     const ACTION_TYPES = ['END_TURN', 'SET_PRODUCTION', 'MOVE', 'LOAD', 'UNLOAD', 'SLEEP', 'WAKE', 'SKIP', 'DISBAND'] as const;
-    const UNIT_TYPES = ['army', 'fighter', 'bomber', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'] as const;
+    const UNIT_TYPES = ['army', 'fighter', 'missile', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'] as const;
 
     const actionType = ACTION_TYPES[actionTypeIdx];
 
@@ -132,7 +132,7 @@ class EvolutionNnAgent {
     for (const unit of view.myUnits || []) {
       let channel = 0;
       if (unit.type === 'fighter') channel = 1;
-      else if (unit.type === 'bomber') channel = 2;
+      else if (unit.type === 'missile') channel = 2;
       else if (unit.type === 'transport') channel = 3;
       else if (unit.type === 'destroyer') channel = 4;
       else if (unit.type === 'submarine') channel = 5;

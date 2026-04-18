@@ -24,7 +24,7 @@ export interface WorkerResult {
 
 // When run as a worker thread, process incoming tasks
 if (parentPort) {
-  parentPort.on('message', (task: WorkerTask) => {
+  parentPort.on('message', async (task: WorkerTask) => {
     const agent = new EvolvedAgent(task.genome);
     const opponent = task.opponentGenome
       ? new EvolvedAgent(task.opponentGenome)
@@ -38,12 +38,12 @@ if (parentPort) {
     let turns: number;
 
     if (task.asPlayer1) {
-      const result = runGame(agent, opponent, opts);
+      const result = await runGame(agent, opponent, opts);
       fitness = computeFitness(result.p1Outcome, fitnessWeights);
       won = result.winner === 'player1';
       turns = result.turns;
     } else {
-      const result = runGame(opponent, agent, opts);
+      const result = await runGame(opponent, agent, opts);
       fitness = computeFitness(result.p2Outcome, fitnessWeights);
       won = result.winner === 'player2';
       turns = result.turns;

@@ -25,10 +25,10 @@ export const DEFAULT_TOURNAMENT_CONFIG: TournamentConfig = {
  * Evaluate a population of genomes via a tournament.
  * Returns agents ranked by aggregate fitness.
  */
-export function runTournament(
+export async function runTournament(
   genomes: Genome[],
   config: TournamentConfig = DEFAULT_TOURNAMENT_CONFIG,
-): RankedAgent[] {
+): Promise<RankedAgent[]> {
   const fitnessWeights = config.fitnessWeights ?? DEFAULT_FITNESS_WEIGHTS;
   const scores = new Map<number, number>(); // genome index → total fitness
 
@@ -47,7 +47,7 @@ export function runTournament(
         const agent = new EvolvedAgent(genomes[i]);
         const opponent = new BasicAgent();
         const seed = (i * config.gamesPerAgent + g) * 7919 + 1;
-        const result = runGame(agent, opponent, {
+        const result = await runGame(agent, opponent, {
           ...config.runnerOpts,
           mapSeed: seed,
         });
@@ -59,7 +59,7 @@ export function runTournament(
         const agent = new EvolvedAgent(genomes[i]);
         const opponent = new BasicAgent();
         const seed = (i * config.gamesPerAgent + g + gamesPerSide) * 7919 + 2;
-        const result = runGame(opponent, agent, {
+        const result = await runGame(opponent, agent, {
           ...config.runnerOpts,
           mapSeed: seed,
         });
@@ -85,13 +85,13 @@ export function runTournament(
         const seed = (i * config.gamesPerAgent + g) * 7919 + 3;
 
         if (asP1) {
-          const result = runGame(agent, opponent, {
+          const result = await runGame(agent, opponent, {
             ...config.runnerOpts,
             mapSeed: seed,
           });
           totalFitness += computeFitness(result.p1Outcome, fitnessWeights);
         } else {
-          const result = runGame(opponent, agent, {
+          const result = await runGame(opponent, agent, {
             ...config.runnerOpts,
             mapSeed: seed,
           });

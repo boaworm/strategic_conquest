@@ -143,7 +143,7 @@ async function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPl
     visibleEnemyCities: view.visibleEnemyCities,
     turn: view.turn,
     myPlayerId: expectedPlayerId as any,
-    myBomberBlastRadius: view.myBomberBlastRadius,
+    myMissileBlastRadius: view.myMissileBlastRadius,
   });
 
   logAction(prefix, action, view);

@@ -10,7 +10,7 @@ NUM_MOVEMENT_ACTIONS = 5   # MOVE, SLEEP, SKIP, LOAD, UNLOAD
 NUM_UNIT_TYPES       = 8   # army … battleship
 NUM_GLOBAL           = 28  # production expert global feature vector length
 
-UNIT_TYPE_NAMES = ['army', 'fighter', 'bomber', 'transport',
+UNIT_TYPE_NAMES = ['army', 'fighter', 'missile', 'transport',
                    'destroyer', 'submarine', 'carrier', 'battleship']
 ALL_MODEL_NAMES = UNIT_TYPE_NAMES + ['production']
 

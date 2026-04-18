@@ -29,7 +29,7 @@ interface PhaseTimings {
   agentAct: number;
 }
 
-function profileGameCollection(): void {
+async function profileGameCollection(): Promise<void> {
   const timings: number[] = [];
   const perGameStats: { game: number; turns: number; ms: number; phases: PhaseTimings }[] = [];
 
@@ -44,7 +44,7 @@ function profileGameCollection(): void {
     phaseAccumulator.init += performance.now() - initStart;
 
     const gameStart = performance.now();
-    const result = runGame(agent1, agent2, { maxTurns: MAX_TURNS, profilePhases: phaseAccumulator });
+    const result = await runGame(agent1, agent2, { maxTurns: MAX_TURNS, profilePhases: phaseAccumulator });
     const gameEnd = performance.now();
 
     const elapsed = gameEnd - gameStart;

@@ -31,7 +31,7 @@ export const FEATURE_NAMES = [
   // Production weights per unit type
   'prodArmy',
   'prodFighter',
-  'prodBomber',
+  'prodMissile',
   'prodTransport',
   'prodDestroyer',
   'prodSubmarine',

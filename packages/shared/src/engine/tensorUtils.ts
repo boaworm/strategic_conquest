@@ -9,7 +9,7 @@ export const NUM_CHANNELS = 14;
  * Channels:
  *  0: Friendly Army
  *  1: Friendly Fighter
- *  2: Friendly Bomber
+ *  2: Friendly Missile
  *  3: Friendly Transport
  *  4: Friendly Destroyer
  *  5: Friendly Submarine

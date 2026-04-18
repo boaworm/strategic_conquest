@@ -88,7 +88,7 @@ const testFiles = [
   'test_armyMoveToCoastAndBoardTransport.ts',
   'test_armyMoveToCoastAndBoardTransport_2.ts',
   'test_battleshipPriorities.ts',
-  'test_bomberDecision.ts',
+  'test_missileDecision.ts',
   'test_destroyerChasingTransport.ts',
   'test_expansionOfIslandFirst.ts',
   'test_exploreAndExpand_3.ts',

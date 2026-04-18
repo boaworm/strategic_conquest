@@ -308,10 +308,10 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     return ctx.obs.visibleEnemyCities.some((c) => c.owner !== null);
   });
 
-  // ── Bomber conditions ───────────────────────────────────────
+  // ── Missile conditions ───────────────────────────────────────
 
-  m.set('bomber_city_target_available', (ctx) => {
-    return ctx.map.findBomberTarget(ctx.unit, ctx.obs) !== null;
+  m.set('missile_city_target_available', (ctx) => {
+    return ctx.map.findMissileTarget(ctx.unit, ctx.obs) !== null;
   });
 
   m.set('enemy_transport_with_cargo_in_fuel_range', (ctx) => {
@@ -653,10 +653,10 @@ function buildActionResolvers(): Map<string, ActionResolver> {
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
   });
 
-  // ── Bomber ──────────────────────────────────────────────────
+  // ── Missile ──────────────────────────────────────────────────
 
   a.set('bomb_city', (ctx) => {
-    const target = ctx.map.findBomberTarget(ctx.unit, ctx.obs);
+    const target = ctx.map.findMissileTarget(ctx.unit, ctx.obs);
     if (!target) return null;
     const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, target);
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;

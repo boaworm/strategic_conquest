@@ -163,7 +163,7 @@ def export_onnx(model: MovementCNN, map_height: int, map_width: int, output_path
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--unit-type',  required=True,
-                        choices=['army','fighter','bomber','transport','destroyer','submarine','carrier','battleship'])
+                        choices=['army','fighter','missile','transport','destroyer','submarine','carrier','battleship'])
     parser.add_argument('--data-dir',   required=True)
     parser.add_argument('--out-dir',    default='./checkpoints/moe')
     parser.add_argument('--epochs',     type=int,   default=50)

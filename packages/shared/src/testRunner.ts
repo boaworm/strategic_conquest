@@ -204,7 +204,7 @@ export function createGameStateFromConfig(config: TestConfig): GameState {
       player1: new Set(),
       player2: new Set(),
     },
-    bombersProduced: { player1: 0, player2: 0 },
+    missilesProduced: { player1: 0, player2: 0 },
   };
 
   // Set up per-player explored tiles
@@ -311,7 +311,7 @@ export async function runTest(
       const action: AgentAction = currentAgent.act({
         ...view,
         myPlayerId: currentPlayer,
-        myBomberBlastRadius: 0,
+        myMissileBlastRadius: 0,
       } as any);
 
       // Apply the agent's action
@@ -358,7 +358,7 @@ export async function runTest(
         const action: AgentAction = agent2.act({
           ...view,
           myPlayerId: currentPlayer,
-          myBomberBlastRadius: 0,
+          myMissileBlastRadius: 0,
         } as any);
 
         // Apply the agent's action

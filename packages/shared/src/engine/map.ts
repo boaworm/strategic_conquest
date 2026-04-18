@@ -491,13 +491,17 @@ export function createGameState(opts: MapOptions): GameState {
         player1: new Set<string>(),
         player2: new Set<string>(),
       },
-      bombersProduced: {
-        player1: 0,
-        player2: 0,
-      },
       seenEnemies: {
         player1: [],
         player2: [],
+      },
+      turnVisible: {
+        player1: new Set<string>(),
+        player2: new Set<string>(),
+      },
+      missilesProduced: {
+        player1: 0,
+        player2: 0,
       },
     };
     return result;
@@ -519,11 +523,15 @@ export function createGameState(opts: MapOptions): GameState {
       player1: new Set<string>(),
       player2: new Set<string>(),
     },
+    seenEnemies: {
+      player1: [],
+      player2: [],
+    },
     turnVisible: {
       player1: new Set<string>(),
       player2: new Set<string>(),
     },
-    bombersProduced: {
+    missilesProduced: {
       player1: 0,
       player2: 0,
     },

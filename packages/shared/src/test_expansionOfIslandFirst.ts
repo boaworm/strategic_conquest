@@ -9,7 +9,7 @@
  *
  * Goal:
  * - All 5 cities are captured by armies
- * - No non-army unit (fighter, bomber, ship) is built before all cities are taken
+ * - No non-army unit (fighter, missile, ship) is built before all cities are taken
  */
 import {
   runTest,

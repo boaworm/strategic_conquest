@@ -65,6 +65,7 @@ export function createTrainingRoutes(manager: GameManager): Router {
       mapWidth ?? 30,
       mapHeight ?? 20,
       undefined, // mapPreset
+      undefined, // mapId
       true, // isPvE
       difficulty as AIDifficulty,
     );

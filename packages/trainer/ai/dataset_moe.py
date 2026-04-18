@@ -26,7 +26,7 @@ MOVEMENT_ACTION_TO_IDX = {a: i for i, a in enumerate(MOVEMENT_ACTION_TYPES)}
 NUM_MOVEMENT_ACTIONS = len(MOVEMENT_ACTION_TYPES)
 
 # Unit types (must match UnitType enum in types.ts)
-UNIT_TYPES = ['army', 'fighter', 'bomber', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship']
+UNIT_TYPES = ['army', 'fighter', 'missile', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship']
 UNIT_TYPE_TO_IDX = {u: i for i, u in enumerate(UNIT_TYPES)}
 NUM_UNIT_TYPES = len(UNIT_TYPES)
 

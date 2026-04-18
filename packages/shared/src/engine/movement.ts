@@ -127,7 +127,7 @@ export function canMoveTo(
 
   // Air unit fuel-return check: after this move the unit must
   // still have enough fuel to reach a friendly city or carrier.
-  // Bombers have no fuel constraint (single-use weapons).
+  // Missiles have no fuel constraint (single-use weapons).
   if (stats.domain === UnitDomain.Air && unit.fuel !== undefined && unit.type !== UnitType.Missile) {
     const fuelAfterMove = unit.fuel - 1;
     const dist = distToNearestLandingSpot(state, wx, wy, unit.owner, unit.type);
@@ -177,7 +177,7 @@ export function getVisibleTiles(
     if (unit.carriedBy !== null) continue;
 
     // Fixed FoW radii by unit class:
-    // - Fighters and bombers: 3
+    // - Fighters and missiles: 3
     // - Everyone else: 2
     const range = (unit.type === UnitType.Fighter || unit.type === UnitType.Missile) ? 3 : 2;
 

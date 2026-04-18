@@ -45,7 +45,7 @@ const PROD_SAMPLE_MULTIPLIER = parseInt(process.env.PROD_SAMPLE_MULTIPLIER ?? '3
 const MAX_PER_PROD_BUCKET    = prodOnly ? Infinity : MAX_PER_BUCKET * PROD_SAMPLE_MULTIPLIER;
 
 const MOVEMENT_ACTION_TYPES = ['MOVE', 'SLEEP', 'SKIP', 'LOAD', 'UNLOAD'] as const;
-const UNIT_TYPE_NAMES = ['army', 'fighter', 'bomber', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'] as const;
+const UNIT_TYPE_NAMES = ['army', 'fighter', 'missile', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'] as const;
 type UnitTypeName = typeof UNIT_TYPE_NAMES[number];
 
 const NUM_GLOBAL = 28;
@@ -145,15 +145,15 @@ function buildGlobalFeatures(view: PlayerView, city: { x: number; y: number; pro
   f[22] = view.myCities.filter(c => c.producing === 'army').length / 10;
   // 23: fighter count (explicit for balance calc)
   f[23] = view.myUnits.filter(u => u.type === 'fighter').length / 20;
-  // 24: bomber count
-  f[24] = view.myUnits.filter(u => u.type === 'bomber').length / 20;
+  // 24: missile count
+  f[24] = view.myUnits.filter(u => u.type === 'missile').length / 20;
   // 25: army count
   f[25] = view.myUnits.filter(u => u.type === 'army').length / 20;
-  // 26: min(Fighter, Bomber, Army) count
+  // 26: min(Fighter, Missile, Army) count
   const fighterCount = view.myUnits.filter(u => u.type === 'fighter').length;
-  const bomberCount = view.myUnits.filter(u => u.type === 'bomber').length;
+  const missileCount = view.myUnits.filter(u => u.type === 'missile').length;
   const armyCount = view.myUnits.filter(u => u.type === 'army').length;
-  f[26] = Math.min(fighterCount, bomberCount, armyCount) / 20;
+  f[26] = Math.min(fighterCount, missileCount, armyCount) / 20;
   // 27: bias
   f[27] = 1.0;
   return f;

@@ -9,7 +9,7 @@ function getCtx(): AudioContext {
 }
 
 /** Big boom — low rumbling explosion for 2s */
-function playBomberAttack() {
+function playMissileAttack() {
   const ctx = getCtx();
   const duration = 2;
   const t0 = ctx.currentTime;
@@ -356,8 +356,8 @@ function playFighterMove() {
   noise.stop(t0 + dur);
 }
 
-/** Heavy prop drone — bomber movement (~0.4s) */
-function playBomberMove() {
+/** Heavy prop drone — missile movement (~0.4s) */
+function playMissileMove() {
   const ctx = getCtx();
   const t0 = ctx.currentTime;
   const dur = 0.4;
@@ -424,7 +424,7 @@ export function playMoveSound(unitType: UnitType): void {
       playFighterMove();
       break;
     case UnitType.Missile:
-      playBomberMove();
+      playMissileMove();
       break;
     default: // Transport, Destroyer, Submarine, Carrier, Battleship
       playNavalMove();
@@ -475,7 +475,7 @@ export function playCrashSound(): void {
 export function playAttackSound(unitType: UnitType): void {
   switch (unitType) {
     case UnitType.Missile:
-      playBomberAttack();
+      playMissileAttack();
       break;
     case UnitType.Fighter:
       playFighterAttack();

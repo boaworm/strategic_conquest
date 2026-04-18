@@ -46,7 +46,7 @@ export function UnitPanel() {
       {selected && selectedStats && (
         <div className="border-b border-gray-600 pb-2 mb-1">
           <div className="font-bold text-lg capitalize">
-            {selected.type === UnitType.Missile ? missileLabel(view.myBomberBlastRadius) : selected.type}
+            {selected.type === UnitType.Missile ? missileLabel(view.myMissileBlastRadius) : selected.type}
           </div>
           <div className="text-sm space-y-1">
             <div>HP: {selected.health}/{selectedStats.maxHealth}</div>
@@ -145,7 +145,7 @@ export function UnitPanel() {
                 />
                 <span className="capitalize truncate">
                   {(() => {
-                    const label = u.type === UnitType.Missile ? missileLabel(view.myBomberBlastRadius) : u.type;
+                    const label = u.type === UnitType.Missile ? missileLabel(view.myMissileBlastRadius) : u.type;
                     return carried ? `↳ ${label}` : label;
                   })()}
                 </span>
