@@ -1,6 +1,6 @@
 # Python AI/ML dependencies (neuroevolution, neural network training)
-torch>=2.0
-numpy>=1.26.0,<2
+torch>=2.11
+numpy>=2.0
 onnxruntime>=1.15
 onnx>=1.19
 ml_dtypes>=0.5.0
