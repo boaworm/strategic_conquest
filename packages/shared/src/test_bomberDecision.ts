@@ -49,6 +49,7 @@ export function createBomberDecisionTestMap(): GameState {
     phase: GamePhase.Active,
     winner: null,
     explored: { player1: new Set(), player2: new Set() },
+    turnVisible: { player1: new Set(), player2: new Set() },
     bombersProduced: { player1: 0, player2: 0 },
     testOptions: {
       cityCaptureSuccessRate: 1,

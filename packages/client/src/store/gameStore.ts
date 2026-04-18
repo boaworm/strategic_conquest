@@ -11,7 +11,7 @@ import type {
   ClientToServerEvents,
   UnitView,
 } from '@sc/shared';
-import { Terrain, UnitType } from '@sc/shared';
+import { Terrain, UnitType, TileVisibility } from '@sc/shared';
 
 export interface LastKnownEnemy {
   id: string;
@@ -224,7 +224,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
         const currentLKE = get().lastKnownEnemies;
         const visibleIds = new Set(view.visibleEnemyUnits.map((u) => u.id));
         updatedLKE = Object.fromEntries(
-          Object.entries(currentLKE).filter(([id]) => !visibleIds.has(id)),
+          Object.entries(currentLKE).filter(([id, ghost]) => {
+            if (visibleIds.has(id)) return false; // currently visible, will be re-added below
+            // If the ghost's tile is currently visible but the unit isn't there, it was destroyed
+            const tile = view.tiles[ghost.y]?.[ghost.x];
+            if (tile?.visibility === TileVisibility.Visible) return false;
+            return true;
+          }),
         );
         // Pin any currently-visible enemy unit into LKE so it stays shown
         // if it later leaves vision range (enemies don't move during our turn)

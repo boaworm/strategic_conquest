@@ -307,8 +307,8 @@ function handleMove(
 
   const check = canMoveTo(state, unit, target);
 
-  // Naval bombardment: sea unit attacking an adjacent land tile it can't enter
-  if (!check.ok && UNIT_STATS[unit.type].domain === UnitDomain.Sea) {
+  // Naval bombardment: only battleships can attack land tiles they can't enter
+  if (!check.ok && unit.type === UnitType.Battleship) {
     const wx = wrapX(target.x, state.mapWidth);
     const terrain = state.tiles[target.y]?.[wx];
     if (terrain === Terrain.Land) {
@@ -926,6 +926,9 @@ function handleUnload(
  * - Keep seen enemy memory (last-known positions) across turns
  */
 function handleBeginOfTurn(state: GameState, playerId: PlayerId): void {
+  // Reset turn-visibility accumulator so fog resets fresh each turn
+  state.turnVisible[playerId] = new Set<string>();
+
   // Advance production for this player (at beginning of turn)
   advanceProduction(state, playerId);
 
@@ -1062,17 +1065,20 @@ export function getPlayerView(
 ): PlayerView {
   const visible = getVisibleTiles(state, playerId);
 
-  // Persist newly visible tiles into the explored set
+  // Persist newly visible tiles into the explored set and turn accumulator
   const explored = state.explored[playerId];
+  const turnVis = state.turnVisible[playerId] ?? new Set<string>();
+  state.turnVisible[playerId] = turnVis;
   for (const key of visible) {
     explored.add(key);
+    turnVis.add(key);
   }
 
-  // Build tile view
+  // Build tile view — use turnVis so tiles don't go dark mid-turn
   const tiles: TileView[][] = Array.from({ length: state.mapHeight }, (_, y) =>
     Array.from({ length: state.mapWidth }, (_, x) => {
       const key = `${x},${y}`;
-      const vis = visible.has(key)
+      const vis = turnVis.has(key)
         ? TileVisibility.Visible
         : explored.has(key)
           ? TileVisibility.Seen
@@ -1104,13 +1110,13 @@ export function getPlayerView(
       coastal: isCityCoastal(state, c),
     }));
 
-  // Visible enemy units (submarines only visible if detected by friendly DD/SS)
+  // Visible enemy units — use turnVis so units stay visible after we move away
   const currentlyVisible: UnitView[] = state.units
     .filter(
       (u) =>
         u.owner !== playerId &&
         u.carriedBy === null &&
-        visible.has(`${u.x},${u.y}`) &&
+        turnVis.has(`${u.x},${u.y}`) &&
         (u.type !== UnitType.Submarine ||
           canDetectSubmarine(state, u.x, u.y, playerId)),
     )

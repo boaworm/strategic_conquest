@@ -1894,7 +1894,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       const { tileSize, cameraX, cameraY } = useGameStore.getState();
       if (e.ctrlKey) {
         // Pinch gesture → zoom
-        const factor = Math.exp(-e.deltaY * 0.001);
+        const factor = Math.exp(-e.deltaY * 0.003);
         const newTileSize = Math.max(6, Math.min(64, tileSize * factor));
         if (newTileSize !== tileSize) {
           setTileSize(newTileSize);

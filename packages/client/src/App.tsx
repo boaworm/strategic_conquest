@@ -95,10 +95,10 @@ export default function App() {
                 ({city.x},{city.y}){' '}
                 {city.producing ? (
                   <span className="capitalize">
-                    ({city.productionTurnsLeft}) {city.producing}
+                    {city.productionTurnsLeft} of {UNIT_STATS[city.producing].buildTime} left — {city.producing}
                   </span>
                 ) : (
-                  <span className="text-gray-500">(0) Idle</span>
+                  <span className="text-gray-500">Idle</span>
                 )}
               </button>
             ))}

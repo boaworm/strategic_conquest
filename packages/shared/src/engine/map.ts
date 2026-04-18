@@ -481,6 +481,10 @@ export function createGameState(opts: MapOptions): GameState {
       player1: new Set<string>(),
       player2: new Set<string>(),
     },
+    turnVisible: {
+      player1: new Set<string>(),
+      player2: new Set<string>(),
+    },
     bombersProduced: {
       player1: 0,
       player2: 0,

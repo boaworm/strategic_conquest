@@ -234,6 +234,8 @@ export interface GameState {
   winner: PlayerId | null;
   /** Tiles each player has explored (persists across turns) */
   explored: Record<PlayerId, Set<string>>;
+  /** Tiles visible at any point this turn (reset at turn start) */
+  turnVisible: Record<PlayerId, Set<string>>;
   /** Total bombers produced per player (for blast radius upgrades) */
   bombersProduced: Record<PlayerId, number>;
 /** Test options - only used in test mode */
