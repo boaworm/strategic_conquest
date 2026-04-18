@@ -8,7 +8,7 @@ set -e
 DATA_DIR=/Volumes/500G/Training/moe/moe
 OUT_DIR=$(pwd)/packages/trainer/ai/checkpoints/moe
 EPOCHS=40
-RESUME=1
+RESUME=0
 
 cd packages/trainer/ai
 

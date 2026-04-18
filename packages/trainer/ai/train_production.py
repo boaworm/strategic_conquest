@@ -156,6 +156,7 @@ def main():
     parser.add_argument('--epochs',     type=int,   default=50)
     parser.add_argument('--batch-size', type=int,   default=512)
     parser.add_argument('--lr',         type=float, default=1e-3)
+    parser.add_argument('--weight-decay', type=float, default=0.0)
     parser.add_argument('--file-idx',   type=int,   default=None,
                         help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')
     parser.add_argument('--resume',     action='store_true',
