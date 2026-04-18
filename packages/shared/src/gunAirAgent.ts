@@ -17,7 +17,7 @@ import { wrapX } from './types.js';
 const ALL_UNIT_TYPES: UnitType[] = [
   UnitType.Army,
   UnitType.Fighter,
-  UnitType.Bomber,
+  UnitType.Missile,
   UnitType.Transport,
   UnitType.Destroyer,
   UnitType.Submarine,

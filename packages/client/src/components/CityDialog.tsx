@@ -45,7 +45,7 @@ export function CityDialog({ cityId, currentProduction, turnsLeft, coastal, onCl
               >
                 <span className="capitalize font-medium">{ut}</span>
                 <span className="text-gray-400 ml-2">
-                  ({stats.buildTime} turns • HP:{stats.maxHealth} • ATK:{stats.attack})
+                  ({stats.buildTime} turns • ATK:{stats.attack})
                 </span>
               </button>
             );

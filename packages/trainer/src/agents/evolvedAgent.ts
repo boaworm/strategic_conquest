@@ -57,7 +57,7 @@ export class EvolvedAgent implements Agent {
   private chooseProduction(obs: AgentObservation): UnitType {
     const globalFeatures = this.extractGlobalFeatures(obs);
     const unitTypes = [
-      UnitType.Army, UnitType.Fighter, UnitType.Bomber,
+      UnitType.Army, UnitType.Fighter, UnitType.Missile,
       UnitType.Transport, UnitType.Destroyer, UnitType.Submarine,
       UnitType.Carrier, UnitType.Battleship,
     ];

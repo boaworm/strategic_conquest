@@ -23,3 +23,4 @@ packages/trainer/*.d.ts.map
 tmp/
 tmp_logs/
 data/
+packages/server/public/index.html

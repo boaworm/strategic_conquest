@@ -8,7 +8,7 @@ import { MainMenu } from './components/MainMenu';
 import { ReplayViewer } from './components/ReplayViewer';
 import { TestReplayViewer } from './components/TestReplayViewer';
 import { MapView } from './components/MapView';
-import { GamePhase } from '@sc/shared';
+import { GamePhase, UNIT_STATS } from '@sc/shared';
 
 export default function App() {
   const view = useGameStore((s) => s.view);
@@ -91,7 +91,7 @@ export default function App() {
             {view.myCities.map((city) => (
               <button
                 key={city.id}
-                className={`w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-700 ${cityDialogId === city.id ? 'bg-purple-900 ring-1 ring-purple-500' : 'bg-gray-900'}`}
+                className={`w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-700 ${cityDialogId === city.id ? 'bg-purple-900 ring-1 ring-purple-500' : 'bg-gray-900'} ${city.producing && city.productionTurnsLeft === UNIT_STATS[city.producing].buildTime ? 'text-green-400' : ''}`}
                 onClick={(e) => {
                   if (e.shiftKey) {
                     setCamera(city.x, city.y);
@@ -103,10 +103,10 @@ export default function App() {
                 ({city.x},{city.y}){' '}
                 {city.producing ? (
                   <span className="capitalize">
-                    ({city.productionTurnsLeft}) {city.producing}
+                    {city.productionTurnsLeft} of {UNIT_STATS[city.producing].buildTime} left — {city.producing}
                   </span>
                 ) : (
-                  <span className="text-gray-500">(0) Idle</span>
+                  <span className="text-gray-500">Idle</span>
                 )}
               </button>
             ))}

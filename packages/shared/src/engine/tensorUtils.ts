@@ -41,7 +41,7 @@ export function playerViewToTensor(view: PlayerView): Float32Array {
   const unitTypeToChannel: Record<UnitType, number> = {
     [UnitType.Army]: 0,
     [UnitType.Fighter]: 1,
-    [UnitType.Bomber]: 2,
+    [UnitType.Missile]: 2,
     [UnitType.Transport]: 3,
     [UnitType.Destroyer]: 4,
     [UnitType.Submarine]: 5,

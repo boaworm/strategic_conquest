@@ -51,7 +51,7 @@ function enforceAllowedProduction(state: GameState, playerId: PlayerId): void {
 export const ALL_UNIT_TYPES: UnitType[] = [
   UnitType.Army,
   UnitType.Fighter,
-  UnitType.Bomber,
+  UnitType.Missile,
   UnitType.Transport,
   UnitType.Destroyer,
   UnitType.Submarine,
@@ -205,7 +205,6 @@ export function createGameStateFromConfig(config: TestConfig): GameState {
       player2: new Set(),
     },
     bombersProduced: { player1: 0, player2: 0 },
-    seenEnemies: { player1: [], player2: [] },
   };
 
   // Set up per-player explored tiles

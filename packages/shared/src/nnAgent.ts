@@ -58,7 +58,7 @@ const ACTION_TYPES = [
 const UNIT_TYPES = [
   UnitType.Army,
   UnitType.Fighter,
-  UnitType.Bomber,
+  UnitType.Missile,
   UnitType.Transport,
   UnitType.Destroyer,
   UnitType.Submarine,

@@ -1,8 +1,8 @@
 {
   "army": {
     "army": { "attackerDestroyed": 50, "defenderDestroyed": 50 },
-    "fighter": "n/a",
-    "bomber": "n/a",
+    "fighter": { "attackerDestroyed": 40, "defenderDestroyed": 40 },
+    "missile": "n/a",
     "transport": "n/a",
     "destroyer": "n/a",
     "submarine": "n/a",
@@ -12,17 +12,17 @@
   "fighter": {
     "army": { "attackerDestroyed": 20, "defenderDestroyed": 50 },
     "fighter": { "attackerDestroyed": 50, "defenderDestroyed": 40 },
-    "bomber": "n/a",
+    "missile": "n/a",
     "transport": { "attackerDestroyed": 0, "defenderDestroyed": 80 },
     "destroyer": { "attackerDestroyed": 30, "defenderDestroyed": 45 },
     "submarine": { "attackerDestroyed": 0, "defenderDestroyed": 40 },
     "carrier": { "attackerDestroyed": 50, "defenderDestroyed": 30 },
     "battleship": { "attackerDestroyed": 80, "defenderDestroyed": 20 }
   },
-  "bomber": {
+  "missile": {
     "army": "n/a",
     "fighter": { "attackerDestroyed": 80, "defenderDestroyed": 0 },
-    "bomber": "n/a",
+    "missile": "n/a",
     "transport": "n/a",
     "destroyer": "n/a",
     "submarine": "n/a",
@@ -32,7 +32,7 @@
   "transport": {
     "army": "n/a",
     "fighter": "n/a",
-    "bomber": "n/a",
+    "missile": "n/a",
     "transport": "n/a",
     "destroyer": "n/a",
     "submarine": "n/a",
@@ -42,7 +42,7 @@
   "destroyer": {
     "army": "n/a",
     "fighter": "n/a",
-    "bomber": "n/a",
+    "missile": "n/a",
     "transport": { "attackerDestroyed": 0, "defenderDestroyed": 80 },
     "destroyer": { "attackerDestroyed": 25, "defenderDestroyed": 50 },
     "submarine": { "attackerDestroyed": 20, "defenderDestroyed": 60 },
@@ -52,7 +52,7 @@
   "submarine": {
     "army": "n/a",
     "fighter": "n/a",
-    "bomber": "n/a",
+    "missile": "n/a",
     "transport": { "attackerDestroyed": 0, "defenderDestroyed": 90 },
     "destroyer": { "attackerDestroyed": 50, "defenderDestroyed": 30 },
     "submarine": { "attackerDestroyed": 25, "defenderDestroyed": 25 },
@@ -62,7 +62,7 @@
   "carrier": {
     "army": "n/a",
     "fighter": "n/a",
-    "bomber": "n/a",
+    "missile": "n/a",
     "transport": { "attackerDestroyed": 0, "defenderDestroyed": 30 },
     "destroyer": { "attackerDestroyed": 20, "defenderDestroyed": 25 },
     "submarine": "n/a",
@@ -72,7 +72,7 @@
   "battleship": {
     "army": { "attackerDestroyed": 0, "defenderDestroyed": 70 },
     "fighter": { "attackerDestroyed": 30, "defenderDestroyed": 50 },
-    "bomber": { "attackerDestroyed": 0, "defenderDestroyed": 70 },
+    "missile": { "attackerDestroyed": 0, "defenderDestroyed": 70 },
     "transport": { "attackerDestroyed": 0, "defenderDestroyed": 90 },
     "destroyer": { "attackerDestroyed": 15, "defenderDestroyed": 65 },
     "submarine": "n/a",

@@ -9,8 +9,36 @@ import type {
   CreateGameResponse,
   ServerToClientEvents,
   ClientToServerEvents,
-  UnitType,
+  UnitView,
 } from '@sc/shared';
+import { Terrain, UnitType, TileVisibility } from '@sc/shared';
+
+export interface LastKnownEnemy {
+  id: string;
+  type: UnitType;
+  owner: string;
+  x: number;
+  y: number;
+}
+
+/** Returns true if a carried unit's transport has at least one adjacent land tile. */
+function carriedNearLand(unit: UnitView, view: PlayerView): boolean {
+  if (unit.carriedBy === null) return false;
+  const transport = view.myUnits.find((t) => t.id === unit.carriedBy);
+  if (!transport) return false;
+  const mapW = view.tiles[0]?.length ?? 60;
+  const mapH = view.tiles.length;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = ((transport.x + dx) % mapW + mapW) % mapW;
+      const ny = transport.y + dy;
+      if (ny < 0 || ny >= mapH) continue;
+      if (view.tiles[ny]?.[nx]?.terrain === Terrain.Land) return true;
+    }
+  }
+  return false;
+}
 
 interface GameStore {
   // Connection state
@@ -23,6 +51,7 @@ interface GameStore {
   view: PlayerView | null;
   lastActionResult: ActionResult | null;
   lastEnemyCombat: EnemyCombatEvent | null;
+  lastKnownEnemies: Record<string, LastKnownEnemy>;
   error: string | null;
   gamePaused: boolean;
 
@@ -86,6 +115,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   view: null,
   lastActionResult: null,
   lastEnemyCombat: null,
+  lastKnownEnemies: {},
   error: null,
   gamePaused: false,
   socket: null,
@@ -198,7 +228,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const pid = view.myUnits.length > 0 ? view.myUnits[0].owner : get().playerId;
       const prev = get().prevProduction;
 
-      set({ view, playerId: pid, gamePaused: false });
+      // Clear all ghosts at the start of the enemy's turn; otherwise accumulate seen units
+      let updatedLKE: Record<string, LastKnownEnemy>;
+      if (view.currentPlayer !== pid) {
+        updatedLKE = {};
+      } else {
+        const currentLKE = get().lastKnownEnemies;
+        const visibleIds = new Set(view.visibleEnemyUnits.map((u) => u.id));
+        updatedLKE = Object.fromEntries(
+          Object.entries(currentLKE).filter(([id, ghost]) => {
+            if (visibleIds.has(id)) return false; // currently visible, will be re-added below
+            // If the ghost's tile is currently visible but the unit isn't there, it was destroyed
+            const tile = view.tiles[ghost.y]?.[ghost.x];
+            if (tile?.visibility === TileVisibility.Visible) return false;
+            return true;
+          }),
+        );
+        // Pin any currently-visible enemy unit into LKE so it stays shown
+        // if it later leaves vision range (enemies don't move during our turn)
+        for (const u of view.visibleEnemyUnits) {
+          updatedLKE[u.id] = { id: u.id, type: u.type, owner: u.owner, x: u.x, y: u.y };
+        }
+      }
+      set({ view, playerId: pid, gamePaused: false, lastKnownEnemies: updatedLKE });
 
       // Auto-repeat production: if a city had production last turn and it's now idle,
       // re-set the same production (player explicitly stopped it by setting to null)
@@ -226,11 +278,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (get().autoSelectNext && view.currentPlayer === pid) {
         const selId = get().selectedUnitId;
         const selUnit = selId ? view.myUnits.find((u) => u.id === selId) : null;
-        const needNext = !selUnit || selUnit.movesLeft <= 0 || selUnit.sleeping || selUnit.carriedBy !== null;
+        const needNext = !selUnit || selUnit.movesLeft <= 0 || selUnit.sleeping ||
+          (selUnit.carriedBy !== null && selUnit.type === UnitType.Army && !carriedNearLand(selUnit, view));
         if (needNext) {
+          // Prefer uncarried moveable units; then fighters on carriers; then transport with disembarkable army
           const next = view.myUnits.find(
             (u) => u.movesLeft > 0 && !u.sleeping && u.carriedBy === null,
-          );
+          ) ?? view.myUnits.find(
+            (u) => u.movesLeft > 0 && !u.sleeping && u.carriedBy !== null && u.type === UnitType.Fighter,
+          ) ?? (() => {
+            const carriedArmy = view.myUnits.find(
+              (u) => u.movesLeft > 0 && !u.sleeping && u.carriedBy !== null && u.type === UnitType.Army && carriedNearLand(u, view),
+            );
+            return carriedArmy ? view.myUnits.find((t) => t.id === carriedArmy.carriedBy) ?? null : null;
+          })();
           set({ selectedUnitId: next?.id ?? null });
           if (next) get().centerIfOffScreen(next.x, next.y);
         }
@@ -238,10 +299,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
       // Auto end turn: if it's my turn and all my units have 0 moves (or are sleeping/carried)
       // BUT skip if any city is idle — give the player a chance to set production
+      // Also skip if a carried army is adjacent to land (it may want to disembark)
       if (get().autoEndTurn && view.currentPlayer === pid) {
         const hasIdleCity = view.myCities.some((c) => c.producing === null);
         const allDone = view.myUnits.length > 0 && view.myUnits.every(
-          (u) => u.movesLeft <= 0 || u.sleeping || u.carriedBy !== null,
+          (u) => u.movesLeft <= 0 || u.sleeping ||
+            (u.carriedBy !== null && u.type === UnitType.Army && !carriedNearLand(u, view)),
         );
         if (allDone && !hasIdleCity) {
           const s = get().socket;
@@ -261,6 +324,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
 
     socket.on('enemyCombat', (data: EnemyCombatEvent) => {
+      // Record last known position of the attacker if it survived
+      if (!data.combat?.attackerDestroyed) {
+        // If defender was destroyed, attacker moved to toX/toY; otherwise stayed at fromX/fromY
+        const ghostX = data.combat?.defenderDestroyed ? data.toX : data.fromX;
+        const ghostY = data.combat?.defenderDestroyed ? data.toY : data.fromY;
+        const ghost: LastKnownEnemy = {
+          id: data.attackerUnitId,
+          type: data.attackerType,
+          owner: data.attackerOwner,
+          x: ghostX,
+          y: ghostY,
+        };
+        set((s) => ({ lastKnownEnemies: { ...s.lastKnownEnemies, [data.attackerUnitId]: ghost } }));
+      }
       set({ lastEnemyCombat: data });
     });
 
@@ -297,6 +374,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       error: null,
       gamePaused: false,
       lastEnemyCombat: null,
+      lastKnownEnemies: {},
       selectedUnitId: null,
       prevProduction: null,
     });

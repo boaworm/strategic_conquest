@@ -2,10 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import { UNIT_STATS, UnitType } from '@sc/shared';
 import { useGameStore } from '../store/gameStore';
 
-function bomberLabel(blastRadius: number): string {
-  if (blastRadius >= 2) return 'bomber (mega)';
-  if (blastRadius >= 1) return 'bomber (nuclear)';
-  return 'bomber';
+function missileLabel(blastRadius: number): string {
+  if (blastRadius >= 2) return 'missile (mega)';
+  if (blastRadius >= 1) return 'missile (nuclear)';
+  return 'missile';
 }
 
 export function UnitPanel() {
@@ -46,7 +46,7 @@ export function UnitPanel() {
       {selected && selectedStats && (
         <div className="border-b border-gray-600 pb-2 mb-1">
           <div className="font-bold text-lg capitalize">
-            {selected.type === UnitType.Bomber ? bomberLabel(view.myBomberBlastRadius) : selected.type}
+            {selected.type === UnitType.Missile ? missileLabel(view.myBomberBlastRadius) : selected.type}
           </div>
           <div className="text-sm space-y-1">
             <div>HP: {selected.health}/{selectedStats.maxHealth}</div>
@@ -95,9 +95,17 @@ export function UnitPanel() {
             army: 0,
             transport: 2,
             destroyer: 3, submarine: 4, carrier: 5, battleship: 6,
-            fighter: 7, bomber: 8,
+            fighter: 7, missile: 8,
           };
-          // Build sorted list: top-level units sorted by type, cargo grouped directly below parent
+          // Build sorted list: top-level units sorted by type, children grouped below parent.
+          // Use carriedBy (not cargo) as the authoritative parent→child link.
+          const childrenOf = new Map<string, typeof view.myUnits>();
+          for (const u of view.myUnits) {
+            if (u.carriedBy !== null) {
+              if (!childrenOf.has(u.carriedBy)) childrenOf.set(u.carriedBy, []);
+              childrenOf.get(u.carriedBy)!.push(u);
+            }
+          }
           const topLevel = view.myUnits
             .filter((u) => u.carriedBy === null)
             .sort((a, b) => (typeOrder[a.type] ?? 99) - (typeOrder[b.type] ?? 99));
@@ -106,18 +114,12 @@ export function UnitPanel() {
           for (const u of topLevel) {
             sorted.push(u);
             addedIds.add(u.id);
-            // Add cargo immediately after the parent
-            if (u.cargo.length > 0) {
-              for (const cid of u.cargo) {
-                const carried = view.myUnits.find((c) => c.id === cid);
-                if (carried) {
-                  sorted.push(carried);
-                  addedIds.add(carried.id);
-                }
-              }
+            for (const child of (childrenOf.get(u.id) ?? [])) {
+              sorted.push(child);
+              addedIds.add(child.id);
             }
           }
-          // Include any carried units whose parent isn't in myUnits (edge case)
+          // Fallback: any orphaned carried units whose parent isn't in myUnits
           for (const u of view.myUnits) {
             if (!addedIds.has(u.id)) sorted.push(u);
           }
@@ -143,7 +145,7 @@ export function UnitPanel() {
                 />
                 <span className="capitalize truncate">
                   {(() => {
-                    const label = u.type === UnitType.Bomber ? bomberLabel(view.myBomberBlastRadius) : u.type;
+                    const label = u.type === UnitType.Missile ? missileLabel(view.myBomberBlastRadius) : u.type;
                     return carried ? `↳ ${label}` : label;
                   })()}
                 </span>

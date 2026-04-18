@@ -49,8 +49,8 @@ export function createBomberDecisionTestMap(): GameState {
     phase: GamePhase.Active,
     winner: null,
     explored: { player1: new Set(), player2: new Set() },
+    turnVisible: { player1: new Set(), player2: new Set() },
     bombersProduced: { player1: 0, player2: 0 },
-    seenEnemies: { player1: [], player2: [] },
     testOptions: {
       cityCaptureSuccessRate: 1,
     },
@@ -129,7 +129,7 @@ export function createBomberDecisionTestMap(): GameState {
   // P1 Bomber #1 at P1 city (5, 3) - should attack transport (higher priority)
   state.units.push({
     id: 'unit_p1_bomber1',
-    type: UnitType.Bomber,
+    type: UnitType.Missile,
     owner: 'player1' as PlayerId,
     x: 5,
     y: 3,
@@ -144,7 +144,7 @@ export function createBomberDecisionTestMap(): GameState {
   // P1 Bomber #2 at P1 city (5, 3) - should attack battleship (second priority)
   state.units.push({
     id: 'unit_p1_bomber2',
-    type: UnitType.Bomber,
+    type: UnitType.Missile,
     owner: 'player1' as PlayerId,
     x: 5,
     y: 3,
@@ -244,7 +244,7 @@ export function getBomberDecisionTestConfig(): TestConfig {
       // P1 Bomber #1 at P1 city (5, 3)
       {
         id: 'unit_p1_bomber1',
-        type: 'bomber',
+        type: 'missile',
         owner: 'player1',
         x: 5,
         y: 3,
@@ -256,7 +256,7 @@ export function getBomberDecisionTestConfig(): TestConfig {
       // P1 Bomber #2 at P1 city (5, 3)
       {
         id: 'unit_p1_bomber2',
-        type: 'bomber',
+        type: 'missile',
         owner: 'player1',
         x: 5,
         y: 3,
