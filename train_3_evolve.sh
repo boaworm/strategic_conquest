@@ -4,6 +4,6 @@ python -u packages/trainer/ai/evolve.py \
     --generations 30 \
     --games-per-agent 10 \
     --workers 1 \
-    --map-width 30 \
-    --map-height 10 \
+    --map-width 50 \
+    --map-height 20 \
     --output /Volumes/500G/Training/evolution
