@@ -14,6 +14,7 @@ import {
   wrappedDistX,
 } from '@sc/shared';
 import { useGameStore, DEFAULT_TILE_SIZE } from '../store/gameStore';
+import type { LastKnownEnemy } from '../store/gameStore';
 import { playAttackSound, playCityCaptureFanfare, playCrashSound, playArmorCrashSound, playMoveSound } from '../sounds';
 
 // ── Classic colour palette ───────────────────────────────────
@@ -712,6 +713,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
 
   const lastActionResult = useGameStore((s) => s.lastActionResult);
   const lastEnemyCombat = useGameStore((s) => s.lastEnemyCombat);
+  const lastKnownEnemies = useGameStore((s) => s.lastKnownEnemies);
 
   const mapW = view.tiles[0]?.length ?? 0;
   const mapH = view.tiles.length;
@@ -792,6 +794,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     color: string;
   }
   const fadingTextRef = useRef<FadingText | null>(null);
+  const hoverTileRef = useRef<{ x: number; y: number } | null>(null);
 
   // ── Unit sprite images ─────────────────────────────────────
   const unitImagesRef = useRef<Partial<Record<UnitType, HTMLImageElement>>>({});
@@ -1065,6 +1068,45 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       }
     }
 
+    // ── Last-known-enemy ghosts ───────────────────────────────
+    {
+      const ghosts = Object.values(lastKnownEnemies);
+      const hover = hoverTileRef.current;
+      for (const ghost of ghosts) {
+        if (view.visibleEnemyUnits.some((u) => u.id === ghost.id)) continue;
+        const wx = ghost.x;
+        const wy = ghost.y;
+        const screenPx = wx * tileSize - originX;
+        const screenPy = wy * tileSize - originY;
+        if (screenPx + tileSize < 0 || screenPx > canvasW) continue;
+        if (screenPy + tileSize < 0 || screenPy > canvasH) continue;
+        const cxCenter = screenPx + tileSize / 2;
+        const cyCenter = screenPy + tileSize / 2;
+        ctx.save();
+        ctx.globalAlpha = 0.55;
+        drawUnit(ctx, ghost.type, cxCenter, cyCenter, tileSize, '#888888', unitImagesRef.current);
+        ctx.restore();
+        // Tooltip on hover
+        if (hover && hover.x === wx && hover.y === wy) {
+          const label = 'Last known position';
+          const fontSize = Math.max(11, tileSize * 0.38);
+          ctx.save();
+          ctx.font = `${fontSize}px sans-serif`;
+          const tw = ctx.measureText(label).width;
+          const pad = 4;
+          const bx = Math.min(cxCenter - tw / 2 - pad, canvasW - tw - pad * 2 - 2);
+          const by = screenPy - fontSize - pad * 2 - 2;
+          ctx.fillStyle = 'rgba(0,0,0,0.75)';
+          ctx.fillRect(bx, by, tw + pad * 2, fontSize + pad * 2);
+          ctx.fillStyle = '#cccccc';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'top';
+          ctx.fillText(label, bx + pad, by + pad);
+          ctx.restore();
+        }
+      }
+    }
+
     // ── Movement range overlay ────────────────────────────────
     // Show all reachable tiles for the selected own unit (only on our turn, only if moves remain)
     if (selectedUnitId && view.currentPlayer === playerId) {
@@ -1182,20 +1224,15 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
     const resultText = combatResultRef.current;
     if (resultText) {
       const elapsed = performance.now() - resultText.startTime;
-      const fadeDuration = 2000; // 2 seconds fade
-      const alpha = Math.max(0, 1 - elapsed / fadeDuration);
-      if (alpha > 0) {
+      if (elapsed < 2000) {
         const rx = resultText.x * tileSize - originX + tileSize / 2;
         const ry = resultText.y * tileSize - originY - tileSize * 0.5;
         ctx.save();
-        ctx.globalAlpha = alpha;
         ctx.font = `bold ${Math.max(16, tileSize * 0.6)}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        // Text shadow
         ctx.fillStyle = 'rgba(0,0,0,0.7)';
         ctx.fillText(resultText.text, rx + 2, ry + 2);
-        // Main text
         ctx.fillStyle = resultText.color;
         ctx.fillText(resultText.text, rx, ry);
         ctx.restore();
@@ -1402,7 +1439,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         yourTurnStartRef.current = null;
       }
     }
-  }, [view, cachedAllUnits, cityByPos, selectedUnitId, selectedCityId, playerId, combatAnimRef]);
+  }, [view, cachedAllUnits, cityByPos, selectedUnitId, selectedCityId, playerId, combatAnimRef, lastKnownEnemies]);
 
   /** Throttled draw call for input events */
   const requestRedraw = useCallback(() => {
@@ -1507,6 +1544,9 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       if (yourTurnStartRef.current !== null && fnow - yourTurnStartRef.current < 2000) {
         needsFrame = true;
       }
+
+      // Combat result text — keep animating until cleared
+      if (combatResultRef.current !== null) needsFrame = true;
 
       // Progress move animation: send MOVE actions as each step completes
       const mAnim = moveAnimRef.current;
@@ -1652,7 +1692,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       let text: string;
       let color: string;
       if (combat.attackerDestroyed && combat.defenderDestroyed) {
-        text = 'Mutual destruction';
+        text = 'Both defeated';
         color = '#f39c12'; // orange
       } else if (combat.defenderDestroyed) {
         text = 'Victory';
@@ -1746,7 +1786,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       let color: string;
       // From our perspective: attacker is the enemy, defender is our unit
       if (combat.attackerDestroyed && combat.defenderDestroyed) {
-        text = 'Mutual destruction';
+        text = 'Both defeated';
         color = '#f39c12'; // orange
       } else if (combat.attackerDestroyed) {
         text = 'Victory';
@@ -1854,7 +1894,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       const { tileSize, cameraX, cameraY } = useGameStore.getState();
       if (e.ctrlKey) {
         // Pinch gesture → zoom
-        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        const factor = Math.exp(-e.deltaY * 0.001);
         const newTileSize = Math.max(6, Math.min(64, tileSize * factor));
         if (newTileSize !== tileSize) {
           setTileSize(newTileSize);
@@ -1979,18 +2019,32 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
 
           const domain = UNIT_STATS[unit.type].domain;
 
-          // For fighters (no fuel), check if click is outside max range
+          // For fighters, check if click is outside safe return range
           const isFighter = unit.type === UnitType.Fighter;
           if (isFighter) {
             const reachable = computeReachableTiles(unit, view, mapW, mapH);
             if (!reachable.has(`${tx},${ty}`)) {
-              // Show "Out of range" message
               fadingTextRef.current = {
                 text: 'Out of range',
                 x: tx,
                 y: ty,
                 startTime: performance.now(),
-                color: '#e74c3c', // red
+                color: '#e74c3c',
+              };
+              forceRender((n) => n + 1);
+              return;
+            }
+            // Check if clicking a full friendly carrier
+            const targetCarrier = view.myUnits.find(
+              (u) => u.x === tx && u.y === ty && u.type === UnitType.Carrier && u.carriedBy === null,
+            );
+            if (targetCarrier && targetCarrier.cargo.length >= UNIT_STATS[UnitType.Carrier].cargoCapacity) {
+              fadingTextRef.current = {
+                text: 'Carrier full',
+                x: tx,
+                y: ty,
+                startTime: performance.now(),
+                color: '#e74c3c',
               };
               forceRender((n) => n + 1);
               return;
@@ -1998,11 +2052,49 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
           }
 
           const path = computePath(unit.x, unit.y, tx, ty, unit.movesLeft, domain);
-          if (path.length > 0) {
+
+          // For air units on multi-step paths: trim any step that leaves the unit
+          // unable to return to a friendly base (city or carrier).
+          // Exception: missiles clicking directly on an enemy fly the full path (attack intent).
+          // Single-step clicks bypass this entirely (player is acting intentionally).
+          const isAir = domain === UnitDomain.Air;
+          const attackingEnemy = view.visibleEnemyUnits.some(
+            (e) => e.x === tx && e.y === ty && !e.carriedBy,
+          );
+          const isMissile = unit.type === UnitType.Missile;
+          const shouldTrim = isAir && path.length > 1 && !(isMissile && attackingEnemy);
+          const trimmedPath = shouldTrim ? (() => {
+            const landingSpots = [
+              ...view.myCities.map((c) => ({ x: c.x, y: c.y })),
+              ...view.myUnits.filter(
+                (u) => u.type === UnitType.Carrier &&
+                  u.cargo.length < (UNIT_STATS[UnitType.Carrier].cargoCapacity ?? 2),
+              ).map((u) => ({ x: u.x, y: u.y })),
+            ];
+            const distToBase = (x: number, y: number): number => {
+              let min = Infinity;
+              for (const s of landingSpots) {
+                min = Math.min(min, Math.max(wrappedDistX(x, s.x, mapW), Math.abs(y - s.y)));
+              }
+              return min;
+            };
+            const hasFuel = unit.fuel !== undefined;
+            let budget: number = hasFuel ? (unit.fuel as number) : unit.movesLeft;
+            const safe: Coord[] = [];
+            for (const step of path) {
+              budget--;
+              if (budget < 0) break;
+              // Stop if no longer able to reach a friendly base from this position
+              if (distToBase(step.x, step.y) > budget) break;
+              safe.push(step);
+            }
+            return safe;
+          })() : path;
+          if (trimmedPath.length > 0) {
             // Check for enemy on any step of the path
             let enemyStepIdx = -1;
-            for (let i = 0; i < path.length; i++) {
-              const step = path[i];
+            for (let i = 0; i < trimmedPath.length; i++) {
+              const step = trimmedPath[i];
               const enemy = view.visibleEnemyUnits.find(
                 (e) => e.x === step.x && e.y === step.y && !e.carriedBy,
               );
@@ -2016,7 +2108,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
 
             // If enemy is on the path, stop before it — never auto-attack
             if (enemyStepIdx >= 0) {
-              const safePath = path.slice(0, enemyStepIdx);
+              const safePath = trimmedPath.slice(0, enemyStepIdx);
               if (safePath.length > 0) {
                 playMoveSound(unit.type);
                 moveAnimRef.current = {
@@ -2042,12 +2134,12 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
               unitId: unit.id,
               unitType: unit.type,
               unitOwner: unit.owner,
-              pathTiles: [{ x: unit.x, y: unit.y }, ...path],
+              pathTiles: [{ x: unit.x, y: unit.y }, ...trimmedPath],
               startTime: performance.now(),
               sentCount: 0,
               knownEnemyIds,
             };
-            sendAction({ type: 'MOVE', unitId: selectedUnitId, to: path[0] });
+            sendAction({ type: 'MOVE', unitId: selectedUnitId, to: trimmedPath[0] });
             moveAnimRef.current.sentCount = 1;
             forceRender((n) => n + 1);
             return;
@@ -2147,6 +2239,31 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
       ref={canvasRef}
       tabIndex={0}
       onMouseUp={handleMouseUp}
+      onMouseMove={(e) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const mx = (e.clientX - rect.left) * dpr;
+        const my = (e.clientY - rect.top) * dpr;
+        const { cameraX, cameraY, tileSize } = useGameStore.getState();
+        const canvasW = canvas.width / dpr;
+        const canvasH = canvas.height / dpr;
+        const originX = cameraX * tileSize - canvasW / 2;
+        const originY = cameraY * tileSize - canvasH / 2;
+        const tx = Math.floor((mx / dpr + originX) / tileSize);
+        const ty = Math.floor((my / dpr + originY) / tileSize);
+        const prev = hoverTileRef.current;
+        if (!prev || prev.x !== tx || prev.y !== ty) {
+          hoverTileRef.current = { x: tx, y: ty };
+          // Only trigger redraw if hovering over a ghost tile
+          const ghosts = Object.values(useGameStore.getState().lastKnownEnemies);
+          if (ghosts.some((g) => g.x === tx && g.y === ty) ||
+              (prev && ghosts.some((g) => g.x === prev.x && g.y === prev.y))) {
+            requestRedraw();
+          }
+        }
+      }}
       onContextMenu={(e) => e.preventDefault()}
       onKeyDown={(e) => {
         if (e.key === ' ' && selectedUnitId) {

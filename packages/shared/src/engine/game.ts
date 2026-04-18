@@ -866,6 +866,8 @@ function handleUnload(
 
     const defender = enemiesAtTarget[Math.floor(Math.random() * enemiesAtTarget.length)];
     const outcome = resolveCombatFromTable(unit, defender);
+    if (outcome === CombatOutcome.ATTACKER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) unit.health = 0;
+    if (outcome === CombatOutcome.DEFENDER_DESTROYED || outcome === CombatOutcome.BOTH_DESTROYED) defender.health = 0;
     removeDestroyedUnits(state);
 
     // Build combat result from outcome
@@ -879,7 +881,7 @@ function handleUnload(
     };
 
     if (combat.attackerDestroyed) {
-      // Unit lost — it's already removed from state; transport.cargo cleaned up by removeDestroyedUnits
+      // Unit lost — removed from state by removeDestroyedUnits above; transport.cargo cleaned up too
       checkWinCondition(state);
       return { success: true, combat };
     }

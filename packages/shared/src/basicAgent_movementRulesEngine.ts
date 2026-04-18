@@ -288,6 +288,10 @@ function buildConditionEvaluators(): Map<string, ConditionEvaluator> {
     );
   });
 
+  m.set('enemy_city_known', (ctx) => {
+    return ctx.obs.visibleEnemyCities.some((c) => c.owner !== null);
+  });
+
   // ── Bomber conditions ───────────────────────────────────────
 
   m.set('bomber_city_target_available', (ctx) => {
@@ -567,6 +571,22 @@ function buildActionResolvers(): Map<string, ActionResolver> {
       return { type: 'MOVE', unitId: ctx.unit.id, to: { x: best.x, y: best.y } };
     }
     // Move adjacent first
+    const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, best);
+    return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
+  });
+
+  a.set('move_to_nearest_enemy_city', (ctx) => {
+    let best: CityView | null = null;
+    let bestDist = Infinity;
+    for (const city of ctx.obs.visibleEnemyCities) {
+      if (city.owner === null) continue;
+      const dist = Math.max(
+        wrappedDistX(ctx.unit.x, city.x, ctx.mapWidth),
+        Math.abs(ctx.unit.y - city.y),
+      );
+      if (dist < bestDist) { bestDist = dist; best = city; }
+    }
+    if (!best) return null;
     const step = ctx.map.farthestStepToward(ctx.obs, ctx.unit, best);
     return step ? { type: 'MOVE', unitId: ctx.unit.id, to: step } : null;
   });

@@ -7,7 +7,7 @@ import { HUD } from './components/HUD';
 import { MainMenu } from './components/MainMenu';
 import { ReplayViewer } from './components/ReplayViewer';
 import { TestReplayViewer } from './components/TestReplayViewer';
-import { GamePhase } from '@sc/shared';
+import { GamePhase, UNIT_STATS } from '@sc/shared';
 
 export default function App() {
   const view = useGameStore((s) => s.view);
@@ -83,7 +83,7 @@ export default function App() {
             {view.myCities.map((city) => (
               <button
                 key={city.id}
-                className={`w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-700 ${cityDialogId === city.id ? 'bg-purple-900 ring-1 ring-purple-500' : 'bg-gray-900'}`}
+                className={`w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-700 ${cityDialogId === city.id ? 'bg-purple-900 ring-1 ring-purple-500' : 'bg-gray-900'} ${city.producing && city.productionTurnsLeft === UNIT_STATS[city.producing].buildTime ? 'text-green-400' : ''}`}
                 onClick={(e) => {
                   if (e.shiftKey) {
                     setCamera(city.x, city.y);

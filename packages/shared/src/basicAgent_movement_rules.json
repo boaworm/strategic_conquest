@@ -574,6 +574,12 @@
           "action": "move_to_enemy_city_with_defenders"
         },
         {
+          "conditions": [
+            "enemy_city_known"
+          ],
+          "action": "move_to_nearest_enemy_city"
+        },
+        {
           "action": "move_to_nearest_unexplored_ocean"
         },
         {
@@ -598,6 +604,12 @@
             "enemy_city_with_defenders_exists"
           ],
           "action": "move_to_enemy_city_with_defenders"
+        },
+        {
+          "conditions": [
+            "enemy_city_known"
+          ],
+          "action": "move_to_nearest_enemy_city"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
@@ -654,6 +666,12 @@
             "enemy_army_exists"
           ],
           "action": "move_to_nearest_enemy_army"
+        },
+        {
+          "conditions": [
+            "enemy_city_known"
+          ],
+          "action": "move_to_nearest_enemy_city"
         },
         {
           "action": "move_to_nearest_unexplored_ocean"
