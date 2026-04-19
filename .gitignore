@@ -15,7 +15,7 @@ node.pid
 package-lock.json
 packages/trainer/data/
 packages/trainer/tmp/
-packages/trainer/packages/
+packages/trainer/dist/
 packages/trainer/*.js
 packages/trainer/*.js.map
 packages/trainer/*.d.ts

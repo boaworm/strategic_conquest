@@ -71,7 +71,8 @@ class MovementDataset(Dataset):
         for sf in state_files:
             base = str(sf)[:-len('.states.bin')]
             pf = Path(base + '.positions.bin')
-            af = Path(base + '.actions.jsonl')
+            af = Path(base + '.actions.bin')
+            tf = Path(base + '.tiles.bin')
 
             raw_states = np.frombuffer(sf.read_bytes(), dtype=np.float32)
             n = len(raw_states) // (14 * self.H * self.W)
@@ -82,17 +83,18 @@ class MovementDataset(Dataset):
             raw_pos = np.frombuffer(pf.read_bytes(), dtype=np.int16)
             positions = raw_pos[:n * 2].reshape(n, 2)
 
-            actions = [json.loads(line) for line in af.read_text().splitlines() if line.strip()][:n]
+            raw_actions = np.frombuffer(af.read_bytes(), dtype=np.int8)
+            raw_tiles = np.frombuffer(tf.read_bytes(), dtype=np.int32)
 
             state_arrays.append(states)
             pos_arrays.append(positions)
-            action_type_list.extend([MOVEMENT_ACTION_TO_IDX.get(a['actionType'], 2) for a in actions])  # default SKIP
-            tile_idx_list.extend([a.get('tileIdx', -1) for a in actions])
+            action_type_list.append(raw_actions[:n])
+            tile_idx_list.append(raw_tiles[:n])
 
         self.states    = np.concatenate(state_arrays, axis=0)      # [N, 14, H, W]
         self.positions = np.concatenate(pos_arrays, axis=0)         # [N, 2]
-        self.action_types = np.array(action_type_list, dtype=np.int64)
-        self.tile_idxs    = np.array(tile_idx_list,    dtype=np.int64)
+        self.action_types = np.concatenate(action_type_list, axis=0).astype(np.int64)
+        self.tile_idxs    = np.concatenate(tile_idx_list,    axis=0).astype(np.int64)
 
         assert len(self.states) == len(self.positions) == len(self.action_types) == len(self.tile_idxs)
 
@@ -148,7 +150,7 @@ class ProductionDataset(Dataset):
             base = str(sf)[:-len('.states.bin')]
             cf  = Path(base + '.cities.bin')
             gf  = Path(base + '.globals.bin')
-            uf  = Path(base + '.unitTypes.jsonl')
+            uf  = Path(base + '.unitTypes.bin')
 
             raw_states = np.frombuffer(sf.read_bytes(), dtype=np.float32)
             n = len(raw_states) // (14 * self.H * self.W)
@@ -162,17 +164,17 @@ class ProductionDataset(Dataset):
             raw_globals = np.frombuffer(gf.read_bytes(), dtype=np.float32)
             globals_ = raw_globals[:n * NUM_GLOBAL].reshape(n, NUM_GLOBAL)
 
-            actions = [json.loads(line) for line in uf.read_text().splitlines() if line.strip()][:n]
+            raw_units = np.frombuffer(uf.read_bytes(), dtype=np.int8)
 
             state_arrays.append(states)
             city_arrays.append(cities)
             global_arrays.append(globals_)
-            unit_type_list.extend([UNIT_TYPE_TO_IDX.get(a.get('unitType', 'army'), 0) for a in actions])
+            unit_type_list.append(raw_units[:n])
 
         self.states    = np.concatenate(state_arrays,  axis=0)
         self.cities    = np.concatenate(city_arrays,   axis=0)
         self.globals   = np.concatenate(global_arrays, axis=0)
-        self.unit_types = np.array(unit_type_list, dtype=np.int64)
+        self.unit_types = np.concatenate(unit_type_list, axis=0).astype(np.int64)
 
         # Pre-build and merge city-marker channel (15th)
         N = len(self.states)

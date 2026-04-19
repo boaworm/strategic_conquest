@@ -8,11 +8,12 @@
  * Output (in TMP_DIR/):
  *   worker-{id}-{type}.states.bin    — float32, 14 × H × W per sample
  *   worker-{id}-{type}.positions.bin — int16, [x, y] per sample
- *   worker-{id}-{type}.actions.jsonl — {actionType, tileIdx} per sample
+ *   worker-{id}-{type}.actions.bin   — int8, action type encoding per sample
+ *   worker-{id}-{type}.tiles.bin     — int32, tile index per sample
  *   worker-{id}-production.states.bin
  *   worker-{id}-production.cities.bin  — int16, [cityX, cityY] per sample
  *   worker-{id}-production.globals.bin — float32, 22 values per sample
- *   worker-{id}-production.unitTypes.jsonl — {unitType} per sample
+ *   worker-{id}-production.unitTypes.bin — int8, unit type encoding per sample
  *   worker-{id}-result.json
  */
 
@@ -37,6 +38,7 @@ const mapHeight   = parseInt(process.env.MAP_HEIGHT!);
 const maxTurns    = parseInt(process.env.MAX_TURNS!);
 const tmpDir      = process.env.TMP_DIR!;
 const prodOnly    = process.env.PROD_ONLY === '1';
+const unitTypeFilter = process.env.UNIT_TYPE_FILTER; // optional: collect only this unit type
 
 // Cap per bucket per game — keeps total output comparable to base collector
 const MAX_SAMPLES_PER_GAME = parseInt(process.env.MAX_SAMPLES_PER_GAME ?? '3000');
@@ -45,7 +47,9 @@ const PROD_SAMPLE_MULTIPLIER = parseInt(process.env.PROD_SAMPLE_MULTIPLIER ?? '3
 const MAX_PER_PROD_BUCKET    = prodOnly ? Infinity : MAX_PER_BUCKET * PROD_SAMPLE_MULTIPLIER;
 
 const MOVEMENT_ACTION_TYPES = ['MOVE', 'SLEEP', 'SKIP', 'LOAD', 'UNLOAD'] as const;
+const MOVEMENT_ACTION_TO_IDX: Record<string, number> = { MOVE: 0, SLEEP: 1, SKIP: 2, LOAD: 3, UNLOAD: 4 };
 const UNIT_TYPE_NAMES = ['army', 'fighter', 'missile', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'] as const;
+const UNIT_TYPE_TO_IDX: Record<string, number> = { army: 0, fighter: 1, missile: 2, transport: 3, destroyer: 4, submarine: 5, carrier: 6, battleship: 7 };
 type UnitTypeName = typeof UNIT_TYPE_NAMES[number];
 
 const NUM_GLOBAL = 28;
@@ -57,9 +61,10 @@ const progressFile = path.join(tmpDir, `progress-${workerId}.txt`);
 function openFiles(name: string) {
   const base = path.join(tmpDir, `worker-${workerId}-${name}`);
   return {
-    statesFd:   fs.openSync(`${base}.states.bin`, 'w'),
+    statesFd:    fs.openSync(`${base}.states.bin`, 'w'),
     positionsFd: fs.openSync(`${base}.positions.bin`, 'w'),
-    actionsWs:  fs.createWriteStream(`${base}.actions.jsonl`, { encoding: 'utf-8' }),
+    actionsFd:   fs.openSync(`${base}.actions.bin`, 'w'),
+    tilesFd:     fs.openSync(`${base}.tiles.bin`, 'w'),
   };
 }
 
@@ -69,10 +74,10 @@ const movementFiles = prodOnly ? null : Object.fromEntries(
 
 const prodBase = path.join(tmpDir, `worker-${workerId}-production`);
 const prodFiles = {
-  statesFd:   fs.openSync(`${prodBase}.states.bin`, 'w'),
-  citiesFd:   fs.openSync(`${prodBase}.cities.bin`, 'w'),
-  globalsFd:  fs.openSync(`${prodBase}.globals.bin`, 'w'),
-  unitTypesWs: fs.createWriteStream(`${prodBase}.unitTypes.jsonl`, { encoding: 'utf-8' }),
+  statesFd:    fs.openSync(`${prodBase}.states.bin`, 'w'),
+  citiesFd:    fs.openSync(`${prodBase}.cities.bin`, 'w'),
+  globalsFd:   fs.openSync(`${prodBase}.globals.bin`, 'w'),
+  unitTypesFd: fs.openSync(`${prodBase}.unitTypes.bin`, 'w'),
 };
 
 // ── Sample counters ───────────────────────────────────────────────────────────
@@ -86,11 +91,11 @@ const wins = { player1: 0, player2: 0, draw: 0 };
 
 const FLUSH_EVERY = 256;
 
-type MovementBuf = { states: Buffer[]; positions: Buffer[]; actions: string[] };
-type ProductionBuf = { states: Buffer[]; cities: Buffer[]; globals: Buffer[]; unitTypes: string[] };
+type MovementBuf = { states: Buffer[]; positions: Buffer[]; actions: number[]; tiles: number[] };
+type ProductionBuf = { states: Buffer[]; cities: Buffer[]; globals: Buffer[]; unitTypes: number[] };
 
 const movementBufs = prodOnly ? null : Object.fromEntries(
-  UNIT_TYPE_NAMES.map(n => [n, { states: [] as Buffer[], positions: [] as Buffer[], actions: [] as string[] }])
+  UNIT_TYPE_NAMES.map(n => [n, { states: [] as Buffer[], positions: [] as Buffer[], actions: [] as number[], tiles: [] as number[] }])
 ) as Record<UnitTypeName, MovementBuf> | null;
 
 const prodBuf: ProductionBuf = { states: [], cities: [], globals: [], unitTypes: [] };
@@ -102,8 +107,9 @@ function flushMovement(unitType: UnitTypeName): void {
   if (buf.states.length === 0) return;
   fs.writeSync(files.statesFd,    Buffer.concat(buf.states));
   fs.writeSync(files.positionsFd, Buffer.concat(buf.positions));
-  files.actionsWs.write(buf.actions.join(''));
-  buf.states = []; buf.positions = []; buf.actions = [];
+  fs.writeSync(files.actionsFd, Buffer.from(new Uint8Array(buf.actions)));
+  fs.writeSync(files.tilesFd,   Buffer.from(new Int32Array(buf.tiles)));
+  buf.states = []; buf.positions = []; buf.actions = []; buf.tiles = [];
 }
 
 function flushProduction(): void {
@@ -111,7 +117,7 @@ function flushProduction(): void {
   fs.writeSync(prodFiles.statesFd,  Buffer.concat(prodBuf.states));
   fs.writeSync(prodFiles.citiesFd,  Buffer.concat(prodBuf.cities));
   fs.writeSync(prodFiles.globalsFd, Buffer.concat(prodBuf.globals));
-  prodFiles.unitTypesWs.write(prodBuf.unitTypes.join(''));
+  fs.writeSync(prodFiles.unitTypesFd, Buffer.from(new Uint8Array(prodBuf.unitTypes)));
   prodBuf.states = []; prodBuf.cities = []; prodBuf.globals = []; prodBuf.unitTypes = [];
 }
 
@@ -172,7 +178,8 @@ function saveMovementSample(
   const buf = movementBufs![unitType];
   buf.states.push(Buffer.from(tensor.buffer));
   buf.positions.push(Buffer.from(new Int16Array([x, y]).buffer));
-  buf.actions.push(JSON.stringify({ actionType, tileIdx }) + '\n');
+  buf.actions.push(MOVEMENT_ACTION_TO_IDX[actionType] ?? 2);
+  buf.tiles.push(tileIdx);
   totalSamples[unitType]++;
   if (buf.states.length >= FLUSH_EVERY) flushMovement(unitType);
 }
@@ -186,7 +193,7 @@ function saveProductionSample(
   prodBuf.states.push(Buffer.from(tensor.buffer));
   prodBuf.cities.push(Buffer.from(new Int16Array([cityX, cityY]).buffer));
   prodBuf.globals.push(Buffer.from(globals.buffer));
-  prodBuf.unitTypes.push(JSON.stringify({ unitType: unitTypeName }) + '\n');
+  prodBuf.unitTypes.push(UNIT_TYPE_TO_IDX[unitTypeName] ?? 0);
 
   totalSamples['production']++;
   if (prodBuf.states.length >= FLUSH_EVERY) flushProduction();
@@ -242,7 +249,7 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
           action.type === 'LOAD' || action.type === 'UNLOAD')) {
 
         const unit = view.myUnits.find(u => u.id === (action as any).unitId);
-        if (unit && gameCounts[unit.type] < MAX_PER_BUCKET) {
+        if (unit && (!unitTypeFilter || unit.type === unitTypeFilter) && gameCounts[unit.type] < MAX_PER_BUCKET) {
           const tileIdx = (action.type === 'MOVE' || action.type === 'UNLOAD')
             ? ((action as any).to.y * state.mapWidth + (action as any).to.x)
             : -1;
@@ -250,7 +257,7 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
           gameCounts[unit.type]++;
         }
 
-      } else if (action.type === 'SET_PRODUCTION') {
+      } else if (action.type === 'SET_PRODUCTION' && !unitTypeFilter) {
         const cityId = (action as any).cityId;
         const city = view.myCities.find(c => c.id === cityId);
         if (city && gameCounts['production'] < MAX_PER_PROD_BUCKET) {
@@ -284,7 +291,7 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
   const movesSampled = Object.entries(totalSamples)
     .filter(([k]) => k !== 'production')
     .reduce((sum, [, v]) => sum + v, 0);
-  const prodSampled = totalSamples['production'];
+  const prodSampled = unitTypeFilter ? 0 : totalSamples['production'];
   process.stderr.write(`[MoE-W${workerId}] game ${gameNumber}: turns=${state.turn} winner=${state.winner ?? 'draw'}  Samples collected: Moves=${movesSampled}, Production=${prodSampled}\n`);
 
   if (gameNumber === gameStart || gameNumber % 50 === 0 || gameNumber === gameEnd) {
@@ -298,20 +305,25 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
 if (!prodOnly) {
   for (const name of UNIT_TYPE_NAMES) flushMovement(name as UnitTypeName);
 }
-flushProduction();
+// Only flush production if not filtering to a specific movement type
+if (!unitTypeFilter) flushProduction();
 
 if (!prodOnly) {
   for (const name of UNIT_TYPE_NAMES) {
     const f = movementFiles![name];
     fs.closeSync(f.statesFd);
     fs.closeSync(f.positionsFd);
-    await new Promise<void>(r => f.actionsWs.end(r));
+    fs.closeSync(f.actionsFd);
+    fs.closeSync(f.tilesFd);
   }
 }
-fs.closeSync(prodFiles.statesFd);
-fs.closeSync(prodFiles.citiesFd);
-fs.closeSync(prodFiles.globalsFd);
-await new Promise<void>(r => prodFiles.unitTypesWs.end(r));
+// Only close production files if not filtering to a specific movement type
+if (!unitTypeFilter) {
+  fs.closeSync(prodFiles.statesFd);
+  fs.closeSync(prodFiles.citiesFd);
+  fs.closeSync(prodFiles.globalsFd);
+  fs.closeSync(prodFiles.unitTypesFd);
+}
 
 fs.writeFileSync(
   path.join(tmpDir, `result-${workerId}.json`),

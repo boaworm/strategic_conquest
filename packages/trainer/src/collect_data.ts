@@ -6,7 +6,8 @@
  *
  * Output (in OUTPUT_DIR/):
  *   states.bin    — raw float32 bytes, N × (C × H × W) floats, no header
- *   actions.jsonl — one action JSON per line, line i corresponds to tensor i
+ *   actions.bin   — raw int8 bytes, N action type encodings (0-7)
+ *   tiles.bin     — raw int32 bytes, N tile indices (-1 for non-move actions)
  *   meta.json     — mapWidth, mapHeight, numChannels, numSamples, numGames, wins
  *
  * Usage:
@@ -71,25 +72,6 @@ function readProgress(workerId: number, gameStart: number, gameEnd: number): num
   }
 }
 
-function pipeFile(src: string, dest: fs.WriteStream): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const reader = fs.createReadStream(src);
-    reader.on('error', reject);
-    dest.on('error', reject);
-    reader.on('end', () => {
-      // 'end' means the reader delivered all data to the writable's buffer.
-      // If the buffer is still draining, wait for it before moving on —
-      // otherwise the next pipe would start while writes are still pending.
-      if (dest.writableNeedDrain) {
-        dest.once('drain', resolve);
-      } else {
-        resolve();
-      }
-    });
-    reader.pipe(dest, { end: false });
-  });
-}
-
 function mb(bytes: number): string {
   return (bytes / 1_000_000).toFixed(0) + ' MB';
 }
@@ -148,7 +130,8 @@ async function main(): Promise<void> {
   // Move worker files to output dir (no merge — keep per-worker files)
   for (let i = 0; i < WORKERS; i++) {
     fs.renameSync(path.join(tmpDir, `worker-${i}.states.bin`), path.join(OUTPUT_DIR, `worker-${i}.states.bin`));
-    fs.renameSync(path.join(tmpDir, `worker-${i}.actions.jsonl`), path.join(OUTPUT_DIR, `worker-${i}.actions.jsonl`));
+    fs.renameSync(path.join(tmpDir, `worker-${i}.actions.bin`),  path.join(OUTPUT_DIR, `worker-${i}.actions.bin`));
+    fs.renameSync(path.join(tmpDir, `worker-${i}.tiles.bin`),    path.join(OUTPUT_DIR, `worker-${i}.tiles.bin`));
   }
   fs.rmSync(tmpDir, { recursive: true });
 
@@ -169,7 +152,7 @@ async function main(): Promise<void> {
   console.log(`  ${totalSamples.toLocaleString()} samples, ${NUM_GAMES.toLocaleString()} games`);
   console.log(`  P1 wins: ${wins.player1}  P2 wins: ${wins.player2}  Draws: ${wins.draw}`);
   console.log(`  Per-worker states: ~${mbPerWorker} MB each`);
-  console.log(`  Output: ${OUTPUT_DIR}/ (worker-*.states.bin, worker-*.actions.jsonl)`);
+  console.log(`  Output: ${OUTPUT_DIR}/ (worker-*.states.bin, worker-*.actions.bin, worker-*.tiles.bin)`);
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

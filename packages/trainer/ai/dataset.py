@@ -4,11 +4,13 @@ GameDataset — loads imitation learning data produced by collect_data.ts.
 File format (all in OUTPUT_DIR/):
   Consolidated mode:
     states.bin    — raw float32, shape [N, C, H, W] with no header
-    actions.jsonl — one action JSON per line
+    actions.bin   — raw int8, N action type encodings (0-7)
+    tiles.bin     — raw int32, N tile indices (-1 for non-move actions)
     meta.json     — mapWidth, mapHeight, numChannels, numSamples, numGames, wins
   Per-worker mode (if states.bin not found):
     worker-*.states.bin — one file per worker
-    worker-*.actions.jsonl — one file per worker
+    worker-*.actions.bin — one file per worker
+    worker-*.tiles.bin — one file per worker
     meta.json — same as above
 """
 
@@ -20,17 +22,16 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-# Action type encoding (must stay in sync with AgentAction in @sc/shared)
+# Action type encoding (must stay in sync with encodeActionType in collect_worker.ts)
 ACTION_TYPES = [
-    "END_TURN",
-    "SET_PRODUCTION",
     "MOVE",
+    "SET_PRODUCTION",
+    "SLEEP",
+    "SKIP",
     "LOAD",
     "UNLOAD",
-    "SLEEP",
     "WAKE",
-    "SKIP",
-    "DISBAND",
+    "END_TURN",
 ]
 ACTION_TO_IDX = {a: i for i, a in enumerate(ACTION_TYPES)}
 NUM_ACTION_TYPES = len(ACTION_TYPES)
@@ -50,35 +51,15 @@ UNIT_TO_IDX = {u: i for i, u in enumerate(UNIT_TYPES)}
 NUM_UNIT_TYPES = len(UNIT_TYPES)
 
 
-def _encode_actions(actions: list[dict], map_width: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Pre-encode action dicts into numpy arrays for fast __getitem__ access."""
-    n = len(actions)
-    action_types = np.empty(n, dtype=np.int64)
-    target_tiles = np.full(n, -1, dtype=np.int64)
-    prod_types = np.full(n, -1, dtype=np.int64)
-
-    for i, action in enumerate(actions):
-        atype = action.get("type", "END_TURN")
-        action_types[i] = ACTION_TO_IDX.get(atype, 0)
-
-        if atype in ("MOVE", "UNLOAD") and "to" in action:
-            target_tiles[i] = action["to"]["y"] * map_width + action["to"]["x"]
-
-        if atype == "SET_PRODUCTION":
-            prod_types[i] = UNIT_TO_IDX.get(action.get("unitType", ""), -1)
-
-    return action_types, target_tiles, prod_types
-
-
 class GameDataset(Dataset):
     """
     Streams imitation-learning samples from disk.
 
     Each item returns:
       state       — float32 tensor [C, H, W]
-      action_type — long scalar ∈ [0, NUM_ACTION_TYPES)
-      target_tile — long scalar ∈ [0, H*W), or -1 if not applicable (non-MOVE/UNLOAD)
-      prod_type   — long scalar ∈ [0, NUM_UNIT_TYPES), or -1 if not applicable
+      action_type — long scalar in [0, NUM_ACTION_TYPES)
+      target_tile — long scalar in [0, H*W), or -1 if not applicable (non-MOVE/UNLOAD)
+      prod_type   — long scalar in [0, NUM_UNIT_TYPES), or -1 if not applicable
     """
 
     def __init__(self, data_dir: str, worker_idx: int | None = None):
@@ -96,19 +77,19 @@ class GameDataset(Dataset):
         if worker_idx is not None:
             # Single worker file mode — load into RAM (fits ~33GB)
             states_path = data_dir / f"worker-{worker_idx}.states.bin"
-            actions_path = data_dir / f"worker-{worker_idx}.actions.jsonl"
+            actions_path = data_dir / f"worker-{worker_idx}.actions.bin"
+            tiles_path = data_dir / f"worker-{worker_idx}.tiles.bin"
             size = states_path.stat().st_size
             count = size // (4 * sample_size)
             shape = (count, self.num_channels, self.map_height, self.map_width)
             self.num_samples = count
             print(f"  Loading worker-{worker_idx} into RAM...", flush=True)
-            mm = np.memmap(str(states_path), dtype="float32", mode="r", shape=shape)
-            self.states = np.array(mm)
-            del mm
+            self.states = np.memmap(str(states_path), dtype="float32", mode="r", shape=shape)
             print(f"  Loaded {self.states.nbytes / 1e9:.1f} GB ({count:,} samples)", flush=True)
 
-            with open(actions_path) as f:
-                actions = [json.loads(line) for line in f if line.strip()]
+            # Load actions and tiles as raw numpy arrays
+            self.action_types = np.frombuffer(actions_path.read_bytes(), dtype=np.int8)
+            self.target_tiles = np.frombuffer(tiles_path.read_bytes(), dtype=np.int32)
         elif (data_dir / "states.bin").exists():
             # Consolidated mode — memmap (may be too large for RAM)
             self.num_samples = meta["numSamples"]
@@ -116,30 +97,25 @@ class GameDataset(Dataset):
             self.states = np.memmap(str(data_dir / "states.bin"), dtype="float32", mode="r", shape=shape)
             print(f"  Mapped {self.num_samples:,} samples (memmap)", flush=True)
 
-            with open(data_dir / "actions.jsonl") as f:
-                actions = [json.loads(line) for line in f if line.strip()]
+            self.action_types = np.frombuffer((data_dir / "actions.bin").read_bytes(), dtype=np.int8)
+            self.target_tiles = np.frombuffer((data_dir / "tiles.bin").read_bytes(), dtype=np.int32)
         else:
             raise FileNotFoundError(
                 f"No states.bin or worker_idx specified for {data_dir}"
             )
 
-        if len(actions) != self.num_samples:
+        if len(self.action_types) != self.num_samples:
             raise ValueError(
                 f"Data mismatch: states has {self.num_samples} samples "
-                f"but actions has {len(actions)} lines"
+                f"but actions has {len(self.action_types)} entries"
             )
 
-        # Pre-encode actions into numpy arrays (eliminates per-sample dict lookups)
-        print("Encoding actions...", flush=True)
-        action_types, target_tiles, prod_types = _encode_actions(actions, self.map_width)
-        del actions  # free the list of dicts
-
-        # Convert everything to torch tensors for fast __getitem__ and shared memory
+        # Convert to torch tensors for fast __getitem__
         print("Converting to tensors...", flush=True)
         self.states = torch.from_numpy(self.states) if isinstance(self.states, np.ndarray) else torch.tensor(self.states)
-        self.action_types = torch.from_numpy(action_types)
-        self.target_tiles = torch.from_numpy(target_tiles)
-        self.prod_types   = torch.from_numpy(prod_types)
+        self.action_types = torch.from_numpy(self.action_types.astype(np.int64))
+        self.target_tiles = torch.from_numpy(self.target_tiles.astype(np.int64))
+        self.prod_types   = torch.full((self.num_samples,), -1, dtype=torch.int64)  # Not used in base dataset
 
     @staticmethod
     def count_workers(data_dir: str) -> int:

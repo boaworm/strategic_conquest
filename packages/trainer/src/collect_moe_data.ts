@@ -5,6 +5,17 @@
  * Each worker saves per-unit-type binary files to a tmp dir;
  * this coordinator renames them into OUTPUT_DIR/moe/ on completion.
  *
+ * Output files (binary format):
+ *   worker-{i}-{type}.states.bin     — float32 [N, 14, H, W]
+ *   worker-{i}-{type}.positions.bin  — int16 [N, 2] (x, y of the acting unit)
+ *   worker-{i}-{type}.actions.bin    — int8 [N] action type encoding
+ *   worker-{i}-{type}.tiles.bin      — int32 [N] tile index (-1 for non-move)
+ *   worker-{i}-production.states.bin
+ *   worker-{i}-production.cities.bin   — int16 [N, 2]
+ *   worker-{i}-production.globals.bin  — float32 [N, 22]
+ *   worker-{i}-production.unitTypes.bin — int8 [N]
+ *   meta.json
+ *
  * Usage:
  *   DATA_DIR=./data NUM_GAMES=50000 WORKERS=8 npm run collect-moe
  */
@@ -23,6 +34,7 @@ const MAP_HEIGHT = parseInt(process.env.MAP_HEIGHT ?? '20');
 const MAX_TURNS  = parseInt(process.env.MAX_TURNS  ?? '500');
 const MAX_SAMPLES_PER_GAME = parseInt(process.env.MAX_SAMPLES_PER_GAME ?? '3000');
 const PROD_ONLY  = process.env.PROD_ONLY === '1';
+const UNIT_TYPE_FILTER = process.env.UNIT_TYPE_FILTER; // optional: collect only this unit type
 
 const UNIT_TYPE_NAMES = ['army', 'fighter', 'missile', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'];
 
@@ -34,15 +46,16 @@ function spawnWorker(workerId: number, gameStart: number, gameEnd: number): Prom
     const child = spawn(process.execPath, [workerScript], {
       env: {
         ...process.env,
-        WORKER_ID:   String(workerId),
-        GAME_START:  String(gameStart),
-        GAME_END:    String(gameEnd),
-        MAP_WIDTH:   String(MAP_WIDTH),
-        MAP_HEIGHT:  String(MAP_HEIGHT),
-        MAX_TURNS:   String(MAX_TURNS),
+        WORKER_ID:       String(workerId),
+        GAME_START:      String(gameStart),
+        GAME_END:        String(gameEnd),
+        MAP_WIDTH:       String(MAP_WIDTH),
+        MAP_HEIGHT:      String(MAP_HEIGHT),
+        MAX_TURNS:       String(MAX_TURNS),
         MAX_SAMPLES_PER_GAME: String(MAX_SAMPLES_PER_GAME),
-        PROD_ONLY:   String(PROD_ONLY ? 1 : 0),
-        TMP_DIR:     tmpDir,
+        PROD_ONLY:       String(PROD_ONLY ? 1 : 0),
+        UNIT_TYPE_FILTER: UNIT_TYPE_FILTER ?? '',
+        TMP_DIR:         tmpDir,
       },
       stdio: ['ignore', 'ignore', 'inherit'],
     });
@@ -108,17 +121,24 @@ async function main(): Promise<void> {
 
   // Move per-worker files into OUTPUT_DIR
   for (let i = 0; i < WORKERS; i++) {
+    // Movement files: collect all or filtered type only
     if (!PROD_ONLY) {
-      for (const type of UNIT_TYPE_NAMES) {
-        for (const ext of ['states.bin', 'positions.bin', 'actions.jsonl']) {
+      const typesToProcess = UNIT_TYPE_FILTER ? [UNIT_TYPE_FILTER] : UNIT_TYPE_NAMES;
+      for (const type of typesToProcess) {
+        for (const ext of ['states.bin', 'positions.bin', 'actions.bin', 'tiles.bin']) {
           const src = path.join(tmpDir, `worker-${i}-${type}.${ext}`);
-          fs.renameSync(src, path.join(OUTPUT_DIR, `worker-${i}-${type}.${ext}`));
+          if (fs.existsSync(src)) {
+            fs.renameSync(src, path.join(OUTPUT_DIR, `worker-${i}-${type}.${ext}`));
+          }
         }
       }
     }
-    for (const ext of ['states.bin', 'cities.bin', 'globals.bin', 'unitTypes.jsonl']) {
-      const src = path.join(tmpDir, `worker-${i}-production.${ext}`);
-      fs.renameSync(src, path.join(OUTPUT_DIR, `worker-${i}-production.${ext}`));
+    // Production files: collect unless filtering to specific movement type
+    if (!UNIT_TYPE_FILTER) {
+      for (const ext of ['states.bin', 'cities.bin', 'globals.bin', 'unitTypes.bin']) {
+        const src = path.join(tmpDir, `worker-${i}-production.${ext}`);
+        fs.renameSync(src, path.join(OUTPUT_DIR, `worker-${i}-production.${ext}`));
+      }
     }
   }
   fs.rmSync(tmpDir, { recursive: true });

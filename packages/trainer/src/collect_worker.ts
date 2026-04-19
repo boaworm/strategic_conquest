@@ -39,7 +39,8 @@ function writeProgress(gameNumber: number): void {
 process.stderr.write(`[W${workerId}] started, games ${gameStart}-${gameEnd}\n`);
 
 const statesFd  = fs.openSync(path.join(tmpDir, `worker-${workerId}.states.bin`), 'w');
-const actionsWs = fs.createWriteStream(path.join(tmpDir, `worker-${workerId}.actions.jsonl`), { encoding: 'utf-8' });
+const actionsFd = fs.openSync(path.join(tmpDir, `worker-${workerId}.actions.bin`), 'w');
+const tilesFd   = fs.openSync(path.join(tmpDir, `worker-${workerId}.tiles.bin`), 'w');
 
 let totalSamples = 0;
 const wins = { player1: 0, player2: 0, draw: 0 };
@@ -66,7 +67,7 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
   let actionsThisTurn = 0;
 
   // Reservoir sampling: uniformly sample MAX_SAMPLES_PER_GAME across the full game.
-  type Sample = { tensor: Float32Array; actionJson: string };
+  type Sample = { tensor: Float32Array; actionType: number; tileIdx: number };
   const reservoir: Sample[] = [];
   let seenThisGame = 0;
 
@@ -85,8 +86,14 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
     const view = getPlayerView(state, pid);
     const action: AgentAction = agents[pid].act({ ...view, myPlayerId: pid } as any);
 
+    // Encode action as int8 (0-7) and tileIdx as int32
+    const actionType = encodeActionType(action.type);
+    const tileIdx = (action.type === 'MOVE' || action.type === 'UNLOAD')
+      ? ((action as any).to.y * state.mapWidth + (action as any).to.x)
+      : -1;
+
     // Reservoir sampling (Algorithm R)
-    const sample: Sample = { tensor: playerViewToTensor(view), actionJson: JSON.stringify(action) };
+    const sample: Sample = { tensor: playerViewToTensor(view), actionType, tileIdx };
     if (seenThisGame < MAX_SAMPLES_PER_GAME) {
       reservoir.push(sample);
     } else {
@@ -118,8 +125,9 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
 
   // Flush reservoir to disk
   for (const s of reservoir) {
-    fs.writeSync(statesFd, Buffer.from(s.tensor.buffer));
-    actionsWs.write(s.actionJson + '\n');
+    fs.writeSync(statesFd,  Buffer.from(s.tensor.buffer));
+    fs.writeSync(actionsFd, Buffer.from(new Uint8Array([s.actionType])));
+    fs.writeSync(tilesFd,   Buffer.from(new Int32Array([s.tileIdx])));
     totalSamples++;
   }
 
@@ -167,7 +175,25 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
 }
 
 fs.closeSync(statesFd);
-await new Promise<void>((resolve) => actionsWs.end(resolve));
+fs.closeSync(actionsFd);
+fs.closeSync(tilesFd);
 
 // Write final result as JSON so main process can read it
 fs.writeFileSync(path.join(tmpDir, `result-${workerId}.json`), JSON.stringify({ samples: totalSamples, wins }));
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function encodeActionType(type: string): number {
+  // Encode action type as int8 (0-7)
+  switch (type) {
+    case 'MOVE':          return 0;
+    case 'SET_PRODUCTION':return 1;
+    case 'SLEEP':         return 2;
+    case 'SKIP':          return 3;
+    case 'LOAD':          return 4;
+    case 'UNLOAD':        return 5;
+    case 'WAKE':          return 6;
+    case 'END_TURN':      return 7;
+    default:              return 3; // SKIP as default
+  }
+}
