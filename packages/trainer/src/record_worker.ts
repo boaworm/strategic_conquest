@@ -69,7 +69,10 @@ function makeAgent(name: string): Agent {
   if (lower.startsWith('nnmoeagent:') || lower.startsWith('moe:')) {
     const dir = name.split(':')[1];
     if (dir) {
-      process.env.NN_MOE_DIR = dir.startsWith('/') ? dir : path.resolve(__dirname, '../../..', dir);
+      // Resolve relative to project root (parent of packages/trainer/dist)
+      // Handle both absolute paths and relative paths (including those starting with ./)
+      const projectRoot = path.resolve(__dirname, '../../..');
+      process.env.NN_MOE_DIR = path.resolve(projectRoot, dir.replace(/^\.\//, ''));
       return new NnMoEAgent();
     }
   }

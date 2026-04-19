@@ -50,6 +50,11 @@ async function getJoin() {
   return _join;
 }
 
+// Debug: log environment
+function debugEnv() {
+  console.error('NN_MOE_DIR:', process.env.NN_MOE_DIR);
+}
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const MOVEMENT_ACTION_TYPES = ['MOVE', 'SLEEP', 'SKIP', 'LOAD', 'UNLOAD'] as const;
@@ -121,10 +126,12 @@ export class NnMoEAgent implements Agent {
     this.mapWidth = config.mapWidth;
     this.mapHeight = config.mapHeight;
 
+    debugEnv();
     const resolve = await getResolve();
     const dir = resolve(
       (typeof process !== 'undefined' && process.env?.NN_MOE_DIR) || './moe_models'
     );
+    console.error('Resolved dir:', dir);
 
     const ort = await getOrt();
     const join = await getJoin();
@@ -134,20 +141,16 @@ export class NnMoEAgent implements Agent {
       logSeverityLevel: 3,
     };
 
-    // Load all 9 models in parallel
+    // Load all 9 models sequentially (one after the other, waiting for each to finish)
     const unitTypes = Object.values(UnitType) as UnitType[];
-    await Promise.all([
-      ...unitTypes.map(async (ut) => {
-        const name = UNIT_TYPE_NAMES[ut];
-        const modelPath = join(dir, `${name}.onnx`);
-        const session = await ort.InferenceSession.create(modelPath, opts);
-        this.movementSessions.set(ut, session);
-      }),
-      (async () => {
-        const modelPath = join(dir, 'production.onnx');
-        this.productionSession = await ort.InferenceSession.create(modelPath, opts);
-      })(),
-    ]);
+    for (const ut of unitTypes) {
+      const name = UNIT_TYPE_NAMES[ut];
+      const modelPath = join(dir, `${name}.onnx`);
+      const session = await ort.InferenceSession.create(modelPath, opts);
+      this.movementSessions.set(ut, session);
+    }
+    const prodPath = join(dir, 'production.onnx');
+    this.productionSession = await ort.InferenceSession.create(prodPath, opts);
   }
 
   /**
