@@ -143,8 +143,11 @@ async function runGame(g: number): Promise<void> {
 
     const res = applyAction(state, action, pid);
     if (!res.success) {
-      applyAction(state, { type: 'END_TURN' }, pid);
-      actionsThisTurn = 0;
+      actionsThisTurn++;
+      if (actionsThisTurn >= MAX_ACTIONS_PER_TURN) {
+        applyAction(state, { type: 'END_TURN' }, pid);
+        actionsThisTurn = 0;
+      }
     } else if (action.type === 'END_TURN') {
       actionsThisTurn = 0;
     } else {

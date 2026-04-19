@@ -77,6 +77,7 @@ class MovementDataset(Dataset):
             raw_states = np.frombuffer(sf.read_bytes(), dtype=np.float32)
             n = len(raw_states) // (14 * self.H * self.W)
             if n == 0:
+                print(f"  .states.bin file is empty, ignoring: {sf.name}")
                 continue
             states = raw_states[:n * 14 * self.H * self.W].reshape(n, 14, self.H, self.W)
 
@@ -91,6 +92,8 @@ class MovementDataset(Dataset):
             action_type_list.append(raw_actions[:n])
             tile_idx_list.append(raw_tiles[:n])
 
+        if not state_arrays:
+            raise ValueError(f"No valid data loaded for unit type '{unit_type}' (all files empty or missing)")
         self.states    = np.concatenate(state_arrays, axis=0)      # [N, 14, H, W]
         self.positions = np.concatenate(pos_arrays, axis=0)         # [N, 2]
         self.action_types = np.concatenate(action_type_list, axis=0).astype(np.int64)
@@ -155,6 +158,7 @@ class ProductionDataset(Dataset):
             raw_states = np.frombuffer(sf.read_bytes(), dtype=np.float32)
             n = len(raw_states) // (14 * self.H * self.W)
             if n == 0:
+                print(f"  .states.bin file is empty, ignoring: {sf.name}")
                 continue
             states = raw_states[:n * 14 * self.H * self.W].reshape(n, 14, self.H, self.W)
 
@@ -171,6 +175,8 @@ class ProductionDataset(Dataset):
             global_arrays.append(globals_)
             unit_type_list.append(raw_units[:n])
 
+        if not state_arrays:
+            raise ValueError(f"No valid data loaded (all files empty or missing)")
         self.states    = np.concatenate(state_arrays,  axis=0)
         self.cities    = np.concatenate(city_arrays,   axis=0)
         self.globals   = np.concatenate(global_arrays, axis=0)

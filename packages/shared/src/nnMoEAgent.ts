@@ -18,7 +18,7 @@
 
 import type { Agent, AgentAction, AgentConfig, AgentObservation } from './agent.js';
 import type { PlayerView, UnitView, CityView } from './types.js';
-import { UnitType, UnitDomain, UNIT_STATS, wrapX } from './types.js';
+import { UnitType, UnitDomain, UNIT_STATS, Terrain, wrapX } from './types.js';
 import { playerViewToTensor } from './engine/tensorUtils.js';
 
 // Lazy-load node modules to avoid browser build errors
@@ -100,7 +100,7 @@ export class NnMoEAgent implements Agent {
   // Per-turn state: tracks which units and cities have been handled this turn
   private pendingUnitIds: Set<string> = new Set();
   private pendingCityIds: Set<string> = new Set();
-  private pass: 1 | 2 | 'prod' = 1;
+  private pass: 'prod' | 1 | 2 = 'prod';
 
   /**
    * Inject pre-created ONNX sessions directly (used by eval_server.js to avoid file I/O).
@@ -167,6 +167,13 @@ export class NnMoEAgent implements Agent {
       this.startTurn(observation);
     }
 
+    // Production first — set before any movement so a failed move can't skip it
+    if (this.pass === 'prod') {
+      const action = await this.runProduction(observation);
+      if (action) return action;
+      this.pass = 1;
+    }
+
     // Pass 1: free armies → sea → air
     if (this.pass === 1) {
       const action = await this.runPass1(observation);
@@ -178,26 +185,19 @@ export class NnMoEAgent implements Agent {
     if (this.pass === 2) {
       const action = await this.runPass2(observation);
       if (action) return action;
-      this.pass = 'prod';
-    }
-
-    // Production
-    if (this.pass === 'prod') {
-      const action = await this.runProduction(observation);
-      if (action) return action;
     }
 
     // All done
     this.pendingUnitIds.clear();
     this.pendingCityIds.clear();
-    this.pass = 1;
+    this.pass = 'prod';
     return { type: 'END_TURN' };
   }
 
   // ── Turn initialisation ───────────────────────────────────────────────────
 
   private startTurn(obs: AgentObservation): void {
-    this.pass = 1;
+    this.pass = 'prod';
     this.pendingUnitIds = new Set(
       obs.myUnits.filter(u => u.movesLeft > 0 && !u.sleeping).map(u => u.id)
     );
@@ -291,6 +291,16 @@ export class NnMoEAgent implements Agent {
 
     if (actionType === 'MOVE') {
       const to = this.stepToward(unit.x, unit.y, tx, ty);
+      // Same tile (no-op step) or terrain mismatch → consume move as SKIP
+      if (to.x === unit.x && to.y === unit.y) return { type: 'SKIP', unitId: unit.id };
+      const targetTile = (obs as any as PlayerView).tiles[to.y]?.[to.x];
+      const domain = UNIT_STATS[unit.type].domain;
+      if (domain === UnitDomain.Land && targetTile?.terrain !== Terrain.Land) {
+        return { type: 'SKIP', unitId: unit.id };
+      }
+      if (domain === UnitDomain.Sea && targetTile?.terrain === Terrain.Land) {
+        return { type: 'SKIP', unitId: unit.id };
+      }
       return { type: 'MOVE', unitId: unit.id, to };
     }
     if (actionType === 'SLEEP') return { type: 'SLEEP', unitId: unit.id };

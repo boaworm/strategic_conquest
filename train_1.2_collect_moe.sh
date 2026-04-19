@@ -8,7 +8,8 @@
 
 set -e
 
-BASE_DATA_DIR=/Volumes/500G/Training/moe
+if [ -z "$DATA_DIR" ]; then echo "DATA_DIR env var required"; exit 1; fi
+BASE_DATA_DIR="$DATA_DIR"
 
 # Find next sample_N directory
 RUN_NUM=$(ls -1 "$BASE_DATA_DIR" 2>/dev/null | grep -E '^sample_[0-9]+$' | sed 's/sample_//' | sort -n | tail -1)

@@ -108,7 +108,8 @@ function flushMovement(unitType: UnitTypeName): void {
   fs.writeSync(files.statesFd,    Buffer.concat(buf.states));
   fs.writeSync(files.positionsFd, Buffer.concat(buf.positions));
   fs.writeSync(files.actionsFd, Buffer.from(new Uint8Array(buf.actions)));
-  fs.writeSync(files.tilesFd,   Buffer.from(new Int32Array(buf.tiles)));
+  const tiles = new Int32Array(buf.tiles);
+  fs.writeSync(files.tilesFd,   Buffer.from(tiles.buffer, tiles.byteOffset, tiles.byteLength));
   buf.states = []; buf.positions = []; buf.actions = []; buf.tiles = [];
 }
 

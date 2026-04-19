@@ -15,7 +15,7 @@ fi
 
 EXPERT_TYPE="$1"
 
-DATA_DIR=/Volumes/500G/Training/moe/moe
+if [ -z "$DATA_DIR" ]; then echo "DATA_DIR env var required"; exit 1; fi
 OUT_DIR=$(pwd)/packages/trainer/ai/checkpoints/moe
 EPOCHS=40
 NUM_FILES=8
