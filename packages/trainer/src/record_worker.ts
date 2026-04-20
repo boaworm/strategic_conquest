@@ -1,10 +1,15 @@
 /**
- * Worker process for parallel replay recording.
- * Config comes from environment variables; progress written to tmp/progress-N.txt.
- * Each completed game is written directly as a JSON file to REPLAY_DIR.
+ * IPC worker for parallel replay recording.
+ * Stays alive across games; parent sends { type: 'game', gameNum } per job
+ * and { type: 'exit' } when the pool is drained. Responds with
+ * { type: 'done', result: { completed, skipped } } per game.
  *
- * P1_AGENT / P2_AGENT — agent name for each player (default: basicAgent).
- * Supported values: basicAgent, gunAirAgent, nnAgent:<model_path>, nnMoEAgent:<dir>
+ * Static config (env vars, set once by parent at fork):
+ *   WORKER_ID, MAP_WIDTH, MAP_HEIGHT, MAX_TURNS, REPLAY_DIR,
+ *   P1_AGENT, P2_AGENT
+ *
+ * Agent names (case-insensitive): basicAgent, gunAirAgent,
+ *   nnAgent:<model>, nnMoEAgent:<dir>
  */
 import fs from 'fs';
 import path from 'path';
@@ -24,30 +29,26 @@ import {
 import type { Agent, AgentAction } from '@sc/shared';
 import { snapshotGame, type ReplayMeta } from './replayUtils.js';
 
-const workerId  = parseInt(process.env.WORKER_ID!);
-const gameNum   = parseInt(process.env.GAME_NUM ?? process.env.WORKER_ID!);
-const numGames  = parseInt(process.env.NUM_GAMES!);
-const mapWidth  = parseInt(process.env.MAP_WIDTH!);
-const mapHeight = parseInt(process.env.MAP_HEIGHT!);
-const maxTurns  = parseInt(process.env.MAX_TURNS!);
-const replayDir = process.env.REPLAY_DIR!;
-const tmpDir    = process.env.TMP_DIR!;
+const workerId    = parseInt(process.env.WORKER_ID!);
+const mapWidth    = parseInt(process.env.MAP_WIDTH!);
+const mapHeight   = parseInt(process.env.MAP_HEIGHT!);
+const maxTurns    = parseInt(process.env.MAX_TURNS!);
+const replayDir   = process.env.REPLAY_DIR!;
 const p1AgentName = process.env.P1_AGENT ?? process.env.P1AGENT ?? 'basicAgent';
 const p2AgentName = process.env.P2_AGENT ?? process.env.P2AGENT ?? 'basicAgent';
 
 const MAX_ACTIONS_PER_TURN = 500;
 
-// Track if either agent is async (NnAgent)
-let p1IsAsync = false;
-let p2IsAsync = false;
+const isAsync = (n: string) => {
+  const l = n.toLowerCase();
+  return l.startsWith('nnagent:') || l.startsWith('nn:')
+      || l.startsWith('nnmoeagent:') || l.startsWith('moe:');
+};
+const p1IsAsync = isAsync(p1AgentName);
+const p2IsAsync = isAsync(p2AgentName);
 
-// Resolve model path - supports shorthand names like "adam" → checkpoints/adam.onnx
 function resolveModelPath(modelName: string): string {
-  // If it's an absolute path or contains /, use as-is
-  if (modelName.startsWith('/') || modelName.includes('/')) {
-    return modelName;
-  }
-  // Otherwise, treat as shorthand and look in ../ai/checkpoints relative to dist/
+  if (modelName.startsWith('/') || modelName.includes('/')) return modelName;
   const checkpointsDir = path.join(__dirname, '../ai/checkpoints');
   return path.join(checkpointsDir, `${modelName}.onnx`);
 }
@@ -55,7 +56,6 @@ function resolveModelPath(modelName: string): string {
 function makeAgent(name: string): Agent {
   const lower = name.toLowerCase();
 
-  // nnAgent:<model>  or  nn:<model>
   if (lower.startsWith('nnagent:') || lower.startsWith('nn:')) {
     const modelName = name.split(':')[1];
     if (modelName) {
@@ -65,12 +65,9 @@ function makeAgent(name: string): Agent {
     }
   }
 
-  // nnMoEAgent:<dir>  or  moe:<dir>
   if (lower.startsWith('nnmoeagent:') || lower.startsWith('moe:')) {
     const dir = name.split(':')[1];
     if (dir) {
-      // Resolve relative to project root (parent of packages/trainer/dist)
-      // Handle both absolute paths and relative paths (including those starting with ./)
       const projectRoot = path.resolve(__dirname, '../../..');
       process.env.NN_MOE_DIR = path.resolve(projectRoot, dir.replace(/^\.\//, ''));
       return new NnMoEAgent();
@@ -90,31 +87,16 @@ function makeAgent(name: string): Agent {
 
 fs.mkdirSync(replayDir, { recursive: true });
 
-const progressFile = path.join(tmpDir, `progress-${workerId}.txt`);
+process.stderr.write(`[W${workerId}] started — (p1=${p1AgentName} p2=${p2AgentName})\n`);
 
-function writeProgress(game: number): void {
-  fs.writeFileSync(progressFile, String(game));
-}
+type GameResult = { completed: number; skipped: number };
 
-process.stderr.write(`[W${workerId}] started — ${numGames} games (p1=${p1AgentName} p2=${p2AgentName})\n`);
-
-// Check if agents are async
-const isAsync = (n: string) => n.toLowerCase().startsWith('nnagent:') || n.toLowerCase().startsWith('nn:')
-  || n.toLowerCase().startsWith('nnmoeagent:') || n.toLowerCase().startsWith('moe:');
-p1IsAsync = isAsync(p1AgentName);
-p2IsAsync = isAsync(p2AgentName);
-
-let completed = 0;
-let skipped = 0;
-
-async function runGame(g: number): Promise<void> {
+async function runGame(gameNum: number): Promise<GameResult> {
   let state: ReturnType<typeof createGameState>;
   try {
     state = createGameState({ width: mapWidth, height: mapHeight });
   } catch {
-    skipped++;
-    writeProgress(g + 1);
-    return;
+    return { completed: 0, skipped: 1 };
   }
 
   const agents: Record<string, Agent> = {
@@ -122,7 +104,6 @@ async function runGame(g: number): Promise<void> {
     player2: makeAgent(p2AgentName),
   };
 
-  // Initialize agents (await for NnAgent)
   const init1 = agents.player1.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
   const init2 = agents.player2.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
   if (p1IsAsync) await init1;
@@ -176,7 +157,7 @@ async function runGame(g: number): Promise<void> {
 
   const meta: ReplayMeta = {
     id,
-    gameNum: gameNum + g,
+    gameNum,
     recordedAt: new Date().toISOString(),
     turns: state.turn,
     winner: state.winner,
@@ -190,31 +171,31 @@ async function runGame(g: number): Promise<void> {
     p2Agent: p2AgentName,
   };
 
-  fs.writeFileSync(path.join(replayDir, `${id}.json`), JSON.stringify({ meta, mapWidth: state.mapWidth, mapHeight: state.mapHeight, tiles: state.tiles, frames }));
-  completed++;
+  fs.writeFileSync(
+    path.join(replayDir, `${id}.json`),
+    JSON.stringify({ meta, mapWidth: state.mapWidth, mapHeight: state.mapHeight, tiles: state.tiles, frames }),
+  );
 
   process.stderr.write(
-    `[W${workerId}] game ${gameNum + g}: [${id.slice(0, 8)}] turns=${state.turn} winner=${state.winner ?? 'draw'} ` +
+    `[W${workerId}] game ${gameNum}: [${id.slice(0, 8)}] turns=${state.turn} winner=${state.winner ?? 'draw'} ` +
     `p1=${p1Cities} p2=${p2Cities} neutral=${neutral}\n`,
   );
 
-  if (g === 0 || (g + 1) % 10 === 0 || g === numGames - 1) {
-    writeProgress(g + 1);
-  }
+  return { completed: 1, skipped: 0 };
 }
 
-// Run games sequentially (async if NN agent involved)
-async function runAllGames(): Promise<void> {
-  for (let g = 0; g < numGames; g++) {
-    await runGame(g);
+process.on('message', async (msg: any) => {
+  if (msg?.type === 'exit') {
+    process.stderr.write(`[W${workerId}] exiting\n`);
+    process.exit(0);
   }
-  // Write final result summary
-  fs.writeFileSync(path.join(tmpDir, `result-${workerId}.json`), JSON.stringify({ completed, skipped }));
-  writeProgress(numGames);
-  process.stderr.write(`[W${workerId}] done — ${completed} recorded, ${skipped} skipped\n`);
-}
-
-runAllGames().catch(err => {
-  process.stderr.write(`[W${workerId}] error: ${err.message}\n`);
-  process.exit(1);
+  if (msg?.type === 'game') {
+    try {
+      const result = await runGame(msg.gameNum);
+      process.send!({ type: 'done', result });
+    } catch (err: any) {
+      process.stderr.write(`[W${workerId}] game ${msg.gameNum} error: ${err.message}\n`);
+      process.send!({ type: 'done', result: { completed: 0, skipped: 1 } });
+    }
+  }
 });

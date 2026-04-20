@@ -28,8 +28,11 @@ let _join: (path: string, ...paths: string[]) => string | null = null;
 
 async function getOrt() {
   if (!_ort) {
-    const ortNamespace = await import('onnxruntime-node');
-    _ort = ortNamespace.default;
+    const ortNamespace: any = await import('onnxruntime-node');
+    // ESM/CJS interop differs by loader: `fork()` children expose the
+    // bindings directly on the namespace, while `node -e` puts them on
+    // `.default`. Accept either shape.
+    _ort = ortNamespace.default?.InferenceSession ? ortNamespace.default : ortNamespace;
   }
   return _ort;
 }
@@ -50,10 +53,11 @@ async function getJoin() {
   return _join;
 }
 
-// Debug: log environment
-function debugEnv() {
-  console.error('NN_MOE_DIR:', process.env.NN_MOE_DIR);
-}
+// Module-level cache keyed by resolved model directory.
+// Keeps ONNX sessions (and their CoreML graph compilation) alive across
+// agent instances within one Node process — critical when the parent pool
+// hands the same worker many sequential games.
+const sessionCache = new Map<string, { movement: Map<UnitType, any>; production: any }>();
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -126,31 +130,39 @@ export class NnMoEAgent implements Agent {
     this.mapWidth = config.mapWidth;
     this.mapHeight = config.mapHeight;
 
-    debugEnv();
     const resolve = await getResolve();
     const dir = resolve(
       (typeof process !== 'undefined' && process.env?.NN_MOE_DIR) || './moe_models'
-    );
-    console.error('Resolved dir:', dir);
+    )!;
 
-    const ort = await getOrt();
-    const join = await getJoin();
+    let cached = sessionCache.get(dir);
+    if (!cached) {
+      console.error('Loading ONNX sessions from:', dir);
+      const ort = await getOrt();
+      const join = await getJoin();
 
-    const opts: any = {
-      executionProviders: getExecutionProviders(),
-      logSeverityLevel: 3,
-    };
+      const opts: any = {
+        executionProviders: getExecutionProviders(),
+        logSeverityLevel: 3,
+      };
 
-    // Load all 9 models sequentially (one after the other, waiting for each to finish)
-    const unitTypes = Object.values(UnitType) as UnitType[];
-    for (const ut of unitTypes) {
-      const name = UNIT_TYPE_NAMES[ut];
-      const modelPath = join(dir, `${name}.onnx`);
-      const session = await ort.InferenceSession.create(modelPath, opts);
-      this.movementSessions.set(ut, session);
+      const movement = new Map<UnitType, any>();
+      const unitTypes = Object.values(UnitType) as UnitType[];
+      for (const ut of unitTypes) {
+        const name = UNIT_TYPE_NAMES[ut];
+        const modelPath = join(dir, `${name}.onnx`)!;
+        const session = await ort.InferenceSession.create(modelPath, opts);
+        movement.set(ut, session);
+      }
+      const prodPath = join(dir, 'production.onnx')!;
+      const production = await ort.InferenceSession.create(prodPath, opts);
+
+      cached = { movement, production };
+      sessionCache.set(dir, cached);
     }
-    const prodPath = join(dir, 'production.onnx');
-    this.productionSession = await ort.InferenceSession.create(prodPath, opts);
+
+    this.movementSessions = cached.movement;
+    this.productionSession = cached.production;
   }
 
   /**
