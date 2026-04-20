@@ -29,6 +29,8 @@ I do all git commit, push, pull, add, delete, rename/mv
 
 You can use it for diff
 
+When removing a file that is tracked by git, use `git rm <file>` (not just `rm <file>`).
+
 # Working dirs
 Every command, documentation etc, should use the project root as working directory. Always assume cwd is the project root.
 
