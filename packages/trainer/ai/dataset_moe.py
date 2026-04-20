@@ -103,14 +103,16 @@ class MovementDataset(Dataset):
 
         # Pre-build and merge 15th channel so __getitem__ is a single contiguous slice
         N = len(self.states)
-        markers = np.zeros((N, 1, self.H, self.W), dtype=np.float32)
+        # Build states15 in-place to avoid peak memory spike (states + markers + states15 = 8GB)
+        states15 = np.zeros((N, 15, self.H, self.W), dtype=np.float32)
+        states15[:, :14] = self.states  # Copy 14 channels
+        del self.states  # Free 2.6GB
         xs = self.positions[:, 0].astype(np.int32)
         ys = self.positions[:, 1].astype(np.int32)
         valid = (xs >= 0) & (xs < self.W) & (ys >= 0) & (ys < self.H)
         rows = np.where(valid)[0]
-        markers[rows, 0, ys[rows], xs[rows]] = 1.0
-        self.states15 = np.concatenate([self.states, markers], axis=1)  # [N, 15, H, W]
-        del self.states, markers
+        states15[rows, 14, ys[rows], xs[rows]] = 1.0  # 15th channel: unit marker
+        self.states15 = states15
 
     def __len__(self) -> int:
         return len(self.states15)

@@ -48,3 +48,40 @@ else
 fi
 
 echo "=== Done. Checkpoint in $OUT_DIR ==="
+
+# Sanity check: warn if any worker files have mismatched sample counts
+echo "=== Sanity checking training data ==="
+python - <<EOF
+import os
+from pathlib import Path
+
+data_dir = Path("$DATA_DIR")
+H, W = 22, 50
+expert_type = "$EXPERT_TYPE"
+errors = []
+
+for worker_id in range(8):
+    states_file = data_dir / f'worker-{worker_id}-{expert_type}.states.bin'
+    if not states_file.exists():
+        continue
+
+    states_size = states_file.stat().st_size
+    pos_file = data_dir / f'worker-{worker_id}-{expert_type}.positions.bin'
+    actions_file = data_dir / f'worker-{worker_id}-{expert_type}.actions.bin'
+    tiles_file = data_dir / f'worker-{worker_id}-{expert_type}.tiles.bin'
+
+    n_states = states_size // (14 * H * W * 4)
+    n_pos = pos_file.stat().st_size // 4 if pos_file.exists() else 0
+    n_actions = actions_file.stat().st_size // 1 if actions_file.exists() else 0
+    n_tiles = tiles_file.stat().st_size // 4 if tiles_file.exists() else 0
+
+    if not (n_states == n_pos == n_actions == n_tiles):
+        errors.append(f"worker-{worker_id}: states={n_states}, pos={n_pos}, actions={n_actions}, tiles={n_tiles}")
+
+if errors:
+    print("WARNING: Data mismatch detected (may cause training crashes):")
+    for e in errors:
+        print(f"  {e}")
+else:
+    print(f"Sanity check passed: all {expert_type} files have matching sample counts")
+EOF
