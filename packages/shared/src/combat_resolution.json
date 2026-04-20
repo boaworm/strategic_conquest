@@ -12,7 +12,7 @@
   "fighter": {
     "army": { "attackerDestroyed": 20, "defenderDestroyed": 50 },
     "fighter": { "attackerDestroyed": 50, "defenderDestroyed": 40 },
-    "missile": "n/a",
+    "missile": { "attackerDestroyed": 20, "defenderDestroyed": 70 },
     "transport": { "attackerDestroyed": 0, "defenderDestroyed": 80 },
     "destroyer": { "attackerDestroyed": 30, "defenderDestroyed": 45 },
     "submarine": { "attackerDestroyed": 0, "defenderDestroyed": 40 },

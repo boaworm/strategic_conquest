@@ -16,7 +16,7 @@ RUN_NUM=$(ls -1 "$BASE_DATA_DIR" 2>/dev/null | grep -E '^sample_[0-9]+$' | sed '
 RUN_NUM=$((RUN_NUM + 1))
 RUN_DIR="sample_$RUN_NUM"
 
-NUM_GAMES=10000
+NUM_GAMES=13000
 MAX_SAMPLES_PER_GAME=5000
 WORKERS=8
 MAX_TURNS=300
