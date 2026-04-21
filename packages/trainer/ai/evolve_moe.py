@@ -52,9 +52,11 @@ def create_perturbation(state_dict: dict, rng: np.random.RandomState, scale: flo
     return pert
 
 
-def create_moe_perturbations(base_states: dict, rng: np.random.RandomState, scale: float) -> dict:
+def create_moe_perturbations(base_states: dict, rng: np.random.RandomState, scale: float,
+                             active_models: list = None) -> dict:
+    names = active_models if active_models is not None else ALL_MODEL_NAMES
     return {name: create_perturbation(base_states[name], rng, scale)
-            for name in ALL_MODEL_NAMES}
+            for name in names}
 
 
 # ── Selection / crossover / mutation ─────────────────────────────────────────
@@ -68,7 +70,7 @@ def tournament_select(population: list, k: int = 3) -> dict:
 def crossover(p1: dict, p2: dict) -> dict:
     import random
     child_perts = {}
-    for model_name in ALL_MODEL_NAMES:
+    for model_name in p1['perturbations']:
         cp = {}
         for layer in p1['perturbations'][model_name]:
             flat1 = np.array(p1['perturbations'][model_name][layer]['data'])
@@ -82,7 +84,7 @@ def crossover(p1: dict, p2: dict) -> dict:
 
 
 def mutate(genome: dict, rate: float, strength: float, rng: np.random.RandomState) -> dict:
-    for model_name in ALL_MODEL_NAMES:
+    for model_name in genome['perturbations']:
         for layer in genome['perturbations'][model_name]:
             arr = np.array(genome['perturbations'][model_name][layer]['data'])
             mask = rng.random(arr.shape) < rate
@@ -98,7 +100,7 @@ def next_generation(population: list, elitism: int, rng: np.random.RandomState) 
 
     for p in population[:elitism]:
         clone_perts = {}
-        for name in ALL_MODEL_NAMES:
+        for name in p['perturbations']:
             clone_perts[name] = {
                 layer: {'data': v['data'][:], 'shape': v['shape'][:]}
                 for layer, v in p['perturbations'][name].items()
@@ -117,8 +119,11 @@ def next_generation(population: list, elitism: int, rng: np.random.RandomState) 
 
 def run_evolution(args):
     checkpoints_dir = Path(args.checkpoints)
+    active_models = args.models if args.models else ALL_MODEL_NAMES
 
     print(f"Loading {len(ALL_MODEL_NAMES)} checkpoints from {checkpoints_dir}")
+    if active_models != ALL_MODEL_NAMES:
+        print(f"Evolving only: {active_models}")
     base_states  = {}
     base_configs = {}
     for name in ALL_MODEL_NAMES:
@@ -136,7 +141,7 @@ def run_evolution(args):
 
     print(f"\nInitialising population of {args.population}...")
     population = [
-        {'perturbations': create_moe_perturbations(base_states, rng, args.scale), 'fitness': 0.0}
+        {'perturbations': create_moe_perturbations(base_states, rng, args.scale, active_models), 'fitness': 0.0}
         for _ in range(args.population)
     ]
 
@@ -277,6 +282,8 @@ def main():
     parser.add_argument('--map-height',      type=int,   default=10)
     parser.add_argument('--max-turns',       type=int,   default=300)
     parser.add_argument('--output',          default='./evolved_moe')
+    parser.add_argument('--models',          nargs='+', default=None,
+                        help='Limit evolution to these model names (default: all 9)')
     args = parser.parse_args()
     run_evolution(args)
 
