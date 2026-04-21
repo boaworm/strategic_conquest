@@ -927,7 +927,7 @@ function handleUnload(
  */
 function handleBeginOfTurn(state: GameState, playerId: PlayerId): void {
   // Reset turn-visibility accumulator so fog resets fresh each turn
-  state.turnVisible[playerId] = new Set<string>();
+  state.turnVisible[playerId] = new Set<number>();
 
   // Advance production for this player (at beginning of turn)
   advanceProduction(state, playerId);
@@ -1067,7 +1067,7 @@ export function getPlayerView(
 
   // Persist newly visible tiles into the explored set and turn accumulator
   const explored = state.explored[playerId];
-  const turnVis = state.turnVisible[playerId] ?? new Set<string>();
+  const turnVis = state.turnVisible[playerId] ?? new Set<number>();
   state.turnVisible[playerId] = turnVis;
   for (const key of visible) {
     explored.add(key);
@@ -1075,9 +1075,10 @@ export function getPlayerView(
   }
 
   // Build tile view — use turnVis so tiles don't go dark mid-turn
+  const W = state.mapWidth;
   const tiles: TileView[][] = Array.from({ length: state.mapHeight }, (_, y) =>
-    Array.from({ length: state.mapWidth }, (_, x) => {
-      const key = `${x},${y}`;
+    Array.from({ length: W }, (_, x) => {
+      const key = y * W + x;
       const vis = turnVis.has(key)
         ? TileVisibility.Visible
         : explored.has(key)
@@ -1116,7 +1117,7 @@ export function getPlayerView(
       (u) =>
         u.owner !== playerId &&
         u.carriedBy === null &&
-        turnVis.has(`${u.x},${u.y}`) &&
+        turnVis.has(u.y * W + u.x) &&
         (u.type !== UnitType.Submarine ||
           canDetectSubmarine(state, u.x, u.y, playerId)),
     )
@@ -1126,7 +1127,7 @@ export function getPlayerView(
 
   // Visible enemy/neutral cities (include remembered cities on explored tiles)
   const visibleEnemyCities: CityView[] = state.cities
-    .filter((c) => c.owner !== playerId && explored.has(`${c.x},${c.y}`))
+    .filter((c) => c.owner !== playerId && explored.has(c.y * W + c.x))
     .map((c) => ({
       id: c.id,
       x: c.x,

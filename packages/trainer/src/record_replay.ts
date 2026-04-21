@@ -67,6 +67,7 @@ async function main(): Promise<void> {
     try {
       while (nextGame < NUM_GAMES) {
         const gameNum = ++nextGame;  // claim before awaiting
+        const gameStart = Date.now();
 
         const result = await new Promise<GameResult>((resolve, reject) => {
           const onMessage = (msg: any) => {
@@ -88,10 +89,10 @@ async function main(): Promise<void> {
         totalCompleted += result.completed;
         totalSkipped   += result.skipped;
 
-        const done = totalCompleted + totalSkipped;
-        const pct  = Math.floor((done / NUM_GAMES) * 100);
-        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-        console.log(`${pct}% (${done}/${NUM_GAMES} games, ${elapsed}s)`);
+        const done   = totalCompleted + totalSkipped;
+        const pct    = Math.floor((done / NUM_GAMES) * 100);
+        const gameMs = ((Date.now() - gameStart) / 1000).toFixed(1);
+        console.log(`${pct}% (${done}/${NUM_GAMES} games, ${gameMs}s)`);
       }
     } finally {
       // Drain complete — tell the worker to exit and wait for it

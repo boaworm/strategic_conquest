@@ -6,51 +6,172 @@
  * writes fitness results to stdout (one JSON line per response).
  *
  * Protocol:
- *   stdin:  {"models": {"army": "<base64_onnx>", ..., "production": "..."}, "games": N, "width": W, "height": H, "maxTurns": T}
+ *   stdin:  {"weights_npz": "<base64>", "games": N, "width": W, "height": H, "maxTurns": T}
  *   stdout: {"results": [0.042, 0.038, ...]}
  *   stdout: {"error": "message"}  (on failure)
+ *
+ * Inference is delegated to a persistent Python MPS sidecar (moe_mps_server.py).
  */
 
 import { createInterface } from 'readline';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { createGameState, applyAction, getPlayerView, BasicAgent, NnMoEAgent } from '@sc/shared';
-import * as ortNamespace from 'onnxruntime-node';
-const ort = ortNamespace.default;
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const MAX_CONSECUTIVE_FAILURES = 3;
 
-function getExecutionProviders() {
-  if (process.platform === 'darwin') return ['coreml', 'cpu'];
-  if (process.platform === 'linux') return ['cuda', 'cpu'];
-  return ['cpu'];
-}
-
-const sessionOptions = {
-  executionProviders: getExecutionProviders(),
-  logSeverityLevel: 3,
-};
+// ── MPSSidecar ────────────────────────────────────────────────────────────────
 
 /**
- * Create 9 InferenceSession instances from base64-encoded ONNX bytes.
+ * Manages one persistent Python moe_mps_server.py child process.
+ * Binary protocol: [1B msg_type][4B payload_len BE][payload]
  */
-async function loadSessionsFromBase64(models) {
-  const sessions = {};
-  await Promise.all(
-    Object.entries(models).map(async ([name, b64]) => {
-      const buf = Buffer.from(b64, 'base64');
-      sessions[name] = await ort.InferenceSession.create(buf, sessionOptions);
-    })
-  );
-  return sessions;
+class MPSSidecar {
+  constructor() {
+    this.proc = null;
+    this._chunks = [];
+    this._totalBytes = 0;
+    this._pending = null;  // { n, resolve, reject }
+    this._mapHeight = 0;
+    this._mapWidth = 0;
+  }
+
+  start() {
+    const pythonBin = process.env.PYTHON_EXECUTABLE ?? 'python3';
+    const script = join(__dirname, 'moe_mps_server.py');
+
+    this.proc = spawn(pythonBin, [script], {
+      stdio: ['pipe', 'pipe', 'inherit'],
+      env: process.env,
+    });
+
+    this.proc.stdout.on('data', (chunk) => {
+      this._chunks.push(chunk);
+      this._totalBytes += chunk.length;
+      this._tryResolve();
+    });
+
+    this.proc.on('close', (code) => {
+      if (this._pending) {
+        const { reject } = this._pending;
+        this._pending = null;
+        reject(new Error(`MPS sidecar exited with code ${code}`));
+      }
+    });
+
+    this.proc.on('error', (err) => {
+      process.stderr.write(`[MPSSidecar] spawn error: ${err.message}\n`);
+    });
+  }
+
+  _tryResolve() {
+    if (!this._pending || this._totalBytes < this._pending.n) return;
+    const { n, resolve } = this._pending;
+    this._pending = null;
+
+    const result = Buffer.allocUnsafe(n);
+    let offset = 0;
+    while (offset < n) {
+      const chunk = this._chunks[0];
+      const needed = n - offset;
+      if (chunk.length <= needed) {
+        chunk.copy(result, offset);
+        offset += chunk.length;
+        this._totalBytes -= chunk.length;
+        this._chunks.shift();
+      } else {
+        chunk.copy(result, offset, 0, needed);
+        this._chunks[0] = chunk.slice(needed);
+        this._totalBytes -= needed;
+        offset = n;
+      }
+    }
+    resolve(result);
+  }
+
+  _readExact(n) {
+    return new Promise((resolve, reject) => {
+      this._pending = { n, resolve, reject };
+      this._tryResolve();
+    });
+  }
+
+  /** Send all 9 model weights; Python reinitialises its models. */
+  async setWeights(npzBuf, mapHeight, mapWidth) {
+    this._mapHeight = mapHeight;
+    this._mapWidth  = mapWidth;
+
+    // Frame: [1B type=1][4B payload_len][2B H][2B W][npz_bytes]
+    const hdr = Buffer.allocUnsafe(9);
+    hdr[0] = 1;
+    hdr.writeUInt32BE(4 + npzBuf.length, 1);
+    hdr.writeUInt16BE(mapHeight, 5);
+    hdr.writeUInt16BE(mapWidth,  7);
+    this.proc.stdin.write(hdr);
+    this.proc.stdin.write(npzBuf);
+
+    const ack = await this._readExact(1);
+    if (ack[0] !== 1) throw new Error(`SET_WEIGHTS ACK bad: ${ack[0]}`);
+  }
+
+  /** Run movement inference for one unit. tensor15 is Float32Array. */
+  async inferMovement(unitTypeIdx, tensor15) {
+    const tBytes = new Uint8Array(tensor15.buffer, tensor15.byteOffset, tensor15.byteLength);
+    const payloadLen = 1 + tBytes.length;
+
+    const hdr = Buffer.allocUnsafe(5);
+    hdr[0] = 2;
+    hdr.writeUInt32BE(payloadLen, 1);
+    this.proc.stdin.write(hdr);
+    this.proc.stdin.write(Buffer.from([unitTypeIdx]));
+    this.proc.stdin.write(tBytes);
+
+    const responseSize = (5 + this._mapHeight * this._mapWidth) * 4;
+    const buf = await this._readExact(responseSize);
+    // buf is a Node.js Buffer — slice its ArrayBuffer for alignment safety
+    const ab  = buf.buffer.slice(buf.byteOffset, buf.byteOffset + responseSize);
+    const flt = new Float32Array(ab);
+    return {
+      actionType: flt.subarray(0, 5),
+      targetTile: flt.subarray(5),
+    };
+  }
+
+  /** Run production inference. spatial and globalFeatures are Float32Arrays. */
+  async inferProduction(spatial, globalFeatures) {
+    const sBytes = new Uint8Array(spatial.buffer, spatial.byteOffset, spatial.byteLength);
+    const gBytes = new Uint8Array(globalFeatures.buffer, globalFeatures.byteOffset, globalFeatures.byteLength);
+    const payloadLen = sBytes.length + gBytes.length;
+
+    const hdr = Buffer.allocUnsafe(5);
+    hdr[0] = 3;
+    hdr.writeUInt32BE(payloadLen, 1);
+    this.proc.stdin.write(hdr);
+    this.proc.stdin.write(sBytes);
+    this.proc.stdin.write(gBytes);
+
+    const buf = await this._readExact(8 * 4);
+    const ab  = buf.buffer.slice(buf.byteOffset, buf.byteOffset + 32);
+    return { unitType: new Float32Array(ab) };
+  }
+
+  close() {
+    if (!this.proc) return;
+    const hdr = Buffer.allocUnsafe(5);
+    hdr[0] = 255;
+    hdr.writeUInt32BE(0, 1);
+    try { this.proc.stdin.write(hdr); this.proc.stdin.end(); } catch { /**/ }
+  }
 }
 
-/**
- * Run one game: MoE agent (player1) vs BasicAgent (player2).
- * Returns city-accumulation fitness normalized to [0, 1].
- */
+// ── Game runner ───────────────────────────────────────────────────────────────
+
 async function runGame(nnAgent, basicAgent, mapWidth, mapHeight, maxTurns) {
   const state = createGameState({ width: mapWidth, height: mapHeight });
   const totalCities = state.cities.length;
-
   let winner = null;
   let cityScore = 0;
 
@@ -61,9 +182,8 @@ async function runGame(nnAgent, basicAgent, mapWidth, mapHeight, maxTurns) {
       let consecutiveFailures = 0;
       let done = false;
       while (!done && state.winner === null && state.currentPlayer === pid) {
-        const freshView = getPlayerView(state, pid);
-        const freshObs = { ...freshView, myPlayerId: pid };
-        const action = await nnAgent.act(freshObs);
+        const view = getPlayerView(state, pid);
+        const action = await nnAgent.act({ ...view, myPlayerId: pid });
         if (action.type === 'END_TURN') {
           applyAction(state, action, pid);
           done = true;
@@ -96,24 +216,21 @@ async function runGame(nnAgent, basicAgent, mapWidth, mapHeight, maxTurns) {
   return totalCities > 0 ? cityScore / (maxTurns * totalCities) : 0;
 }
 
-/**
- * Handle one genome request: load sessions, run N games, return results.
- */
-async function handleRequest(req) {
-  const { models, games, width, height, maxTurns } = req;
+// ── Request handler ───────────────────────────────────────────────────────────
 
-  const sessions = await loadSessionsFromBase64(models);
+async function handleRequest(req, sidecar) {
+  const { weights_npz, games, width, height, maxTurns } = req;
 
-  // Init a fresh agent pair. NnMoEAgent re-uses sessions across games;
-  // BasicAgent also re-uses (it's stateless across games).
-  const nnAgent = new NnMoEAgent();
-  const basicAgent = new BasicAgent();
-
-  // We need mapHeight including ice caps for init — create a throwaway state
   const state0 = createGameState({ width, height });
   const actualMapHeight = state0.mapHeight;
 
-  nnAgent.initFromSessions(sessions, {
+  const npzBuf = Buffer.from(weights_npz, 'base64');
+  await sidecar.setWeights(npzBuf, actualMapHeight, width);
+
+  const nnAgent = new NnMoEAgent();
+  const basicAgent = new BasicAgent();
+
+  nnAgent.initFromMPS(sidecar, {
     playerId: 'player1',
     mapWidth: width,
     mapHeight: actualMapHeight,
@@ -125,14 +242,15 @@ async function handleRequest(req) {
     const fitness = await runGame(nnAgent, basicAgent, width, height, maxTurns);
     results.push(fitness);
   }
-
   return results;
 }
 
-// ── Main: read JSON lines from stdin, write JSON lines to stdout ──────────────
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+const sidecar = new MPSSidecar();
+sidecar.start();
 
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
-
 process.stderr.write('[eval_server] ready\n');
 
 rl.on('line', async (line) => {
@@ -148,7 +266,7 @@ rl.on('line', async (line) => {
   }
 
   try {
-    const results = await handleRequest(req);
+    const results = await handleRequest(req, sidecar);
     process.stdout.write(JSON.stringify({ results }) + '\n');
   } catch (e) {
     process.stderr.write(`[eval_server] error: ${e.message}\n${e.stack}\n`);
@@ -158,5 +276,6 @@ rl.on('line', async (line) => {
 
 rl.on('close', () => {
   process.stderr.write('[eval_server] stdin closed, exiting\n');
+  sidecar.close();
   process.exit(0);
 });

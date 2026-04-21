@@ -19,7 +19,7 @@
 import type { Agent, AgentAction, AgentConfig, AgentObservation } from './agent.js';
 import type { PlayerView, UnitView, CityView } from './types.js';
 import { UnitType, UnitDomain, UNIT_STATS, Terrain, wrapX } from './types.js';
-import { playerViewToTensor } from './engine/tensorUtils.js';
+import { fillViewTensor } from './engine/tensorUtils.js';
 
 // Lazy-load node modules to avoid browser build errors
 let _ort: any = null;
@@ -83,8 +83,21 @@ const PROD_UNIT_TYPES = [
 // NUM_GLOBAL_FEATURES for production expert — see NN_Agent_MoE.md
 const NUM_GLOBAL = 28;
 
+// Maps UnitType → index used in the Python MPS sidecar binary protocol
+const UNIT_TYPE_TO_IDX: Partial<Record<UnitType, number>> = {
+  [UnitType.Army]:       0,
+  [UnitType.Fighter]:    1,
+  [UnitType.Missile]:    2,
+  [UnitType.Transport]:  3,
+  [UnitType.Destroyer]:  4,
+  [UnitType.Submarine]:  5,
+  [UnitType.Carrier]:    6,
+  [UnitType.Battleship]: 7,
+};
+
 function getExecutionProviders(): string[] {
-  if (typeof process !== 'undefined' && process.platform === 'darwin') return ['coreml', 'cpu'];
+  if (typeof process !== 'undefined' && process.platform === 'darwin')
+    return ['coreml', 'cpu'];
   if (typeof process !== 'undefined' && process.platform === 'linux') return ['cuda', 'cpu'];
   return ['cpu'];
 }
@@ -100,29 +113,51 @@ export class NnMoEAgent implements Agent {
   private movementSessions: Map<UnitType, any> = new Map();
   /** Production expert session */
   private productionSession: any = null;
+  /** Python MPS sidecar (set by initFromMPS — takes precedence over ONNX sessions) */
+  private mpsSidecar: any = null;
 
   // Per-turn state: tracks which units and cities have been handled this turn
   private pendingUnitIds: Set<string> = new Set();
   private pendingCityIds: Set<string> = new Set();
   private pass: 'prod' | 1 | 2 = 'prod';
+  // Pre-allocated 15-channel tensor buffer — reused every inference call, zero allocations in hot path
+  private tensor15Buf: Float32Array = new Float32Array(0);
+  private lastMarkerIdx: number = -1;
 
   /**
    * Inject pre-created ONNX sessions directly (used by eval_server.js to avoid file I/O).
    * sessions: { army: InferenceSession, ..., production: InferenceSession }
    */
   initFromSessions(sessions: Record<string, any>, config: AgentConfig): void {
-    this.playerId = config.playerId;
     this.mapWidth = config.mapWidth;
     this.mapHeight = config.mapHeight;
+    this.mpsSidecar = null;
 
     this.movementSessions.clear();
     for (const ut of Object.values(UnitType)) {
-      const name = ut as string; // UnitType values are the string names e.g. 'army'
+      const name = ut as string;
       if (sessions[name]) {
         this.movementSessions.set(ut as UnitType, sessions[name]);
       }
     }
     this.productionSession = sessions['production'] ?? null;
+    this.tensor15Buf = new Float32Array(15 * this.mapHeight * this.mapWidth);
+    this.lastMarkerIdx = -1;
+  }
+
+  /**
+   * Use a Python MPS sidecar for inference instead of ONNX sessions.
+   * sidecar must implement inferMovement(unitTypeIdx, tensor15) and
+   * inferProduction(spatial, globalFeatures).
+   */
+  initFromMPS(sidecar: any, config: AgentConfig): void {
+    this.mapWidth = config.mapWidth;
+    this.mapHeight = config.mapHeight;
+    this.mpsSidecar = sidecar;
+    this.movementSessions.clear();
+    this.productionSession = null;
+    this.tensor15Buf = new Float32Array(15 * this.mapHeight * this.mapWidth);
+    this.lastMarkerIdx = -1;
   }
 
   async init(config: AgentConfig): Promise<void> {
@@ -137,6 +172,7 @@ export class NnMoEAgent implements Agent {
 
     let cached = sessionCache.get(dir);
     if (!cached) {
+      const loadStart = Date.now();
       console.error('Loading ONNX sessions from:', dir);
       const ort = await getOrt();
       const join = await getJoin();
@@ -157,12 +193,15 @@ export class NnMoEAgent implements Agent {
       const prodPath = join(dir, 'production.onnx')!;
       const production = await ort.InferenceSession.create(prodPath, opts);
 
+      console.error(`ONNX sessions ready in ${((Date.now() - loadStart) / 1000).toFixed(1)}s`);
       cached = { movement, production };
       sessionCache.set(dir, cached);
     }
 
     this.movementSessions = cached.movement;
     this.productionSession = cached.production;
+    this.tensor15Buf = new Float32Array(15 * this.mapHeight * this.mapWidth);
+    this.lastMarkerIdx = -1;
   }
 
   /**
@@ -285,17 +324,30 @@ export class NnMoEAgent implements Agent {
   // ── Expert inference ──────────────────────────────────────────────────────
 
   private async askMovementExpert(unit: UnitView, obs: AgentObservation): Promise<AgentAction | null> {
-    const session = this.movementSessions.get(unit.type);
-    if (!session) return null;
-
     const tensor15 = this.buildMovementTensor(obs, unit.x, unit.y);
-    const tensorH = (tensor15.length / 15) / this.mapWidth;
-    const ort = await getOrt();
-    const input = new ort.Tensor('float32', tensor15, [1, 15, tensorH, this.mapWidth]);
-    const results = await session.run({ input });
 
-    const actionIdx = this.argmax(results.action_type.data as Float32Array);
-    const tileIdx = this.argmax(results.target_tile.data as Float32Array);
+    let actionTypeData: Float32Array;
+    let targetTileData: Float32Array;
+
+    if (this.mpsSidecar) {
+      const unitIdx = UNIT_TYPE_TO_IDX[unit.type];
+      if (unitIdx === undefined) return null;
+      const r = await this.mpsSidecar.inferMovement(unitIdx, tensor15);
+      actionTypeData = r.actionType;
+      targetTileData = r.targetTile;
+    } else {
+      const session = this.movementSessions.get(unit.type);
+      if (!session) return null;
+      const tensorH = (tensor15.length / 15) / this.mapWidth;
+      const ort = await getOrt();
+      const input = new ort.Tensor('float32', tensor15, [1, 15, tensorH, this.mapWidth]);
+      const results = await session.run({ input });
+      actionTypeData = results.action_type.data as Float32Array;
+      targetTileData = results.target_tile.data as Float32Array;
+    }
+
+    const actionIdx = this.argmax(actionTypeData);
+    const tileIdx = this.argmax(targetTileData);
     const actionType = MOVEMENT_ACTION_TYPES[actionIdx] ?? 'SKIP';
 
     const tx = tileIdx % this.mapWidth;
@@ -330,38 +382,47 @@ export class NnMoEAgent implements Agent {
   }
 
   private async askProductionExpert(city: CityView, obs: AgentObservation): Promise<UnitType> {
-    if (!this.productionSession) return UnitType.Army;
-
     const tensor15 = this.buildMovementTensor(obs, city.x, city.y);
     const globalFeatures = this.buildGlobalFeatures(city, obs);
 
-    const tensorH = (tensor15.length / 15) / this.mapWidth;
-    const ort = await getOrt();
-    const inputTensor = new ort.Tensor('float32', tensor15, [1, 15, tensorH, this.mapWidth]);
-    const globalTensor = new ort.Tensor('float32', globalFeatures, [1, NUM_GLOBAL]);
-    const results = await this.productionSession.run({ input: inputTensor, global_features: globalTensor });
+    let unitTypeData: Float32Array;
 
-    const unitTypeIdx = this.argmax(results.unit_type.data as Float32Array);
+    if (this.mpsSidecar) {
+      const r = await this.mpsSidecar.inferProduction(tensor15, globalFeatures);
+      unitTypeData = r.unitType;
+    } else {
+      if (!this.productionSession) return UnitType.Army;
+      const tensorH = (tensor15.length / 15) / this.mapWidth;
+      const ort = await getOrt();
+      const inputTensor = new ort.Tensor('float32', tensor15, [1, 15, tensorH, this.mapWidth]);
+      const globalTensor = new ort.Tensor('float32', globalFeatures, [1, NUM_GLOBAL]);
+      const results = await this.productionSession.run({ input: inputTensor, global_features: globalTensor });
+      unitTypeData = results.unit_type.data as Float32Array;
+    }
+
+    const unitTypeIdx = this.argmax(unitTypeData);
     return PROD_UNIT_TYPES[unitTypeIdx] ?? UnitType.Army;
   }
 
   // ── Tensor construction ───────────────────────────────────────────────────
 
   /**
-   * Build a 15-channel tensor: channels 0–13 from playerViewToTensor,
+   * Build a 15-channel tensor into the pre-allocated buffer.
+   * Channels 0–13 written fresh from the current observation (no stale data),
    * channel 14 = position marker for the given (x, y).
+   * Returns the shared buffer — valid until the next call.
    */
   private buildMovementTensor(obs: AgentObservation, markerX: number, markerY: number): Float32Array {
-    const view = obs as any as PlayerView;
-    const base14 = playerViewToTensor(view); // length = 14 * tensorH * mapWidth
-    const HW = base14.length / 14;           // actual tensor H*W (playerViewToTensor crops ice caps)
-    const tensorW = this.mapWidth;
-    const out = new Float32Array(15 * HW);
-    out.set(base14);
-    // Channel 14: marker
-    const markerIdx = 14 * HW + markerY * tensorW + markerX;
-    if (markerIdx < out.length) out[markerIdx] = 1.0;
-    return out;
+    fillViewTensor(obs as any as PlayerView, this.tensor15Buf);
+    // Clear previous marker and set new one
+    if (this.lastMarkerIdx >= 0) this.tensor15Buf[this.lastMarkerIdx] = 0;
+    const HW = this.tensor15Buf.length / 15;
+    const markerIdx = 14 * HW + markerY * this.mapWidth + markerX;
+    if (markerIdx < this.tensor15Buf.length) {
+      this.tensor15Buf[markerIdx] = 1.0;
+      this.lastMarkerIdx = markerIdx;
+    }
+    return this.tensor15Buf;
   }
 
 

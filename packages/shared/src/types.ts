@@ -233,9 +233,9 @@ export interface GameState {
   phase: GamePhase;
   winner: PlayerId | null;
   /** Tiles each player has explored (persists across turns) */
-  explored: Record<PlayerId, Set<string>>;
+  explored: Record<PlayerId, Set<number>>;
   /** Tiles visible at any point this turn (reset at turn start) */
-  turnVisible: Record<PlayerId, Set<string>>;
+  turnVisible: Record<PlayerId, Set<number>>;
   /** Total missiles produced per player (for blast radius upgrades) */
   missilesProduced: Record<PlayerId, number>;
   /** Enemy units seen this turn (reset each turn) */

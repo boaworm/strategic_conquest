@@ -6,3 +6,4 @@ onnx>=1.19
 onnxscript>=0.1.0
 ml_dtypes>=0.5.0
 Pillow>=10.0
+onnxconverter-common>=1.14.0

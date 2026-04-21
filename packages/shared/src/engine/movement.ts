@@ -166,7 +166,7 @@ export function getUnitsAt(state: GameState, pos: Coord, owner?: string): Unit[]
 export function getVisibleTiles(
   state: GameState,
   playerId: string,
-): Set<string> {
+): Set<number> {
   // Use boolean grid for faster computation, then convert to Set
   const grid = Array.from({ length: state.mapHeight }, () =>
     new Array(state.mapWidth).fill(false)
@@ -204,11 +204,12 @@ export function getVisibleTiles(
     }
   }
 
-  // Convert grid to Set for return
-  const visible = new Set<string>();
+  // Convert grid to Set<number> — key = y * mapWidth + x (no string alloc)
+  const visible = new Set<number>();
   for (let y = 0; y < state.mapHeight; y++) {
+    const rowOff = y * state.mapWidth;
     for (let x = 0; x < state.mapWidth; x++) {
-      if (grid[y][x]) visible.add(`${x},${y}`);
+      if (grid[y][x]) visible.add(rowOff + x);
     }
   }
 

@@ -488,16 +488,16 @@ export function createGameState(opts: MapOptions): GameState {
       phase: GamePhase.Active,
       winner: null,
       explored: {
-        player1: new Set<string>(),
-        player2: new Set<string>(),
+        player1: new Set<number>(),
+        player2: new Set<number>(),
       },
       seenEnemies: {
         player1: [],
         player2: [],
       },
       turnVisible: {
-        player1: new Set<string>(),
-        player2: new Set<string>(),
+        player1: new Set<number>(),
+        player2: new Set<number>(),
       },
       missilesProduced: {
         player1: 0,
@@ -520,16 +520,16 @@ export function createGameState(opts: MapOptions): GameState {
     phase: GamePhase.Active,
     winner: null,
     explored: {
-      player1: new Set<string>(),
-      player2: new Set<string>(),
+      player1: new Set<number>(),
+      player2: new Set<number>(),
     },
     seenEnemies: {
       player1: [],
       player2: [],
     },
     turnVisible: {
-      player1: new Set<string>(),
-      player2: new Set<string>(),
+      player1: new Set<number>(),
+      player2: new Set<number>(),
     },
     missilesProduced: {
       player1: 0,

@@ -2,10 +2,21 @@ import { PlayerView, UnitType, TileVisibility, Terrain } from '../types.js';
 
 export const NUM_CHANNELS = 14;
 
+const UNIT_TYPE_TO_CHANNEL: Record<UnitType, number> = {
+  [UnitType.Army]: 0,
+  [UnitType.Fighter]: 1,
+  [UnitType.Missile]: 2,
+  [UnitType.Transport]: 3,
+  [UnitType.Destroyer]: 4,
+  [UnitType.Submarine]: 5,
+  [UnitType.Carrier]: 6,
+  [UnitType.Battleship]: 7,
+};
+
 /**
  * Converts a PlayerView into a flat Float32Array representing a 3D tensor
  * of shape [Channels, Height, Width].
- * 
+ *
  * Channels:
  *  0: Friendly Army
  *  1: Friendly Fighter
@@ -22,74 +33,59 @@ export const NUM_CHANNELS = 14;
  * 12: Fog of War (1 = currently visible, 0.5 = previously seen, 0 = hidden)
  * 13: Global context broadcast across entire channel (Turn / 1000)
  */
+/**
+ * Fill channels 0–13 into a pre-allocated buffer (no allocation, no copy).
+ * The caller owns the buffer; channel 14+ is untouched.
+ * buf must have length >= NUM_CHANNELS * view.tiles.length * view.tiles[0].length.
+ */
+export function fillViewTensor(view: PlayerView, buf: Float32Array): void {
+  const height = view.tiles.length;
+  const width = height > 0 ? view.tiles[0].length : 0;
+  const HW = height * width;
+
+  // Clear channels 0-13 (typed-array fill = native memset)
+  buf.fill(0, 0, 14 * HW);
+
+  for (const unit of view.myUnits) {
+    const idx = UNIT_TYPE_TO_CHANNEL[unit.type] * HW + unit.y * width + unit.x;
+    buf[idx] = Math.min(buf[idx] + unit.health, 1.0);
+  }
+
+  for (const city of view.myCities) {
+    buf[8 * HW + city.y * width + city.x] = city.producing === null ? 1.0 : 0.5;
+  }
+
+  for (const enemyUnit of view.visibleEnemyUnits) {
+    const idx = 9 * HW + enemyUnit.y * width + enemyUnit.x;
+    buf[idx] = Math.min(buf[idx] + enemyUnit.health, 1.0);
+  }
+
+  for (const enemyCity of view.visibleEnemyCities) {
+    buf[10 * HW + enemyCity.y * width + enemyCity.x] = 1.0;
+  }
+
+  buf.fill(Math.min(view.turn / 1000.0, 1.0), 13 * HW, 14 * HW);
+
+  const base11 = 11 * HW;
+  const base12 = 12 * HW;
+  for (let y = 0; y < height; y++) {
+    const row = view.tiles[y];
+    const rowOff = y * width;
+    for (let x = 0; x < width; x++) {
+      const tile = row[x];
+      const i = rowOff + x;
+      buf[base11 + i] = tile.terrain === Terrain.Land ? 1.0 : 0.0;
+      buf[base12 + i] = tile.visibility === TileVisibility.Visible ? 1.0
+                      : tile.visibility === TileVisibility.Seen    ? 0.5 : 0.0;
+    }
+  }
+}
+
+/** Allocating wrapper — kept for callers outside the agent hot path. */
 export function playerViewToTensor(view: PlayerView): Float32Array {
   const height = view.tiles.length;
   const width = height > 0 ? view.tiles[0].length : 0;
-  
-  const buffer = new Float32Array(NUM_CHANNELS * height * width);
-  
-  // Helper to safely write to the fixed size array
-  const setVal = (c: number, y: number, x: number, val: number) => {
-    if (x >= 0 && x < width && y >= 0 && y < height) {
-      buffer[c * (height * width) + y * width + x] = val;
-    }
-  };
-
-  // We moved setting these channels to the bottom (11, 12, 13)
-
-  // 2. Friendly Units (Channels 0-7)
-  const unitTypeToChannel: Record<UnitType, number> = {
-    [UnitType.Army]: 0,
-    [UnitType.Fighter]: 1,
-    [UnitType.Missile]: 2,
-    [UnitType.Transport]: 3,
-    [UnitType.Destroyer]: 4,
-    [UnitType.Submarine]: 5,
-    [UnitType.Carrier]: 6,
-    [UnitType.Battleship]: 7,
-  };
-
-  for (const unit of view.myUnits) {
-    const channel = unitTypeToChannel[unit.type];
-    // We encode health as the value (1.0 = full, 0.5 = half, etc.)
-    // If multiple units stack, we add them, capping at 1.0
-    const idx = channel * (height * width) + unit.y * width + unit.x;
-    if (unit.y >= 0 && unit.y < height && unit.x >= 0 && unit.x < width) {
-      buffer[idx] = Math.min(buffer[idx] + unit.health, 1.0);
-    }
-  }
-
-  // 3. Friendly Cities (Channel 8)
-  for (const city of view.myCities) {
-    const val = city.producing === null ? 1.0 : 0.5;
-    setVal(8, city.y, city.x, val);
-  }
-
-  // 4. Enemy Units (Channel 9)
-  for (const enemyUnit of view.visibleEnemyUnits) {
-    const idx = 9 * (height * width) + enemyUnit.y * width + enemyUnit.x;
-    if (enemyUnit.y >= 0 && enemyUnit.y < height && enemyUnit.x >= 0 && enemyUnit.x < width) {
-      buffer[idx] = Math.min(buffer[idx] + enemyUnit.health, 1.0);
-    }
-  }
-
-  // 5. Enemy Cities (Channel 10)
-  for (const enemyCity of view.visibleEnemyCities) {
-    setVal(10, enemyCity.y, enemyCity.x, 1.0);
-  }
-
-  // 6. Terrain, Fog, Context were channels 11, 12, 13
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const tile = view.tiles[y][x];
-      setVal(11, y, x, tile.terrain === Terrain.Land ? 1.0 : 0.0);
-      let visVal = 0.0;
-      if (tile.visibility === TileVisibility.Visible) visVal = 1.0;
-      else if (tile.visibility === TileVisibility.Seen) visVal = 0.5;
-      setVal(12, y, x, visVal);
-      setVal(13, y, x, Math.min(view.turn / 1000.0, 1.0));
-    }
-  }
-
-  return buffer;
+  const buf = new Float32Array(NUM_CHANNELS * height * width);
+  fillViewTensor(view, buf);
+  return buf;
 }

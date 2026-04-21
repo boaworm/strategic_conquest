@@ -207,32 +207,35 @@ export function createGameStateFromConfig(config: TestConfig): GameState {
     missilesProduced: { player1: 0, player2: 0 },
   };
 
+  const W = state.mapWidth;
+  const strToKey = (s: string) => { const i = s.indexOf(','); return parseInt(s.slice(0, i)) + parseInt(s.slice(i + 1)) * W; };
+
   // Set up per-player explored tiles
   if (config.p1ExploredTiles) {
-    config.p1ExploredTiles.forEach((tile) => state.explored.player1.add(tile));
+    config.p1ExploredTiles.forEach((tile) => state.explored.player1.add(strToKey(tile)));
   } else if (config.exploredTiles) {
-    config.exploredTiles.forEach((tile) => state.explored.player1.add(tile));
+    config.exploredTiles.forEach((tile) => state.explored.player1.add(strToKey(tile)));
   } else {
     // Default: explore all land tiles
     for (let y = 1; y < config.mapConfig.height - 1; y++) {
       for (let x = 0; x < config.mapConfig.width; x++) {
         if (config.mapConfig.tiles[y]?.[x] === Terrain.Land) {
-          state.explored.player1.add(`${x},${y}`);
+          state.explored.player1.add(y * W + x);
         }
       }
     }
   }
 
   if (config.p2ExploredTiles) {
-    config.p2ExploredTiles.forEach((tile) => state.explored.player2.add(tile));
+    config.p2ExploredTiles.forEach((tile) => state.explored.player2.add(strToKey(tile)));
   } else if (config.exploredTiles) {
-    config.exploredTiles.forEach((tile) => state.explored.player2.add(tile));
+    config.exploredTiles.forEach((tile) => state.explored.player2.add(strToKey(tile)));
   } else {
     // Default: explore all land tiles
     for (let y = 1; y < config.mapConfig.height - 1; y++) {
       for (let x = 0; x < config.mapConfig.width; x++) {
         if (config.mapConfig.tiles[y]?.[x] === Terrain.Land) {
-          state.explored.player2.add(`${x},${y}`);
+          state.explored.player2.add(y * W + x);
         }
       }
     }
@@ -245,8 +248,10 @@ export function createGameStateFromConfig(config: TestConfig): GameState {
  * Creates a snapshot of the current game state.
  */
 export function snapshotGame(state: GameState): GameSnapshot {
-  const p1Explored = Array.from(state.explored.player1 || []);
-  const p2Explored = Array.from(state.explored.player2 || []);
+  const w = state.mapWidth;
+  const keyToStr = (k: number) => `${k % w},${Math.floor(k / w)}`;
+  const p1Explored = Array.from(state.explored.player1 || [], keyToStr);
+  const p2Explored = Array.from(state.explored.player2 || [], keyToStr);
   return {
     turn: state.turn,
     currentPlayer: state.currentPlayer,

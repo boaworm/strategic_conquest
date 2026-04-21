@@ -2,7 +2,7 @@
 MoEEvalPool — manages N persistent Node.js eval_server.js processes.
 
 Each server stays alive for the entire evolution run.
-Python submits genomes as JSON (with base64-encoded ONNX bytes),
+Python submits genomes as JSON (with base64-encoded numpy npz weights),
 servers return fitness lists as JSON.
 
 Usage:
@@ -24,6 +24,7 @@ import logging
 from pathlib import Path
 from queue import Queue
 
+import numpy as np
 import torch
 
 warnings.filterwarnings("ignore")
@@ -36,7 +37,32 @@ _SERVER_CWD = str(Path(__file__).parent.parent)
 
 NUM_GLOBAL = 28  # must match models_moe.py
 
-_ONNX_EXPORT_LOCK = threading.Lock()  # torch.onnx.export is not thread-safe
+
+def _build_models_npz(base_states: dict, perturbations: dict) -> bytes:
+    """
+    Apply perturbations to base state dicts, pack all model weights into
+    a numpy .npz buffer (key = '{model_name}/{layer}'), return raw bytes.
+    """
+    from models_moe import ALL_MODEL_NAMES
+
+    arrays = {}
+    for name in ALL_MODEL_NAMES:
+        pert = perturbations.get(name, {})
+        for layer, param in base_states[name].items():
+            if layer in pert:
+                noise = torch.tensor(pert[layer]['data'], dtype=param.dtype).reshape(pert[layer]['shape'])
+                arr = (param + noise).detach().cpu().numpy()
+            else:
+                arr = param.detach().cpu().numpy()
+            arrays[f'{name}/{layer}'] = arr
+
+    buf = io.BytesIO()
+    np.savez(buf, **arrays)
+    return buf.getvalue()
+
+
+# Kept for champion ONNX export only
+_ONNX_EXPORT_LOCK = threading.Lock()
 
 
 def _export_model_to_bytes(model, model_name: str, config: dict) -> bytes:
@@ -68,55 +94,25 @@ def _export_model_to_bytes(model, model_name: str, config: dict) -> bytes:
     return buf.getvalue()
 
 
-def _build_models_b64(base_states: dict, perturbations: dict, configs: dict) -> dict:
-    """
-    Apply perturbations to base state dicts, export each model to ONNX bytes,
-    return dict of {model_name: base64_string}.
-    """
-    from models_moe import MovementCNN, ProductionCNN, ALL_MODEL_NAMES
-
-    models_b64 = {}
-    for name in ALL_MODEL_NAMES:
-        # Apply perturbations
-        pert = perturbations.get(name, {})
-        perturbed = {}
-        for layer, param in base_states[name].items():
-            if layer in pert:
-                noise = torch.tensor(pert[layer]['data'], dtype=param.dtype).reshape(pert[layer]['shape'])
-                perturbed[layer] = param + noise
-            else:
-                perturbed[layer] = param
-
-        # Build model
-        if name == 'production':
-            model = ProductionCNN(**configs[name])
-        else:
-            model = MovementCNN(**configs[name])
-        model.load_state_dict(perturbed)
-
-        onnx_bytes = _export_model_to_bytes(model, name, configs[name])
-        models_b64[name] = base64.b64encode(onnx_bytes).decode('ascii')
-
-    return models_b64
-
-
 class _EvalServer:
     """One persistent Node.js eval_server.js process."""
 
     def __init__(self):
+        env = {**os.environ, 'PYTHON_EXECUTABLE': sys.executable}
         self._proc = subprocess.Popen(
             ['node', _EVAL_SERVER],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=sys.stderr,  # forward server logs to our stderr
             cwd=_SERVER_CWD,
+            env=env,
         )
         self._lock = threading.Lock()
 
-    def evaluate(self, models_b64: dict, games: int, width: int, height: int, max_turns: int) -> list:
+    def evaluate(self, weights_npz_b64: str, games: int, width: int, height: int, max_turns: int) -> list:
         """Send one genome request, block until response."""
         request = json.dumps({
-            'models': models_b64,
+            'weights_npz': weights_npz_b64,
             'games': games,
             'width': width,
             'height': height,
@@ -165,23 +161,23 @@ class MoEEvalPool:
 
         print(f"[MoEEvalPool] {num_workers} eval servers ready", flush=True)
 
-    def preexport(self, base_states: dict, perturbations: dict, configs: dict) -> dict:
+    def preexport(self, base_states: dict, perturbations: dict, configs: dict = None) -> str:
         """
-        Export 9 models to base64 ONNX bytes (CPU, serialized).
-        Call this once per genome before evaluate() — can be done in a single
-        thread upfront to avoid lock contention across ThreadPoolExecutor threads.
+        Pack 9 model weight tensors into a base64-encoded numpy npz buffer.
+        configs is ignored (kept for API compatibility).
         """
-        return _build_models_b64(base_states, perturbations, configs)
+        npz_bytes = _build_models_npz(base_states, perturbations)
+        return base64.b64encode(npz_bytes).decode('ascii')
 
-    def evaluate_b64(self, models_b64: dict) -> list:
+    def evaluate_b64(self, weights_npz_b64: str) -> list:
         """
-        Send pre-exported model bytes to an idle server, return fitness list.
+        Send pre-built npz weights to an idle server, return fitness list.
         Thread-safe — multiple threads can call this concurrently.
         """
         server = self._idle.get()
         try:
             results = server.evaluate(
-                models_b64, self.games_per_agent,
+                weights_npz_b64, self.games_per_agent,
                 self.map_width, self.map_height, self.max_turns,
             )
         finally:
@@ -190,7 +186,7 @@ class MoEEvalPool:
 
     def evaluate(self, base_states: dict, perturbations: dict, configs: dict) -> list:
         """Export + evaluate in one call (kept for compatibility)."""
-        return self.evaluate_b64(self.preexport(base_states, perturbations, configs))
+        return self.evaluate_b64(self.preexport(base_states, perturbations))
 
     def close(self):
         for s in self._servers:
