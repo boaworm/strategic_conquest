@@ -24,3 +24,5 @@ tmp/
 tmp_logs/
 data/
 packages/server/public/index.html
+.claude
+.vscode

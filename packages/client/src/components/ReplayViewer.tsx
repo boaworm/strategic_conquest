@@ -206,7 +206,7 @@ function drawUnitShape(ctx: CanvasRenderingContext2D, type: UnitType, cx: number
 
 const UNIT_IMAGE_SRCS: Record<UnitType, string> = {
   [UnitType.Army]:       '/units/army.png',
-  [UnitType.Fighter]:    '/units/figher.png',
+  [UnitType.Fighter]:    '/units/fighter.png',
   [UnitType.Missile]:     '/units/missile.png',
   [UnitType.Transport]:  '/units/transport.png',
   [UnitType.Destroyer]:  '/units/destroyer.png',
@@ -470,6 +470,7 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
   const [error, setError] = useState('');
   const [replay, setReplay] = useState<ReplayData | null>(null);
   const [frameIdx, setFrameIdx] = useState(0);
+  const [currentReplayIdx, setCurrentReplayIdx] = useState<number>(-1);
 
   // Use same origin as page (works for both replay server on 4001 and game server on 4000)
   const serverOrigin = window.location.origin;
@@ -480,13 +481,16 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
       .then((data) => {
         setMetas(data.replays ?? []);
         // Auto-load if initialId provided
-        if (initialId) loadReplay(initialId);
+        if (initialId) {
+          const idx = (data.replays ?? []).findIndex((m: ReplayMeta) => m.id === initialId);
+          loadReplay(initialId, idx);
+        }
       })
       .catch(() => setError('Could not connect to server. Is it running?'));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverOrigin, initialId]);
 
-  async function loadReplay(id: string) {
+  async function loadReplay(id: string, idx: number = -1) {
     setLoading(true);
     setError('');
     try {
@@ -498,6 +502,7 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
       if (!data.mapHeight) (data as any).mapHeight = data.meta.mapHeight;
       setReplay(data);
       setFrameIdx(0);
+      setCurrentReplayIdx(idx);
     } catch (e: unknown) {
       setError(`Failed to load: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -582,6 +587,27 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
       <div className="h-screen bg-gray-950 flex flex-col overflow-hidden">
         <div className="flex items-center gap-4 px-4 py-2 bg-gray-900 border-b border-gray-700 text-white text-sm shrink-0 flex-wrap">
           <button className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600" onClick={() => setReplay(null)}>← List</button>
+          <button
+            className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-40"
+            disabled={currentReplayIdx <= 0}
+            onClick={() => {
+              const prev = metas[currentReplayIdx - 1];
+              if (prev) loadReplay(prev.id, currentReplayIdx - 1);
+            }}
+          >
+            Previous
+          </button>
+          <span className="text-gray-400">({currentReplayIdx + 1}/{metas.length})</span>
+          <button
+            className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-40"
+            disabled={currentReplayIdx >= metas.length - 1}
+            onClick={() => {
+              const next = metas[currentReplayIdx + 1];
+              if (next) loadReplay(next.id, currentReplayIdx + 1);
+            }}
+          >
+            Next
+          </button>
           <button className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600" onClick={onBack}>✕ Close</button>
           <span className="font-bold">Turn {frame.turn}</span>
           <span className="text-gray-400">
@@ -754,11 +780,11 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
             <span>ID</span><span>Recorded</span><span>Turns</span><span className="text-center" style={{color:COL_P1}}>P1 cities</span><span className="text-center" style={{color:COL_P2}}>P2 cities</span><span>Winner</span>
           </div>
           <div className="max-h-96 overflow-y-auto space-y-1">
-            {metas.map((m) => (
+            {metas.map((m, idx) => (
               <button
                 key={m.id}
                 className="w-full text-left px-2 py-2 bg-gray-900 rounded hover:bg-gray-700 text-sm grid grid-cols-[1fr_6rem_6rem_8rem_8rem_6rem] gap-2 items-center"
-                onClick={() => loadReplay(m.id)}
+                onClick={() => loadReplay(m.id, idx)}
               >
                 <span className="font-mono text-xs text-gray-400">{m.id.slice(0, 8)}</span>
                 <span className="text-xs text-gray-400">{m.recordedAt.slice(5, 16).replace('T', ' ')}</span>

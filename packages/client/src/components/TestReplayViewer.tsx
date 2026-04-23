@@ -310,7 +310,7 @@ const PlayerViewCanvas = React.memo(({
 
   const UNIT_IMAGE_SRCS: Record<UnitType, string> = {
     [UnitType.Army]:       '/units/army.png',
-    [UnitType.Fighter]:    '/units/figher.png',
+    [UnitType.Fighter]:    '/units/fighter.png',
     [UnitType.Missile]:     '/units/missile.png',
     [UnitType.Transport]:  '/units/transport.png',
     [UnitType.Destroyer]:  '/units/destroyer.png',
