@@ -63,6 +63,7 @@ def _read_exact(n: int) -> bytes:
 # ── Model state ───────────────────────────────────────────────────────────────
 
 _models: dict = {}
+_base_tensors: dict = {}  # {f'{model_name}/{layer}': MPS tensor} — set once per run
 _H: int = 0
 _W: int = 0
 
@@ -82,7 +83,7 @@ def _init_models(H: int, W: int, channels: int = 15) -> None:
 
 # ── Message handlers ──────────────────────────────────────────────────────────
 
-def _handle_set_weights(payload: bytes) -> None:
+def _handle_set_base(payload: bytes) -> None:
     global _H, _W
     H = struct.unpack('>H', payload[:2])[0]
     W = struct.unpack('>H', payload[2:4])[0]
@@ -106,6 +107,72 @@ def _handle_set_weights(payload: bytes) -> None:
             else:
                 new_sd[key] = cur_sd[key]
         _models[name].load_state_dict(new_sd)
+        # Store base as cloned MPS tensors for fast per-genome delta application
+        for key, tensor in _models[name].state_dict().items():
+            _base_tensors[f'{name}/{key}'] = tensor.clone()
+
+    sys.stderr.write(f'[moe_mps_server] base weights stored ({len(_base_tensors)} tensors)\n')
+    sys.stderr.flush()
+    _stdout.write(b'\x04')
+    _stdout.flush()
+
+
+def _handle_set_weights(payload: bytes) -> None:
+    """Apply perturbation delta on top of stored base weights (in-place, no load_state_dict)."""
+    global _H, _W
+    H = struct.unpack('>H', payload[:2])[0]
+    W = struct.unpack('>H', payload[2:4])[0]
+    npz_bytes = payload[4:]
+
+    if not _models or _H != H or _W != W:
+        _init_models(H, W)
+
+    buf = io.BytesIO(npz_bytes)
+    data = np.load(buf, allow_pickle=False)
+
+    if not _base_tensors:
+        # No base loaded — fall back to treating payload as full weights
+        sys.stderr.write('[moe_mps_server] WARNING: no base weights, falling back to full load\n')
+        sys.stderr.flush()
+        for name in ALL_MODEL_NAMES:
+            if name not in _models:
+                continue
+            cur_sd = _models[name].state_dict()
+            new_sd = {}
+            for key in cur_sd:
+                arr_key = f'{name}/{key}'
+                if arr_key in data:
+                    new_sd[key] = torch.from_numpy(data[arr_key].copy()).to(device)
+                else:
+                    new_sd[key] = cur_sd[key]
+            _models[name].load_state_dict(new_sd)
+        _stdout.write(b'\x01')
+        _stdout.flush()
+        return
+
+    for name in ALL_MODEL_NAMES:
+        if name not in _models:
+            continue
+        for param_name, param in _models[name].named_parameters():
+            key = f'{name}/{param_name}'
+            base = _base_tensors.get(key)
+            if base is None:
+                continue
+            if key in data:
+                delta = torch.from_numpy(data[key].copy()).to(device)
+                param.data.copy_(base).add_(delta)
+            else:
+                param.data.copy_(base)
+        for buf_name, buf_tensor in _models[name].named_buffers():
+            key = f'{name}/{buf_name}'
+            base = _base_tensors.get(key)
+            if base is None:
+                continue
+            if key in data:
+                delta = torch.from_numpy(data[key].copy()).to(device)
+                buf_tensor.copy_(base).add_(delta)
+            else:
+                buf_tensor.copy_(base)
 
     _stdout.write(b'\x01')
     _stdout.flush()
@@ -163,6 +230,7 @@ while True:
     if   msg_type == 1:   _handle_set_weights(payload)
     elif msg_type == 2:   _handle_infer_movement(payload)
     elif msg_type == 3:   _handle_infer_production(payload)
+    elif msg_type == 4:   _handle_set_base(payload)
     elif msg_type == 255:
         sys.stderr.write('[moe_mps_server] exit\n')
         sys.stderr.flush()

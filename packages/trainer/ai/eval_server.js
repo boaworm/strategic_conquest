@@ -99,20 +99,31 @@ class MPSSidecar {
     });
   }
 
-  /** Send all 9 model weights; Python reinitialises its models. */
-  async setWeights(npzBuf, mapHeight, mapWidth) {
-    this._mapHeight = mapHeight;
-    this._mapWidth  = mapWidth;
-
-    // Frame: [1B type=1][4B payload_len][2B H][2B W][npz_bytes]
+  _sendNpz(msgType, npzBuf, mapHeight, mapWidth) {
+    // Frame: [1B type][4B payload_len][2B H][2B W][npz_bytes]
     const hdr = Buffer.allocUnsafe(9);
-    hdr[0] = 1;
+    hdr[0] = msgType;
     hdr.writeUInt32BE(4 + npzBuf.length, 1);
     hdr.writeUInt16BE(mapHeight, 5);
     hdr.writeUInt16BE(mapWidth,  7);
     this.proc.stdin.write(hdr);
     this.proc.stdin.write(npzBuf);
+  }
 
+  /** Send base weights once — sidecar stores them for all subsequent delta evals. */
+  async setBase(npzBuf, mapHeight, mapWidth) {
+    this._mapHeight = mapHeight;
+    this._mapWidth  = mapWidth;
+    this._sendNpz(4, npzBuf, mapHeight, mapWidth);
+    const ack = await this._readExact(1);
+    if (ack[0] !== 4) throw new Error(`SET_BASE ACK bad: ${ack[0]}`);
+  }
+
+  /** Send perturbation delta; sidecar applies base+delta before inference. */
+  async setWeights(npzBuf, mapHeight, mapWidth) {
+    this._mapHeight = mapHeight;
+    this._mapWidth  = mapWidth;
+    this._sendNpz(1, npzBuf, mapHeight, mapWidth);
     const ack = await this._readExact(1);
     if (ack[0] !== 1) throw new Error(`SET_WEIGHTS ACK bad: ${ack[0]}`);
   }
@@ -219,6 +230,14 @@ async function runGame(nnAgent, basicAgent, mapWidth, mapHeight, maxTurns) {
 // ── Request handler ───────────────────────────────────────────────────────────
 
 async function handleRequest(req, sidecar) {
+  // Base-weights setup (sent once before evolution loop)
+  if (req.base_npz !== undefined) {
+    const state0 = createGameState({ width: req.width, height: req.height });
+    const npzBuf = Buffer.from(req.base_npz, 'base64');
+    await sidecar.setBase(npzBuf, state0.mapHeight, req.width);
+    return { ok: true };
+  }
+
   const { weights_npz, games, width, height, maxTurns } = req;
 
   const state0 = createGameState({ width, height });
@@ -242,7 +261,7 @@ async function handleRequest(req, sidecar) {
     const fitness = await runGame(nnAgent, basicAgent, width, height, maxTurns);
     results.push(fitness);
   }
-  return results;
+  return { results };
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -266,8 +285,8 @@ rl.on('line', async (line) => {
   }
 
   try {
-    const results = await handleRequest(req, sidecar);
-    process.stdout.write(JSON.stringify({ results }) + '\n');
+    const result = await handleRequest(req, sidecar);
+    process.stdout.write(JSON.stringify(result) + '\n');
   } catch (e) {
     process.stderr.write(`[eval_server] error: ${e.message}\n${e.stack}\n`);
     process.stdout.write(JSON.stringify({ error: e.message }) + '\n');

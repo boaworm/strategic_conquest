@@ -47,8 +47,7 @@ def create_perturbation(state_dict: dict, rng: np.random.RandomState, scale: flo
     pert = {}
     for name, param in state_dict.items():
         if param.dtype in (torch.float32, torch.float16, torch.float64):
-            noise = rng.randn(*param.shape).astype(np.float32) * scale
-            pert[name] = {'data': noise.flatten().tolist(), 'shape': list(param.shape)}
+            pert[name] = rng.randn(*param.shape).astype(np.float32) * scale
     return pert
 
 
@@ -57,6 +56,16 @@ def create_moe_perturbations(base_states: dict, rng: np.random.RandomState, scal
     names = active_models if active_models is not None else ALL_MODEL_NAMES
     return {name: create_perturbation(base_states[name], rng, scale)
             for name in names}
+
+
+def _perts_to_json(perturbations: dict) -> dict:
+    return {
+        model_name: {
+            layer: {'data': arr.flatten().tolist(), 'shape': list(arr.shape)}
+            for layer, arr in layers.items()
+        }
+        for model_name, layers in perturbations.items()
+    }
 
 
 # ── Selection / crossover / mutation ─────────────────────────────────────────
@@ -73,12 +82,11 @@ def crossover(p1: dict, p2: dict) -> dict:
     for model_name in p1['perturbations']:
         cp = {}
         for layer in p1['perturbations'][model_name]:
-            flat1 = np.array(p1['perturbations'][model_name][layer]['data'])
-            flat2 = np.array(p2['perturbations'][model_name][layer]['data'])
+            flat1 = p1['perturbations'][model_name][layer].ravel()
+            flat2 = p2['perturbations'][model_name][layer].ravel()
             cut = random.randint(0, len(flat1) - 1)
             child_flat = np.concatenate([flat1[:cut], flat2[cut:]])
-            cp[layer] = {'data': child_flat.tolist(),
-                         'shape': p1['perturbations'][model_name][layer]['shape']}
+            cp[layer] = child_flat.reshape(p1['perturbations'][model_name][layer].shape)
         child_perts[model_name] = cp
     return {'perturbations': child_perts, 'fitness': 0.0}
 
@@ -86,11 +94,10 @@ def crossover(p1: dict, p2: dict) -> dict:
 def mutate(genome: dict, rate: float, strength: float, rng: np.random.RandomState) -> dict:
     for model_name in genome['perturbations']:
         for layer in genome['perturbations'][model_name]:
-            arr = np.array(genome['perturbations'][model_name][layer]['data'])
+            arr = genome['perturbations'][model_name][layer]
             mask = rng.random(arr.shape) < rate
             if mask.any():
                 arr[mask] += rng.randn(int(mask.sum())).astype(np.float32) * strength
-            genome['perturbations'][model_name][layer]['data'] = arr.tolist()
     return genome
 
 
@@ -101,10 +108,7 @@ def next_generation(population: list, elitism: int, rng: np.random.RandomState) 
     for p in population[:elitism]:
         clone_perts = {}
         for name in p['perturbations']:
-            clone_perts[name] = {
-                layer: {'data': v['data'][:], 'shape': v['shape'][:]}
-                for layer, v in p['perturbations'][name].items()
-            }
+            clone_perts[name] = {layer: v.copy() for layer, v in p['perturbations'][name].items()}
         new_pop.append({'perturbations': clone_perts, 'fitness': 0.0})
 
     while len(new_pop) < len(population):
@@ -157,6 +161,9 @@ def run_evolution(args):
         games_per_agent=args.games_per_agent,
     )
 
+    print(f"\nSending base weights to eval servers...")
+    pool.set_base(base_states, args.map_width, args.map_height)
+
     best_genome = None
 
     try:
@@ -165,15 +172,21 @@ def run_evolution(args):
             print(f"Generation {gen + 1}/{args.generations}")
             print(f"{'='*60}")
 
-            # Phase 1: pack all genomes to npz bytes sequentially
+            pool.games_per_agent = args.games_per_agent if gen >= args.generations // 2 else max(3, args.games_per_agent // 2)
+
+            # Phase 1: pack all genomes to npz bytes in parallel
             print(f"  Packing {len(population)} genomes...", flush=True)
-            for idx, genome in enumerate(population):
+            def _pack_genome(genome):
                 try:
-                    genome['weights_npz'] = pool.preexport(base_states, genome['perturbations'], base_configs)
+                    return pool.preexport(base_states, genome['perturbations'], base_configs)
                 except Exception:
                     import traceback
-                    print(f"  Pack failed for genome {idx}:\n{traceback.format_exc()}", flush=True)
-                    genome['weights_npz'] = None
+                    print(f"  Pack failed:\n{traceback.format_exc()}", flush=True)
+                    return None
+            with ThreadPoolExecutor(max_workers=args.workers) as pack_exec:
+                npz_list = list(pack_exec.map(_pack_genome, population))
+            for genome, npz in zip(population, npz_list):
+                genome['weights_npz'] = npz
             print(f"  Pack done. Running games...", flush=True)
 
             # Phase 2: evaluate all genomes in parallel (send pre-built bytes to Node.js servers)
@@ -218,7 +231,7 @@ def run_evolution(args):
             if best_genome['fitness'] > 0.1:
                 ckpt_path = output_dir / f'checkpoint_gen{gen}.json'
                 with open(ckpt_path, 'w') as f:
-                    json.dump({'perturbations': best_genome['perturbations'],
+                    json.dump({'perturbations': _perts_to_json(best_genome['perturbations']),
                                'fitness': best_genome['fitness'],
                                'generation': gen}, f)
                 print(f"Saved: {ckpt_path}")
@@ -241,7 +254,7 @@ def run_evolution(args):
             perturbed = {}
             for layer, param in base_states[name].items():
                 if layer in pert:
-                    noise = torch.tensor(pert[layer]['data'], dtype=param.dtype).reshape(pert[layer]['shape'])
+                    noise = torch.from_numpy(pert[layer]).to(dtype=param.dtype)
                     perturbed[layer] = param + noise
                 else:
                     perturbed[layer] = param

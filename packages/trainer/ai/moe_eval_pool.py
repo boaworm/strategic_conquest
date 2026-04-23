@@ -38,24 +38,25 @@ _SERVER_CWD = str(Path(__file__).parent.parent)
 NUM_GLOBAL = 28  # must match models_moe.py
 
 
-def _build_models_npz(base_states: dict, perturbations: dict) -> bytes:
-    """
-    Apply perturbations to base state dicts, pack all model weights into
-    a numpy .npz buffer (key = '{model_name}/{layer}'), return raw bytes.
-    """
+def _build_base_npz(base_states: dict) -> bytes:
+    """Pack base model weights (no perturbation) into a numpy .npz buffer."""
     from models_moe import ALL_MODEL_NAMES
-
     arrays = {}
     for name in ALL_MODEL_NAMES:
-        pert = perturbations.get(name, {})
         for layer, param in base_states[name].items():
-            if layer in pert:
-                noise = torch.tensor(pert[layer]['data'], dtype=param.dtype).reshape(pert[layer]['shape'])
-                arr = (param + noise).detach().cpu().numpy()
-            else:
-                arr = param.detach().cpu().numpy()
-            arrays[f'{name}/{layer}'] = arr
+            arrays[f'{name}/{layer}'] = param.detach().cpu().numpy()
+    buf = io.BytesIO()
+    np.savez(buf, **arrays)
+    return buf.getvalue()
 
+
+def _build_delta_npz(perturbations: dict) -> bytes:
+    """Pack perturbation deltas (numpy arrays) into a numpy .npz buffer."""
+    from models_moe import ALL_MODEL_NAMES
+    arrays = {}
+    for name in ALL_MODEL_NAMES:
+        for layer, arr in perturbations.get(name, {}).items():
+            arrays[f'{name}/{layer}'] = arr
     buf = io.BytesIO()
     np.savez(buf, **arrays)
     return buf.getvalue()
@@ -109,26 +110,33 @@ class _EvalServer:
         )
         self._lock = threading.Lock()
 
+    def _send_recv(self, request: dict) -> dict:
+        with self._lock:
+            self._proc.stdin.write((json.dumps(request) + '\n').encode())
+            self._proc.stdin.flush()
+            line = self._proc.stdout.readline()
+            if not line:
+                raise RuntimeError("eval_server stdout closed unexpectedly")
+            return json.loads(line.decode())
+
+    def set_base(self, base_npz_b64: str, width: int, height: int) -> None:
+        """Send base weights once — sidecar stores them for all subsequent delta evals."""
+        resp = self._send_recv({'base_npz': base_npz_b64, 'width': width, 'height': height})
+        if 'error' in resp:
+            raise RuntimeError(f"eval_server set_base error: {resp['error']}")
+
     def evaluate(self, weights_npz_b64: str, games: int, width: int, height: int, max_turns: int) -> list:
-        """Send one genome request, block until response."""
-        request = json.dumps({
+        """Send one delta genome request, block until response."""
+        resp = self._send_recv({
             'weights_npz': weights_npz_b64,
             'games': games,
             'width': width,
             'height': height,
             'maxTurns': max_turns,
         })
-        with self._lock:
-            self._proc.stdin.write((request + '\n').encode())
-            self._proc.stdin.flush()
-            line = self._proc.stdout.readline()
-            if not line:
-                raise RuntimeError("eval_server stdout closed unexpectedly")
-            response = json.loads(line.decode())
-
-        if 'error' in response:
-            raise RuntimeError(f"eval_server error: {response['error']}")
-        return response['results']
+        if 'error' in resp:
+            raise RuntimeError(f"eval_server error: {resp['error']}")
+        return resp['results']
 
     def close(self):
         try:
@@ -161,13 +169,20 @@ class MoEEvalPool:
 
         print(f"[MoEEvalPool] {num_workers} eval servers ready", flush=True)
 
+    def set_base(self, base_states: dict, map_width: int, map_height: int) -> None:
+        """Send base weights to all eval servers (call once before evolution loop)."""
+        npz_bytes = _build_base_npz(base_states)
+        b64 = base64.b64encode(npz_bytes).decode('ascii')
+        for server in self._servers:
+            server.set_base(b64, map_width, map_height)
+        print(f"[MoEEvalPool] base weights loaded into {len(self._servers)} servers", flush=True)
+
     def preexport(self, base_states: dict, perturbations: dict, configs: dict = None) -> str:
         """
-        Pack 9 model weight tensors into a base64-encoded numpy npz buffer.
-        configs is ignored (kept for API compatibility).
+        Pack perturbation deltas into a base64-encoded numpy npz buffer.
+        base_states and configs are ignored (kept for API compatibility).
         """
-        npz_bytes = _build_models_npz(base_states, perturbations)
-        return base64.b64encode(npz_bytes).decode('ascii')
+        return base64.b64encode(_build_delta_npz(perturbations)).decode('ascii')
 
     def evaluate_b64(self, weights_npz_b64: str) -> list:
         """
