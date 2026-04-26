@@ -53,7 +53,7 @@ The state is represented as a 3D tensor `[Channels × MapHeight × MapWidth]`:
 | 12 | My Bomber Blast Radius |
 | 13 | Reserved / Future |
 
-**Note**: The map includes ice cap rows at `y=0` and `y=mapHeight-1` (impassable), so actual tensor height is `H+2`.
+**Note**: `MAP_HEIGHT` in collect/train scripts refers to **playable rows**. The engine automatically adds one ice cap row at the top and one at the bottom, so the actual tensor height is `MAP_HEIGHT + 2`. Example: `MAP_HEIGHT=20` → 22-row tensor (rows 0 and 21 are impassable ice).
 
 ### Action Space
 

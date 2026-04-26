@@ -131,6 +131,8 @@ training/moe/production.actions.jsonl
 
 The 14-ch tensor is stored without the unit-marker channel; the marker is synthesised at training time from the saved position.
 
+**Map height convention**: `MAP_HEIGHT` in `train_1.2_collect_moe.sh` refers to **playable rows**. The engine automatically adds one ice cap row at top and one at bottom, so the actual tensor height is `MAP_HEIGHT + 2`. Example: `MAP_HEIGHT=20` → 22-row tensor (rows 0 and 21 are impassable ice).
+
 ---
 
 ## Training scripts
@@ -167,7 +169,26 @@ Both scripts:
 - Train incrementally across 8 worker files (warm-start from previous checkpoint)
 - Save `<type>.pt` checkpoint in `checkpoints/moe/`
 - Export `<type>.onnx` (with external data merged inline)
-- The `.onnx` file can be copied to long-term storage manually
+
+### Preserving a trained model
+
+The working checkpoint lives in `checkpoints/moe/`. After training a unit type, copy the new files into the named model directory to preserve them. Example using transport training data:
+
+```bash
+# Run from: packages/trainer/ai/
+# Replace transport expert in caesar-moe-v2.0
+cp checkpoints/moe/transport.onnx \
+   checkpoints/moe/transport.onnx.data \
+   checkpoints/moe/transport.pt \
+   checkpoints/caesar-moe-v2.0/
+```
+
+Files to copy per unit type:
+- `checkpoints/moe/<type>.onnx` — required (runtime inference)
+- `checkpoints/moe/<type>.onnx.data` — required if it exists (external weights; present for `transport`, `production`, `army` — check before copying)
+- `checkpoints/moe/<type>.pt` — required (PyTorch checkpoint, needed for future training/evolution)
+
+Named model directories live under `checkpoints/` (e.g. `checkpoints/caesar-moe-v2.0/`). The directory name is what you pass to `nnMoEAgent:<dir>` or `--moe-dir`.
 
 ---
 

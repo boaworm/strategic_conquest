@@ -1,9 +1,9 @@
 #!/bin/bash
 # Collect MoE data until each worker's file reaches target size.
 # Usage:
-#   ./train_1.2_collect_moe.sh              # Collect all movement + production
-#   ./train_1.2_collect_moe.sh army         # Collect only army movement
-#   ./train_1.2_collect_moe.sh production   # Collect only production
+#   DATA_DIR=/Volumes/500G/Training ./train_1.2_collect_moe.sh              # Collect all movement + production
+#   DATA_DIR=/Volumes/500G/Training ./train_1.2_collect_moe.sh army         # Collect only army movement
+#   DATA_DIR=/Volumes/500G/Training ./train_1.2_collect_moe.sh production   # Collect only production
 
 set -e
 
