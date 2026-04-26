@@ -156,14 +156,32 @@ The 13-ch tensor is stored without the marker channels; ch13 (position marker) a
 
 ## Training scripts
 
-### `train_2.2_learn_moe.sh`
+### Collection — `train_1.2_collect_moe.sh`
 
 ```bash
-./train_2.2_learn_moe.sh army       # Train army movement expert
-./train_2.2_learn_moe.sh production # Train production expert
+DATA_DIR=/Volumes/500G/Training ./train_1.2_collect_moe.sh              # All movement experts + production (~50G/worker total)
+DATA_DIR=/Volumes/500G/Training ./train_1.2_collect_moe.sh army         # Army only
+DATA_DIR=/Volumes/500G/Training ./train_1.2_collect_moe.sh production   # Production only
 ```
 
-Internally calls `train_movement.py` or `train_production.py` with 8 worker files.
+Stop condition: sum of all unit-type states files per worker reaches `TARGET_SIZE_GB` (default 50G). Output goes into a new `sample_N/` subdirectory under `DATA_DIR`.
+
+### Training — `train_2_learn_moe.sh` (all 9 experts)
+
+```bash
+DATA_DIR=/Volumes/500G/Training/sample_1 ./train_2_learn_moe.sh
+```
+
+Trains all 9 experts sequentially (army → fighter → … → battleship → production). One expert fully trained before the next starts.
+
+### Training — `train_2.2_learn_moe.sh` (single expert)
+
+```bash
+DATA_DIR=/Volumes/500G/Training/sample_1 ./train_2.2_learn_moe.sh army       # Train army only
+DATA_DIR=/Volumes/500G/Training/sample_1 ./train_2.2_learn_moe.sh production # Train production only
+```
+
+Internally calls `train_movement.py` or `train_production.py` with 8 worker files warm-starting from the previous checkpoint.
 
 ### Python training scripts
 
@@ -227,7 +245,9 @@ Named model directories live under `checkpoints/` (e.g. `checkpoints/caesar-moe-
 - [x] `dataset_moe.py` — Python dataset loaders (MovementDataset, ProductionDataset)
 - [x] `train_movement.py` — movement expert training + ONNX export
 - [x] `train_production.py` — production expert training + ONNX export
-- [x] `train_1.2_collect_moe.sh` + `train_2.2_learn_moe.sh` — shell scripts
+- [x] `train_1.2_collect_moe.sh` — collection (all types or single type, sum-based stop)
+- [x] `train_2_learn_moe.sh` — train all 9 experts sequentially
+- [x] `train_2.2_learn_moe.sh` — train a single expert
 - [x] `eval_game.js` — supports `--agent moe --moe-dir <dir>`
 - [x] `game_evaluator.py` — `run_games_moe_sequential(moe_dir, ...)`
 - [x] `models_moe.py` — shared `MovementCNN` + `ProductionCNN` definitions
