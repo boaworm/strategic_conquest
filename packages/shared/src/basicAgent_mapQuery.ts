@@ -1080,7 +1080,7 @@ export class MapQuery {
         let node: Coord | null = cur;
         while (node) {
           path.unshift(node);
-          const key = `${node.x},${node.y}`;
+          const key: string = `${node.x},${node.y}`;
           node = visited.get(key) || null;
         }
         return path;

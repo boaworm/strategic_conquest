@@ -23,8 +23,8 @@ import { fillViewTensor } from './engine/tensorUtils.js';
 
 // Lazy-load node modules to avoid browser build errors
 let _ort: any = null;
-let _resolve: (path: string) => string | null = null;
-let _join: (path: string, ...paths: string[]) => string | null = null;
+let _resolve: ((path: string) => string) | null = null;
+let _join: ((path: string, ...paths: string[]) => string) | null = null;
 
 async function getOrt() {
   if (!_ort) {
@@ -37,20 +37,20 @@ async function getOrt() {
   return _ort;
 }
 
-async function getResolve() {
+async function getResolve(): Promise<(path: string) => string> {
   if (!_resolve) {
     const pathModule = await import('node:path');
     _resolve = pathModule.resolve;
   }
-  return _resolve;
+  return _resolve!;
 }
 
-async function getJoin() {
+async function getJoin(): Promise<(path: string, ...paths: string[]) => string> {
   if (!_join) {
     const pathModule = await import('node:path');
     _join = pathModule.join;
   }
-  return _join;
+  return _join!;
 }
 
 // Module-level cache keyed by resolved model directory.

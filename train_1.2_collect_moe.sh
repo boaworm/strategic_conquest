@@ -37,13 +37,6 @@ else
   export UNIT_TYPE_FILTER="$1"
 fi
 
-export DATA_DIR="$BASE_DATA_DIR/$RUN_DIR"
-mkdir -p "$DATA_DIR"
-
-echo "Output directory: $DATA_DIR"
-echo "Target size per worker file: ${TARGET_SIZE_GB}G (${TARGET_SIZE_BYTES} bytes)"
-echo "Workers: $WORKERS"
-
 export MAX_SAMPLES_PER_GAME
 export WORKERS
 export MAX_TURNS
@@ -51,8 +44,18 @@ export MAP_WIDTH
 export MAP_HEIGHT
 export TARGET_SIZE_BYTES
 
+echo "=== Building ==="
+npx tsc -p packages/shared/tsconfig.json && npm run build --workspace=packages/trainer
+
+export DATA_DIR="$BASE_DATA_DIR/$RUN_DIR"
+mkdir -p "$DATA_DIR"
+
+echo "Output directory: $DATA_DIR"
+echo "Target size per worker file: ${TARGET_SIZE_GB}G (${TARGET_SIZE_BYTES} bytes)"
+echo "Workers: $WORKERS"
+
 echo "=== Starting data collection ==="
-npm run collect-moe --workspace=packages/trainer
+npx tsx packages/trainer/src/collect_moe_data.ts
 
 echo "=== All workers reached target size ==="
 

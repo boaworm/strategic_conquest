@@ -14,7 +14,7 @@ import { UnitType, wrapX, wrappedDistX } from './types.js';
 
 // Lazy-load node modules to avoid browser build errors
 let _ort: any = null;
-let _resolve: (path: string) => string | null = null;
+let _resolve: ((path: string) => string) | null = null;
 
 function getOrt() {
   if (!_ort) {
@@ -25,13 +25,13 @@ function getOrt() {
   return _ort;
 }
 
-function getResolve() {
+function getResolve(): (path: string) => string {
   if (!_resolve) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { resolve } = require('node:path');
     _resolve = resolve;
   }
-  return _resolve;
+  return _resolve!;
 }
 
 function getExecutionProviders(): string[] {
