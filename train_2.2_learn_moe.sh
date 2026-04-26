@@ -52,7 +52,9 @@ echo "=== Done. Checkpoint in $OUT_DIR ==="
 # Sanity check: warn if any worker files have mismatched sample counts
 echo "=== Sanity checking training data ==="
 python - <<EOF
-import os
+import sys, os
+sys.path.insert(0, os.path.join(os.getcwd(), '..', '..', 'packages', 'trainer', 'ai'))
+from models_moe import NUM_BASE_CHANNELS
 from pathlib import Path
 
 data_dir = Path("$DATA_DIR")
@@ -70,7 +72,7 @@ for worker_id in range(8):
     actions_file = data_dir / f'worker-{worker_id}-{expert_type}.actions.bin'
     tiles_file = data_dir / f'worker-{worker_id}-{expert_type}.tiles.bin'
 
-    n_states = states_size // (14 * H * W * 4)
+    n_states = states_size // (NUM_BASE_CHANNELS * H * W * 4)
     n_pos = pos_file.stat().st_size // 4 if pos_file.exists() else 0
     n_actions = actions_file.stat().st_size // 1 if actions_file.exists() else 0
     n_tiles = tiles_file.stat().st_size // 4 if tiles_file.exists() else 0
