@@ -66,20 +66,22 @@ class MovementDataset(Dataset):
         if file_idx is not None:
             state_files = [state_files[file_idx]]
 
-        state_arrays, pos_arrays, action_type_list, tile_idx_list = [], [], [], []
+        self.unit_type = unit_type
+        state_arrays, pos_arrays, action_type_list, tile_idx_list, carried_arrays = [], [], [], [], []
 
         for sf in state_files:
             base = str(sf)[:-len('.states.bin')]
             pf = Path(base + '.positions.bin')
             af = Path(base + '.actions.bin')
             tf = Path(base + '.tiles.bin')
+            cf = Path(base + '.carried.bin')  # army only: 1 byte per sample (1=carried, 0=free)
 
             raw_states = np.frombuffer(sf.read_bytes(), dtype=np.float32)
-            n = len(raw_states) // (14 * self.H * self.W)
+            n = len(raw_states) // (13 * self.H * self.W)
             if n == 0:
                 print(f"  .states.bin file is empty, ignoring: {sf.name}")
                 continue
-            states = raw_states[:n * 14 * self.H * self.W].reshape(n, 14, self.H, self.W)
+            states = raw_states[:n * 13 * self.H * self.W].reshape(n, 13, self.H, self.W)
 
             raw_pos = np.frombuffer(pf.read_bytes(), dtype=np.int16)
             positions = raw_pos[:n * 2].reshape(n, 2)
@@ -87,31 +89,40 @@ class MovementDataset(Dataset):
             raw_actions = np.frombuffer(af.read_bytes(), dtype=np.int8)
             raw_tiles = np.frombuffer(tf.read_bytes(), dtype=np.int32)
 
+            # Carried flag (army only) — zeros if file absent (old data or non-army type)
+            if cf.exists():
+                carried = np.frombuffer(cf.read_bytes(), dtype=np.uint8)[:n].astype(np.float32)
+            else:
+                carried = np.zeros(n, dtype=np.float32)
+
             state_arrays.append(states)
             pos_arrays.append(positions)
             action_type_list.append(raw_actions[:n])
             tile_idx_list.append(raw_tiles[:n])
+            carried_arrays.append(carried)
 
         if not state_arrays:
             raise ValueError(f"No valid data loaded for unit type '{unit_type}' (all files empty or missing)")
-        self.states    = np.concatenate(state_arrays, axis=0)      # [N, 14, H, W]
+        self.states    = np.concatenate(state_arrays, axis=0)      # [N, 13, H, W]
         self.positions = np.concatenate(pos_arrays, axis=0)         # [N, 2]
         self.action_types = np.concatenate(action_type_list, axis=0).astype(np.int64)
         self.tile_idxs    = np.concatenate(tile_idx_list,    axis=0).astype(np.int64)
+        carried_flat      = np.concatenate(carried_arrays, axis=0)  # [N]
 
         assert len(self.states) == len(self.positions) == len(self.action_types) == len(self.tile_idxs)
 
-        # Pre-build and merge 15th channel so __getitem__ is a single contiguous slice
+        # Build states15: ch0-12 = base state, ch13 = position marker, ch14 = carried flag
         N = len(self.states)
-        # Build states15 in-place to avoid peak memory spike (states + markers + states15 = 8GB)
         states15 = np.zeros((N, 15, self.H, self.W), dtype=np.float32)
-        states15[:, :14] = self.states  # Copy 14 channels
-        del self.states  # Free 2.6GB
+        states15[:, :13] = self.states  # Copy 13 base channels
+        del self.states  # Free memory
         xs = self.positions[:, 0].astype(np.int32)
         ys = self.positions[:, 1].astype(np.int32)
         valid = (xs >= 0) & (xs < self.W) & (ys >= 0) & (ys < self.H)
         rows = np.where(valid)[0]
-        states15[rows, 14, ys[rows], xs[rows]] = 1.0  # 15th channel: unit marker
+        states15[rows, 13, ys[rows], xs[rows]] = 1.0  # ch13: unit position marker
+        # ch14: carried-by-transport flag (broadcast across entire tile for the unit's position)
+        states15[rows, 14, ys[rows], xs[rows]] = carried_flat[rows]
         self.states15 = states15
 
     def __len__(self) -> int:
@@ -130,7 +141,7 @@ class ProductionDataset(Dataset):
     Dataset for the production expert.
 
     Each item:
-      state          — float32 [15, H, W]  (14 base + city marker)
+      state          — float32 [15, H, W]  (13 base + city marker + 0-pad)
       global_features — float32 [22]
       unit_type      — long scalar in [0, NUM_UNIT_TYPES)
     """
@@ -158,11 +169,11 @@ class ProductionDataset(Dataset):
             uf  = Path(base + '.unitTypes.bin')
 
             raw_states = np.frombuffer(sf.read_bytes(), dtype=np.float32)
-            n = len(raw_states) // (14 * self.H * self.W)
+            n = len(raw_states) // (13 * self.H * self.W)
             if n == 0:
                 print(f"  .states.bin file is empty, ignoring: {sf.name}")
                 continue
-            states = raw_states[:n * 14 * self.H * self.W].reshape(n, 14, self.H, self.W)
+            states = raw_states[:n * 13 * self.H * self.W].reshape(n, 13, self.H, self.W)
 
             raw_cities = np.frombuffer(cf.read_bytes(), dtype=np.int16)
             cities = raw_cities[:n * 2].reshape(n, 2)
@@ -184,16 +195,17 @@ class ProductionDataset(Dataset):
         self.globals   = np.concatenate(global_arrays, axis=0)
         self.unit_types = np.concatenate(unit_type_list, axis=0).astype(np.int64)
 
-        # Pre-build and merge city-marker channel (15th)
+        # Build states15: ch0-12 = base state, ch13 = city marker, ch14 = 0 (unused for production)
         N = len(self.states)
-        markers = np.zeros((N, 1, self.H, self.W), dtype=np.float32)
+        states15 = np.zeros((N, 15, self.H, self.W), dtype=np.float32)
+        states15[:, :13] = self.states
+        del self.states
         cxs = self.cities[:, 0].astype(np.int32)
         cys = self.cities[:, 1].astype(np.int32)
         valid = (cxs >= 0) & (cxs < self.W) & (cys >= 0) & (cys < self.H)
         rows = np.where(valid)[0]
-        markers[rows, 0, cys[rows], cxs[rows]] = 1.0
-        self.states15 = np.concatenate([self.states, markers], axis=1)  # [N, 15, H, W]
-        del self.states, markers
+        states15[rows, 13, cys[rows], cxs[rows]] = 1.0  # ch13: city position marker
+        self.states15 = states15
 
     def __len__(self) -> int:
         return len(self.states15)

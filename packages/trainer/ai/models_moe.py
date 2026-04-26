@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+NUM_BASE_CHANNELS    = 13  # fillViewTensor output (channels 0–12); caller adds ch13+ markers
 NUM_MOVEMENT_ACTIONS = 5   # MOVE, SLEEP, SKIP, LOAD, UNLOAD
 NUM_UNIT_TYPES       = 8   # army … battleship
 NUM_GLOBAL           = 28  # production expert global feature vector length
@@ -24,7 +25,7 @@ def _circular_pad(x: torch.Tensor, pad: int) -> torch.Tensor:
 class MovementCNN(nn.Module):
     """
     15-channel CNN for a single unit-type movement expert.
-    Inputs : [B, 15, H, W]  (14 map channels + 1 unit-marker)
+    Inputs : [B, 15, H, W]  (13 base + ch13 unit-marker + ch14 army-carried flag)
     Outputs: action_type [B, 5], target_tile [B, H*W]
     """
 

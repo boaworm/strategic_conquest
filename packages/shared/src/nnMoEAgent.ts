@@ -121,8 +121,10 @@ export class NnMoEAgent implements Agent {
   private pendingCityIds: Set<string> = new Set();
   private pass: 'prod' | 1 | 2 = 'prod';
   // Pre-allocated 15-channel tensor buffer — reused every inference call, zero allocations in hot path
+  // Layout: ch0-12 base state, ch13 position marker, ch14 army carried-by-transport flag (0 for all others)
   private tensor15Buf: Float32Array = new Float32Array(0);
   private lastMarkerIdx: number = -1;
+  private lastCarriedIdx: number = -1;
 
   /**
    * Inject pre-created ONNX sessions directly (used by eval_server.js to avoid file I/O).
@@ -143,6 +145,7 @@ export class NnMoEAgent implements Agent {
     this.productionSession = sessions['production'] ?? null;
     this.tensor15Buf = new Float32Array(15 * this.mapHeight * this.mapWidth);
     this.lastMarkerIdx = -1;
+    this.lastCarriedIdx = -1;
   }
 
   /**
@@ -158,6 +161,7 @@ export class NnMoEAgent implements Agent {
     this.productionSession = null;
     this.tensor15Buf = new Float32Array(15 * this.mapHeight * this.mapWidth);
     this.lastMarkerIdx = -1;
+    this.lastCarriedIdx = -1;
   }
 
   async init(config: AgentConfig): Promise<void> {
@@ -202,6 +206,7 @@ export class NnMoEAgent implements Agent {
     this.productionSession = cached.production;
     this.tensor15Buf = new Float32Array(15 * this.mapHeight * this.mapWidth);
     this.lastMarkerIdx = -1;
+    this.lastCarriedIdx = -1;
   }
 
   /**
@@ -324,7 +329,8 @@ export class NnMoEAgent implements Agent {
   // ── Expert inference ──────────────────────────────────────────────────────
 
   private async askMovementExpert(unit: UnitView, obs: AgentObservation): Promise<AgentAction | null> {
-    const tensor15 = this.buildMovementTensor(obs, unit.x, unit.y);
+    const isCarried = unit.type === UnitType.Army && unit.carriedBy !== null;
+    const tensor15 = this.buildMovementTensor(obs, unit.x, unit.y, isCarried);
 
     let actionTypeData: Float32Array;
     let targetTileData: Float32Array;
@@ -408,20 +414,34 @@ export class NnMoEAgent implements Agent {
 
   /**
    * Build a 15-channel tensor into the pre-allocated buffer.
-   * Channels 0–13 written fresh from the current observation (no stale data),
-   * channel 14 = position marker for the given (x, y).
+   * Channels 0–12 written fresh from the current observation (no stale data),
+   * channel 13 = position marker for the given (x, y),
+   * channel 14 = 1.0 if the unit is an army carried by a transport, else 0.
    * Returns the shared buffer — valid until the next call.
    */
-  private buildMovementTensor(obs: AgentObservation, markerX: number, markerY: number): Float32Array {
+  private buildMovementTensor(obs: AgentObservation, markerX: number, markerY: number, carriedByTransport = false): Float32Array {
     fillViewTensor(obs as any as PlayerView, this.tensor15Buf);
-    // Clear previous marker and set new one
-    if (this.lastMarkerIdx >= 0) this.tensor15Buf[this.lastMarkerIdx] = 0;
     const HW = this.tensor15Buf.length / 15;
-    const markerIdx = 14 * HW + markerY * this.mapWidth + markerX;
+
+    // Position marker (ch13)
+    if (this.lastMarkerIdx >= 0) this.tensor15Buf[this.lastMarkerIdx] = 0;
+    const markerIdx = 13 * HW + markerY * this.mapWidth + markerX;
     if (markerIdx < this.tensor15Buf.length) {
       this.tensor15Buf[markerIdx] = 1.0;
       this.lastMarkerIdx = markerIdx;
     }
+
+    // Army carried-by-transport flag (ch14)
+    if (this.lastCarriedIdx >= 0) this.tensor15Buf[this.lastCarriedIdx] = 0;
+    this.lastCarriedIdx = -1;
+    if (carriedByTransport) {
+      const carriedIdx = 14 * HW + markerY * this.mapWidth + markerX;
+      if (carriedIdx < this.tensor15Buf.length) {
+        this.tensor15Buf[carriedIdx] = 1.0;
+        this.lastCarriedIdx = carriedIdx;
+      }
+    }
+
     return this.tensor15Buf;
   }
 

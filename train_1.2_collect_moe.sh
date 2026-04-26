@@ -10,7 +10,7 @@ set -e
 if [ -z "$DATA_DIR" ]; then echo "DATA_DIR env var required"; exit 1; fi
 BASE_DATA_DIR="$DATA_DIR"
 
-TARGET_SIZE_GB=40
+TARGET_SIZE_GB=50
 TARGET_SIZE_BYTES=$((TARGET_SIZE_GB * 1024 * 1024 * 1024))
 
 RUN_NUM=$(ls -1 "$BASE_DATA_DIR" 2>/dev/null | grep -E '^sample_[0-9]+$' | sed 's/sample_//' | sort -n | tail -1)
@@ -59,7 +59,9 @@ echo "=== All workers reached target size ==="
 # Sanity check
 echo "=== Sanity checking collected data ==="
 python - <<EOF
-import os
+import sys, os
+sys.path.insert(0, os.path.join(os.getcwd(), 'packages/trainer/ai'))
+from models_moe import NUM_BASE_CHANNELS
 from pathlib import Path
 
 data_dir = Path("$DATA_DIR")
@@ -75,7 +77,7 @@ for worker_id in range(8):
         pos_file = data_dir / f'worker-{worker_id}-{unit_type}.positions.bin'
         actions_file = data_dir / f'worker-{worker_id}-{unit_type}.actions.bin'
         tiles_file = data_dir / f'worker-{worker_id}-{unit_type}.tiles.bin'
-        n_states = states_size // (14 * H * W * 4)
+        n_states = states_size // (NUM_BASE_CHANNELS * H * W * 4)
         n_pos = pos_file.stat().st_size // 4 if pos_file.exists() else 0
         n_actions = actions_file.stat().st_size // 1 if actions_file.exists() else 0
         n_tiles = tiles_file.stat().st_size // 4 if tiles_file.exists() else 0

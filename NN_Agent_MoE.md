@@ -15,14 +15,30 @@ Two agent architectures exist side-by-side:
 
 ## Architecture
 
+### Base tensor channel layout (channels 0–12)
+
+`playerViewToTensor` / `fillViewTensor` produces 13 channels:
+
+| Ch | Description |
+|----|-------------|
+| 0–7 | Friendly unit types (army…battleship) — health-clamped accumulation |
+| 8 | Cities: 1.0 = friendly, −0.5 = neutral/uncaptured, −1.0 = enemy, 0 = no city |
+| 9 | Visible enemy units — health-clamped accumulation |
+| 10 | Terrain: 1 = Land, 0 = Ocean |
+| 11 | Fog of war: 1 = visible, 0.5 = previously seen, 0 = hidden |
+| 12 | Global turn ÷ 1000 (broadcast over all tiles) |
+
+Channels 13+ are written by the caller (agent or dataset loader), not by `fillViewTensor`.
+
 ### Movement experts (×8)
 
 One model per unit type: `army`, `fighter`, `missile`, `transport`, `destroyer`,
 `submarine`, `carrier`, `battleship`.
 
 **Input:** 15 channels × H × W
-- Channels 0–13: standard `playerViewToTensor` output (identical to `NnAgent`)
-- Channel 14: unit-position marker — 1.0 at the acting unit's tile, 0 elsewhere
+- Channels 0–12: `fillViewTensor` output (13 base channels)
+- Channel 13: unit-position marker — 1.0 at the acting unit's tile, 0 elsewhere
+- Channel 14: army carried-by-transport flag — 1.0 if this army is currently aboard a transport, 0 otherwise (army model only; 0 for all other unit types)
 
 **Output heads:**
 - `action_type` — logits over `[MOVE, SLEEP, SKIP, LOAD, UNLOAD]` (only the subset
@@ -36,8 +52,9 @@ One model per unit type: `army`, `fighter`, `missile`, `transport`, `destroyer`,
 **Input:** 15 channels × H × W + global feature vector (28 values)
 
 Spatial channels:
-- Channels 0–13: `playerViewToTensor` output
-- Channel 14: city-position marker — 1.0 at the city being queried
+- Channels 0–12: `fillViewTensor` output (13 base channels)
+- Channel 13: city-position marker — 1.0 at the city being queried
+- Channel 14: unused (zero)
 
 Global features (28-value vector):
 | Index | Feature |
@@ -111,25 +128,27 @@ Unit ordering in Pass 1:
 
 ## Data collection
 
-The `collect_moe.ts` script records `(state_tensor_14ch, action)` with per-unit-type metadata:
+The `collect_moe_worker.ts` script records `(state_tensor_13ch, action)` with per-unit-type metadata:
 - `unitType` — which unit type took this action (for movement experts)
-- `unitX`, `unitY` — unit position (to build channel 14 at training time)
+- `unitX`, `unitY` — unit position (to build channel 13 marker at training time)
 - `cityX`, `cityY` — for SET_PRODUCTION actions
 - `globalFeatures` — 28-value vector (for production expert only)
 
 Outputs per-unit-type files:
 ```
-training/moe/army.states.bin       # 14-ch tensors
-training/moe/army.positions.bin    # (x, y) int16 pairs
-training/moe/army.actions.jsonl
-... (×8 for each unit type)
-training/moe/production.states.bin
-training/moe/production.cities.bin  # (x, y) int16 pairs
-training/moe/production.globals.bin # float32 28-value vectors
-training/moe/production.actions.jsonl
+worker-{i}-army.states.bin        # 13-ch tensors
+worker-{i}-army.positions.bin     # (x, y) int16 pairs
+worker-{i}-army.actions.bin       # uint8 action index
+worker-{i}-army.tiles.bin         # int32 target tile index
+worker-{i}-army.carried.bin       # uint8 carried-by-transport flag (army only)
+... (×8 for each unit type, carried.bin only for army)
+worker-{i}-production.states.bin
+worker-{i}-production.cities.bin  # (x, y) int16 pairs
+worker-{i}-production.globals.bin # float32 28-value vectors
+worker-{i}-production.unitTypes.bin
 ```
 
-The 14-ch tensor is stored without the unit-marker channel; the marker is synthesised at training time from the saved position.
+The 13-ch tensor is stored without the marker channels; ch13 (position marker) and ch14 (carried flag) are synthesised at training time by `dataset_moe.py`.
 
 **Map height convention**: `MAP_HEIGHT` in `train_1.2_collect_moe.sh` refers to **playable rows**. The engine automatically adds one ice cap row at top and one at bottom, so the actual tensor height is `MAP_HEIGHT + 2`. Example: `MAP_HEIGHT=20` → 22-row tensor (rows 0 and 21 are impassable ice).
 

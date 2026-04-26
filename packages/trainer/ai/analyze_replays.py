@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""
+Analyze nnMoEAgent replay files to understand army/transport movement behavior.
+
+Usage:
+    python packages/trainer/ai/analyze_replays.py tmp/replays/
+    python packages/trainer/ai/analyze_replays.py tmp/replays/ --player player1 --unit-types army transport
+"""
+
+import argparse
+import json
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+
+def flood_fill_islands(tiles, width, height):
+    """Return island_id[y][x] — 0 = ocean, 1+ = island index."""
+    island = [[0] * width for _ in range(height)]
+    island_id = 0
+    for sy in range(height):
+        for sx in range(width):
+            if tiles[sy][sx] != "land" or island[sy][sx] != 0:
+                continue
+            island_id += 1
+            stack = [(sx, sy)]
+            while stack:
+                x, y = stack.pop()
+                if x < 0 or x >= width or y < 0 or y >= height:
+                    continue
+                if tiles[y][x] != "land" or island[y][x] != 0:
+                    continue
+                island[y][x] = island_id
+                # 4-connected (no diagonals for island detection)
+                stack.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)])
+    return island
+
+
+def get_island(island_map, x, y, width):
+    x = x % width  # cylindrical wrap
+    return island_map[y][x]
+
+
+def load_replay(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def analyze_replay(replay, player="player1", unit_types=None):
+    meta = replay["meta"]
+    width = replay["mapWidth"]
+    height = replay["mapHeight"]
+    tiles = replay["tiles"]
+    frames = replay["frames"]
+
+    island_map = flood_fill_islands(tiles, width, height)
+
+    # Track per-unit history
+    prev_by_id = {}
+    unit_start_island = {}  # first island seen for each unit
+
+    loads = 0
+    unloads = 0
+    idle_cycles = 0      # LOAD+UNLOAD at same tile within 3 turns
+    stranded = 0         # transport with cargo, no movement for 5+ turns
+
+    cross_island_armies = set()   # army ids that reached a new island
+    transport_events = []         # (turn, transport_id, event, detail)
+
+    # For idle cycle detection: track last LOAD position per army
+    last_load_pos = {}
+
+    # For stranded detection: transport_id -> (turns_since_moved, has_cargo)
+    transport_idle = {}
+
+    action_counts = defaultdict(int)  # inferred action type -> count (player1 armies only)
+
+    for frame in frames:
+        turn = frame["turn"]
+        units_this = {u["id"]: u for u in frame["units"]}
+
+        for uid, u in units_this.items():
+            if u["owner"] != player:
+                continue
+            if unit_types and u["type"] not in unit_types:
+                continue
+
+            prev = prev_by_id.get(uid)
+
+            # Track starting island
+            if uid not in unit_start_island:
+                isl = get_island(island_map, u["x"], u["y"], width)
+                if isl > 0:
+                    unit_start_island[uid] = isl
+
+            if prev is None:
+                prev_by_id[uid] = u
+                continue
+
+            moved = (u["x"] != prev["x"] or u["y"] != prev["y"])
+
+            # --- Army action inference ---
+            if u["type"] == "army":
+                cb_now = u["carriedBy"]
+                cb_prev = prev.get("carriedBy")
+
+                if cb_prev is None and cb_now is not None:
+                    # LOAD
+                    loads += 1
+                    action_counts["LOAD"] += 1
+                    last_load_pos[uid] = (u["x"], u["y"])
+
+                elif cb_prev is not None and cb_now is None:
+                    # UNLOAD / disembark
+                    unloads += 1
+                    action_counts["UNLOAD"] += 1
+
+                    # Idle cycle: unloaded at same pos as loaded
+                    lp = last_load_pos.get(uid)
+                    if lp and lp == (u["x"], u["y"]):
+                        idle_cycles += 1
+
+                    # Cross-island check
+                    start_isl = unit_start_island.get(uid, 0)
+                    cur_isl = get_island(island_map, u["x"], u["y"], width)
+                    if cur_isl > 0 and start_isl > 0 and cur_isl != start_isl:
+                        cross_island_armies.add(uid)
+
+                elif moved and cb_now is None:
+                    action_counts["MOVE"] += 1
+                elif u.get("sleeping") and not prev.get("sleeping"):
+                    action_counts["SLEEP"] += 1
+                elif not moved and cb_now is None:
+                    action_counts["SKIP"] += 1
+
+            # --- Transport tracking ---
+            if u["type"] == "transport":
+                cargo_now = set(u.get("cargo", []))
+                cargo_prev = set(prev.get("cargo", []))
+
+                if cargo_now != cargo_prev:
+                    loaded = cargo_now - cargo_prev
+                    unloaded_cargo = cargo_prev - cargo_now
+                    if loaded:
+                        transport_events.append((turn, uid, "LOADED", f"{len(loaded)} armies at ({u['x']},{u['y']})"))
+                    if unloaded_cargo:
+                        transport_events.append((turn, uid, "UNLOADED", f"{len(unloaded_cargo)} armies at ({u['x']},{u['y']})"))
+
+                if moved:
+                    transport_events.append((turn, uid, "MOVE", f"({prev['x']},{prev['y']})->({u['x']},{u['y']}) cargo={len(cargo_now)}"))
+                    transport_idle[uid] = 0
+                else:
+                    # Count idle turns
+                    idle = transport_idle.get(uid, 0) + 1
+                    transport_idle[uid] = idle
+                    if idle == 5 and cargo_now:
+                        stranded += 1
+                        transport_events.append((turn, uid, "STRANDED", f"5 turns no move, cargo={len(cargo_now)} at ({u['x']},{u['y']})"))
+
+            prev_by_id[uid] = u
+
+    # Count unique p1 transports
+    all_transport_ids = set(
+        u["id"]
+        for frame in frames
+        for u in frame["units"]
+        if u["owner"] == player and u["type"] == "transport"
+    )
+
+    return {
+        "meta": meta,
+        "loads": loads,
+        "unloads": unloads,
+        "idle_cycles": idle_cycles,
+        "stranded_events": stranded,
+        "cross_island_armies": len(cross_island_armies),
+        "transport_count": len(all_transport_ids),
+        "transport_events": transport_events,
+        "action_counts": dict(action_counts),
+    }
+
+
+def print_summary(results):
+    print(f"\n{'Game':>4}  {'Turns':>5}  {'Winner':<8}  {'P1Cities':>8}  {'P2Cities':>8}  {'Trans':>5}  {'Loads':>5}  {'Unloads':>7}  {'IdleCycles':>10}  {'CrossIsland':>11}")
+    print("-" * 105)
+    for r in results:
+        m = r["meta"]
+        winner = str(m.get("winner") or "draw")[:8]
+        print(f"{m.get('gameNum', '?'):>4}  {m['turns']:>5}  {winner:<8}  {m['p1Cities']:>8}  {m['p2Cities']:>8}  "
+              f"{r['transport_count']:>5}  {r['loads']:>5}  {r['unloads']:>7}  {r['idle_cycles']:>10}  {r['cross_island_armies']:>11}")
+
+
+def print_transport_events(results, max_per_game=30):
+    for r in results:
+        m = r["meta"]
+        evts = r["transport_events"]
+        if not evts:
+            continue
+        print(f"\n--- Game {m.get('gameNum', '?')} transport events (first {max_per_game}) ---")
+        for evt in evts[:max_per_game]:
+            turn, tid, etype, detail = evt
+            print(f"  T{turn:3d}  {tid:12s}  {etype:<8}  {detail}")
+        if len(evts) > max_per_game:
+            print(f"  ... ({len(evts) - max_per_game} more)")
+
+
+def print_action_counts(results):
+    print(f"\n{'Game':>4}  {'MOVE':>6}  {'LOAD':>6}  {'UNLOAD':>7}  {'SLEEP':>6}  {'SKIP':>6}")
+    print("-" * 50)
+    for r in results:
+        m = r["meta"]
+        ac = r["action_counts"]
+        print(f"{m.get('gameNum', '?'):>4}  {ac.get('MOVE', 0):>6}  {ac.get('LOAD', 0):>6}  "
+              f"{ac.get('UNLOAD', 0):>7}  {ac.get('SLEEP', 0):>6}  {ac.get('SKIP', 0):>6}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Analyze MoE agent replay behavior")
+    parser.add_argument("replay_dir", help="Directory containing replay .json files")
+    parser.add_argument("--player", default="player1", help="Player to analyze (default: player1)")
+    parser.add_argument("--unit-types", nargs="+", default=None, help="Unit types to focus on (e.g. army transport)")
+    parser.add_argument("--events", action="store_true", help="Print transport event timelines")
+    args = parser.parse_args()
+
+    replay_dir = Path(args.replay_dir)
+    paths = sorted(replay_dir.glob("*.json"))
+    if not paths:
+        print(f"No .json files found in {replay_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    results = []
+    for path in paths:
+        replay = load_replay(path)
+        result = analyze_replay(replay, player=args.player, unit_types=args.unit_types)
+        results.append(result)
+
+    # Sort by game number
+    results.sort(key=lambda r: r["meta"].get("gameNum", 0))
+
+    print(f"\n=== Replay analysis: {replay_dir} (player={args.player}) ===")
+    print_summary(results)
+
+    print(f"\n=== Army action distribution (player={args.player}) ===")
+    print_action_counts(results)
+
+    if args.events:
+        print(f"\n=== Transport event timelines ===")
+        print_transport_events(results)
+
+    # Overall stats
+    total_loads = sum(r["loads"] for r in results)
+    total_unloads = sum(r["unloads"] for r in results)
+    total_idle = sum(r["idle_cycles"] for r in results)
+    total_cross = sum(r["cross_island_armies"] for r in results)
+    total_stranded = sum(r["stranded_events"] for r in results)
+
+    print(f"\n=== Totals across {len(results)} games ===")
+    print(f"  Loads:              {total_loads}")
+    print(f"  Unloads:            {total_unloads}")
+    print(f"  Idle cycles:        {total_idle}  (LOAD+UNLOAD at same tile)")
+    print(f"  Stranded events:    {total_stranded}  (transport with cargo, no movement 5+ turns)")
+    print(f"  Cross-island armies:{total_cross}  (armies that reached a new island)")
+
+
+if __name__ == "__main__":
+    main()

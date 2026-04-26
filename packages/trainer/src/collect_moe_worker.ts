@@ -53,6 +53,8 @@ function openFiles(name: string) {
     positionsFd: fs.openSync(`${base}.positions.bin`, 'w'),
     actionsFd:   fs.openSync(`${base}.actions.bin`, 'w'),
     tilesFd:     fs.openSync(`${base}.tiles.bin`, 'w'),
+    // carried.bin: 1 byte per army sample — 1 if carried by transport, 0 if free
+    carriedFd:   name === 'army' ? fs.openSync(`${base}.carried.bin`, 'w') : -1,
   };
 }
 
@@ -69,11 +71,11 @@ const prodFiles = {
 };
 
 // Buffers
-type MovementBuf = { states: Buffer[]; positions: Buffer[]; actions: number[]; tiles: number[] };
+type MovementBuf = { states: Buffer[]; positions: Buffer[]; actions: number[]; tiles: number[]; carried: number[] };
 type ProductionBuf = { states: Buffer[]; cities: Buffer[]; globals: Buffer[]; unitTypes: number[] };
 
 const movementBufs = prodOnly ? null : Object.fromEntries(
-  UNIT_TYPE_NAMES.map(n => [n, { states: [] as Buffer[], positions: [] as Buffer[], actions: [] as number[], tiles: [] as number[] }])
+  UNIT_TYPE_NAMES.map(n => [n, { states: [] as Buffer[], positions: [] as Buffer[], actions: [] as number[], tiles: [] as number[], carried: [] as number[] }])
 ) as Record<string, MovementBuf> | null;
 
 const prodBuf: ProductionBuf = { states: [], cities: [], globals: [], unitTypes: [] };
@@ -92,7 +94,11 @@ function flushMovement(unitType: string): void {
   const tiles = new Int32Array(buf.tiles);
   fs.writeSync(files.tilesFd, Buffer.from(tiles.buffer, tiles.byteOffset, tiles.byteLength));
   fs.fsyncSync(files.tilesFd);
-  buf.states = []; buf.positions = []; buf.actions = []; buf.tiles = [];
+  if (files.carriedFd >= 0) {
+    fs.writeSync(files.carriedFd, Buffer.from(new Uint8Array(buf.carried)));
+    fs.fsyncSync(files.carriedFd);
+  }
+  buf.states = []; buf.positions = []; buf.actions = []; buf.tiles = []; buf.carried = [];
 }
 
 function flushProduction(): void {
@@ -133,13 +139,14 @@ function buildGlobalFeatures(view: any, city: { x: number; y: number; production
   return f;
 }
 
-function saveMovementSample(unitType: string, tensor: Float32Array, x: number, y: number, actionType: string, tileIdx: number): void {
+function saveMovementSample(unitType: string, tensor: Float32Array, x: number, y: number, actionType: string, tileIdx: number, carriedByTransport = false): void {
   if (prodOnly || !movementBufs || !movementFiles) return;
   const buf = movementBufs[unitType];
   buf.states.push(Buffer.from(tensor.buffer));
   buf.positions.push(Buffer.from(new Int16Array([x, y]).buffer));
   buf.actions.push(MOVEMENT_ACTION_TO_IDX[actionType] ?? 2);
   buf.tiles.push(tileIdx);
+  buf.carried.push(carriedByTransport ? 1 : 0);
   if (buf.states.length >= FLUSH_EVERY) flushMovement(unitType);
 }
 
@@ -154,15 +161,12 @@ function saveProductionSample(tensor: Float32Array, cityX: number, cityY: number
 function checkFileSize(): number {
   if (targetSizeBytes <= 0) return 0;
   const unitTypes = unitTypeFilter ? [unitTypeFilter] : UNIT_TYPE_NAMES;
-  let maxSize = 0;
+  let totalSize = 0;
   for (const name of unitTypes) {
     const statesFile = path.join(process.env.DATA_DIR!, `worker-${workerId}-${name}.states.bin`);
-    if (fs.existsSync(statesFile)) {
-      const size = fs.statSync(statesFile).size;
-      if (size > maxSize) maxSize = size;
-    }
+    if (fs.existsSync(statesFile)) totalSize += fs.statSync(statesFile).size;
   }
-  return maxSize;
+  return totalSize;
 }
 
 
@@ -202,7 +206,8 @@ while (true) {
         const unit = view.myUnits.find((u: any) => u.id === (action as any).unitId);
         if (unit && (!unitTypeFilter || unit.type === unitTypeFilter) && gameCounts[unit.type] < MAX_PER_BUCKET) {
           const tileIdx = (action.type === 'MOVE' || action.type === 'UNLOAD') ? ((action as any).to.y * state.mapWidth + (action as any).to.x) : -1;
-          saveMovementSample(unit.type, tensor, unit.x, unit.y, action.type, tileIdx);
+          const isCarried = unit.type === 'army' && unit.carriedBy != null;
+          saveMovementSample(unit.type, tensor, unit.x, unit.y, action.type, tileIdx, isCarried);
           gameCounts[unit.type]++;
         }
       } else if (action.type === 'SET_PRODUCTION' && !unitTypeFilter) {
