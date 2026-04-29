@@ -7,10 +7,15 @@
 set -e
 
 if [ -z "$DATA_DIR" ]; then echo "DATA_DIR env var required"; exit 1; fi
+if [ -z "$RESUME" ]; then
+  echo "RESUME env var required. Set RESUME=1 to warm-start from existing checkpoints, RESUME=0 to train from scratch."
+  echo "  RESUME=0 DATA_DIR=... ./train_2_learn_moe.sh   # fresh retrain (use after architecture changes)"
+  echo "  RESUME=1 DATA_DIR=... ./train_2_learn_moe.sh   # continue training on new data"
+  exit 1
+fi
 OUT_DIR=$(pwd)/packages/trainer/ai/checkpoints/moe
 EPOCHS=40
 NUM_FILES=8
-RESUME=1
 
 cd packages/trainer/ai
 
@@ -24,7 +29,7 @@ for UNIT_TYPE in army fighter missile transport destroyer submarine carrier batt
       --out-dir   "$OUT_DIR" \
       --epochs    "$EPOCHS" \
       --file-idx  "$FILE_IDX" \
-      ${RESUME:+--resume}
+      $([ "$RESUME" = "1" ] && echo --resume)
   done
 done
 

@@ -16,6 +16,12 @@ fi
 EXPERT_TYPE="$1"
 
 if [ -z "$DATA_DIR" ]; then echo "DATA_DIR env var required"; exit 1; fi
+if [ -z "$RESUME" ]; then
+  echo "RESUME env var required. Set RESUME=1 to warm-start from existing checkpoints, RESUME=0 to train from scratch."
+  echo "  RESUME=0 DATA_DIR=... ./train_2.2_learn_moe.sh army   # fresh retrain (use after architecture changes)"
+  echo "  RESUME=1 DATA_DIR=... ./train_2.2_learn_moe.sh army   # continue training on new data"
+  exit 1
+fi
 OUT_DIR=$(pwd)/packages/trainer/ai/checkpoints/moe
 EPOCHS=40
 NUM_FILES=8
@@ -31,7 +37,7 @@ if [ "$EXPERT_TYPE" = "production" ]; then
       --out-dir  "$OUT_DIR" \
       --epochs   "$EPOCHS" \
       --file-idx "$FILE_IDX" \
-      --resume
+      $([ "$RESUME" = "1" ] && echo --resume)
   done
 else
   echo "=== Training movement expert: $EXPERT_TYPE ==="
@@ -43,7 +49,7 @@ else
       --out-dir   "$OUT_DIR" \
       --epochs    "$EPOCHS" \
       --file-idx  "$FILE_IDX" \
-      --resume
+      $([ "$RESUME" = "1" ] && echo --resume)
   done
 fi
 
