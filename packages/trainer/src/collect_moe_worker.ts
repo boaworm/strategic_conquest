@@ -54,7 +54,9 @@ function openFiles(name: string) {
     actionsFd:   fs.openSync(`${base}.actions.bin`, 'w'),
     tilesFd:     fs.openSync(`${base}.tiles.bin`, 'w'),
     // carried.bin: 1 byte per army sample — 1 if carried by transport, 0 if free
-    carriedFd:   name === 'army' ? fs.openSync(`${base}.carried.bin`, 'w') : -1,
+    // cargo.bin:   1 byte per transport sample — raw cargo count (0–6)
+    carriedFd:   name === 'army'      ? fs.openSync(`${base}.carried.bin`, 'w') : -1,
+    cargoFd:     name === 'transport' ? fs.openSync(`${base}.cargo.bin`,   'w') : -1,
   };
 }
 
@@ -71,11 +73,11 @@ const prodFiles = {
 };
 
 // Buffers
-type MovementBuf = { states: Buffer[]; positions: Buffer[]; actions: number[]; tiles: number[]; carried: number[] };
+type MovementBuf = { states: Buffer[]; positions: Buffer[]; actions: number[]; tiles: number[]; carried: number[]; cargo: number[] };
 type ProductionBuf = { states: Buffer[]; cities: Buffer[]; globals: Buffer[]; unitTypes: number[] };
 
 const movementBufs = prodOnly ? null : Object.fromEntries(
-  UNIT_TYPE_NAMES.map(n => [n, { states: [] as Buffer[], positions: [] as Buffer[], actions: [] as number[], tiles: [] as number[], carried: [] as number[] }])
+  UNIT_TYPE_NAMES.map(n => [n, { states: [] as Buffer[], positions: [] as Buffer[], actions: [] as number[], tiles: [] as number[], carried: [] as number[], cargo: [] as number[] }])
 ) as Record<string, MovementBuf> | null;
 
 const prodBuf: ProductionBuf = { states: [], cities: [], globals: [], unitTypes: [] };
@@ -98,7 +100,11 @@ function flushMovement(unitType: string): void {
     fs.writeSync(files.carriedFd, Buffer.from(new Uint8Array(buf.carried)));
     fs.fsyncSync(files.carriedFd);
   }
-  buf.states = []; buf.positions = []; buf.actions = []; buf.tiles = []; buf.carried = [];
+  if (files.cargoFd >= 0) {
+    fs.writeSync(files.cargoFd, Buffer.from(new Uint8Array(buf.cargo)));
+    fs.fsyncSync(files.cargoFd);
+  }
+  buf.states = []; buf.positions = []; buf.actions = []; buf.tiles = []; buf.carried = []; buf.cargo = [];
 }
 
 function flushProduction(): void {
@@ -139,7 +145,7 @@ function buildGlobalFeatures(view: any, city: { x: number; y: number; production
   return f;
 }
 
-function saveMovementSample(unitType: string, tensor: Float32Array, x: number, y: number, actionType: string, tileIdx: number, carriedByTransport = false): void {
+function saveMovementSample(unitType: string, tensor: Float32Array, x: number, y: number, actionType: string, tileIdx: number, carriedByTransport = false, cargoCount = 0): void {
   if (prodOnly || !movementBufs || !movementFiles) return;
   const buf = movementBufs[unitType];
   buf.states.push(Buffer.from(tensor.buffer));
@@ -147,6 +153,7 @@ function saveMovementSample(unitType: string, tensor: Float32Array, x: number, y
   buf.actions.push(MOVEMENT_ACTION_TO_IDX[actionType] ?? 2);
   buf.tiles.push(tileIdx);
   buf.carried.push(carriedByTransport ? 1 : 0);
+  buf.cargo.push(cargoCount);
   if (buf.states.length >= FLUSH_EVERY) flushMovement(unitType);
 }
 
@@ -207,7 +214,8 @@ while (true) {
         if (unit && (!unitTypeFilter || unit.type === unitTypeFilter) && gameCounts[unit.type] < MAX_PER_BUCKET) {
           const tileIdx = (action.type === 'MOVE' || action.type === 'UNLOAD') ? ((action as any).to.y * state.mapWidth + (action as any).to.x) : -1;
           const isCarried = unit.type === 'army' && unit.carriedBy != null;
-          saveMovementSample(unit.type, tensor, unit.x, unit.y, action.type, tileIdx, isCarried);
+          const cargoCount = unit.type === 'transport' ? (unit.cargo?.length ?? 0) : 0;
+          saveMovementSample(unit.type, tensor, unit.x, unit.y, action.type, tileIdx, isCarried, cargoCount);
           gameCounts[unit.type]++;
         }
       } else if (action.type === 'SET_PRODUCTION' && !unitTypeFilter) {
@@ -261,6 +269,8 @@ if (!prodOnly) {
   for (const name of UNIT_TYPE_NAMES) {
     const f = movementFiles![name];
     fs.closeSync(f.statesFd); fs.closeSync(f.positionsFd); fs.closeSync(f.actionsFd); fs.closeSync(f.tilesFd);
+    if (f.carriedFd >= 0) fs.closeSync(f.carriedFd);
+    if (f.cargoFd   >= 0) fs.closeSync(f.cargoFd);
   }
 }
 if (!unitTypeFilter) {

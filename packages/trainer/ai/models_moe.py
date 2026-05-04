@@ -25,7 +25,7 @@ def _circular_pad(x: torch.Tensor, pad: int) -> torch.Tensor:
 class MovementCNN(nn.Module):
     """
     15-channel CNN for a single unit-type movement expert.
-    Inputs : [B, 15, H, W]  (13 base + ch13 unit-marker + ch14 army-carried flag)
+    Inputs : [B, 15, H, W]  (13 base + ch13 unit-marker + ch14 army-carried/transport-cargo flag)
     Outputs: action_type [B, 5], target_tile [B, H*W]
     """
 

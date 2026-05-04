@@ -67,14 +67,15 @@ class MovementDataset(Dataset):
             state_files = [state_files[file_idx]]
 
         self.unit_type = unit_type
-        state_arrays, pos_arrays, action_type_list, tile_idx_list, carried_arrays = [], [], [], [], []
+        state_arrays, pos_arrays, action_type_list, tile_idx_list, carried_arrays, cargo_arrays = [], [], [], [], [], []
 
         for sf in state_files:
             base = str(sf)[:-len('.states.bin')]
-            pf = Path(base + '.positions.bin')
-            af = Path(base + '.actions.bin')
-            tf = Path(base + '.tiles.bin')
-            cf = Path(base + '.carried.bin')  # army only: 1 byte per sample (1=carried, 0=free)
+            pf  = Path(base + '.positions.bin')
+            af  = Path(base + '.actions.bin')
+            tf  = Path(base + '.tiles.bin')
+            cf  = Path(base + '.carried.bin')  # army only: 1 byte per sample (1=carried, 0=free)
+            cgf = Path(base + '.cargo.bin')    # transport only: 1 byte per sample (raw cargo count 0–6)
 
             raw_states = np.frombuffer(sf.read_bytes(), dtype=np.float32)
             n = len(raw_states) // (13 * self.H * self.W)
@@ -89,17 +90,24 @@ class MovementDataset(Dataset):
             raw_actions = np.frombuffer(af.read_bytes(), dtype=np.int8)
             raw_tiles = np.frombuffer(tf.read_bytes(), dtype=np.int32)
 
-            # Carried flag (army only) — zeros if file absent (old data or non-army type)
+            # Carried flag (army only) — zeros if file absent
             if cf.exists():
                 carried = np.frombuffer(cf.read_bytes(), dtype=np.uint8)[:n].astype(np.float32)
             else:
                 carried = np.zeros(n, dtype=np.float32)
+
+            # Cargo fraction (transport only) — zeros if file absent; normalised by capacity 6
+            if cgf.exists():
+                cargo = np.frombuffer(cgf.read_bytes(), dtype=np.uint8)[:n].astype(np.float32) / 6.0
+            else:
+                cargo = np.zeros(n, dtype=np.float32)
 
             state_arrays.append(states)
             pos_arrays.append(positions)
             action_type_list.append(raw_actions[:n])
             tile_idx_list.append(raw_tiles[:n])
             carried_arrays.append(carried)
+            cargo_arrays.append(cargo)
 
         if not state_arrays:
             raise ValueError(f"No valid data loaded for unit type '{unit_type}' (all files empty or missing)")
@@ -108,21 +116,22 @@ class MovementDataset(Dataset):
         self.action_types = np.concatenate(action_type_list, axis=0).astype(np.int64)
         self.tile_idxs    = np.concatenate(tile_idx_list,    axis=0).astype(np.int64)
         carried_flat      = np.concatenate(carried_arrays, axis=0)  # [N]
+        cargo_flat        = np.concatenate(cargo_arrays,   axis=0)  # [N]
 
         assert len(self.states) == len(self.positions) == len(self.action_types) == len(self.tile_idxs)
 
-        # Build states15: ch0-12 = base state, ch13 = position marker, ch14 = carried flag
+        # Build states15: ch0-12 = base state, ch13 = position marker, ch14 = carried/cargo signal
         N = len(self.states)
         states15 = np.zeros((N, 15, self.H, self.W), dtype=np.float32)
-        states15[:, :13] = self.states  # Copy 13 base channels
-        del self.states  # Free memory
+        states15[:, :13] = self.states
+        del self.states
         xs = self.positions[:, 0].astype(np.int32)
         ys = self.positions[:, 1].astype(np.int32)
         valid = (xs >= 0) & (xs < self.W) & (ys >= 0) & (ys < self.H)
         rows = np.where(valid)[0]
         states15[rows, 13, ys[rows], xs[rows]] = 1.0  # ch13: unit position marker
-        # ch14: carried-by-transport flag (broadcast across entire tile for the unit's position)
-        states15[rows, 14, ys[rows], xs[rows]] = carried_flat[rows]
+        # ch14: army=carried flag (0/1), transport=cargo fraction (0–1), others=0
+        states15[rows, 14, ys[rows], xs[rows]] = (carried_flat + cargo_flat)[rows]
         self.states15 = states15
 
     def __len__(self) -> int:

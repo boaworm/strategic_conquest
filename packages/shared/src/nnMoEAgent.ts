@@ -329,8 +329,10 @@ export class NnMoEAgent implements Agent {
   // ── Expert inference ──────────────────────────────────────────────────────
 
   private async askMovementExpert(unit: UnitView, obs: AgentObservation): Promise<AgentAction | null> {
-    const isCarried = unit.type === UnitType.Army && unit.carriedBy !== null;
-    const tensor15 = this.buildMovementTensor(obs, unit.x, unit.y, isCarried);
+    let ch14Value = 0;
+    if (unit.type === UnitType.Army && unit.carriedBy !== null) ch14Value = 1.0;
+    else if (unit.type === UnitType.Transport) ch14Value = (unit as any).cargo?.length / 6 || 0;
+    const tensor15 = this.buildMovementTensor(obs, unit.x, unit.y, ch14Value);
 
     let actionTypeData: Float32Array;
     let targetTileData: Float32Array;
@@ -416,10 +418,10 @@ export class NnMoEAgent implements Agent {
    * Build a 15-channel tensor into the pre-allocated buffer.
    * Channels 0–12 written fresh from the current observation (no stale data),
    * channel 13 = position marker for the given (x, y),
-   * channel 14 = 1.0 if the unit is an army carried by a transport, else 0.
+   * channel 14 = army: 1.0 if carried by transport; transport: cargo count / 6; others: 0.
    * Returns the shared buffer — valid until the next call.
    */
-  private buildMovementTensor(obs: AgentObservation, markerX: number, markerY: number, carriedByTransport = false): Float32Array {
+  private buildMovementTensor(obs: AgentObservation, markerX: number, markerY: number, ch14Value = 0): Float32Array {
     fillViewTensor(obs as any as PlayerView, this.tensor15Buf);
     const HW = this.tensor15Buf.length / 15;
 
@@ -431,14 +433,14 @@ export class NnMoEAgent implements Agent {
       this.lastMarkerIdx = markerIdx;
     }
 
-    // Army carried-by-transport flag (ch14)
+    // ch14: carried flag (army) or cargo fraction (transport)
     if (this.lastCarriedIdx >= 0) this.tensor15Buf[this.lastCarriedIdx] = 0;
     this.lastCarriedIdx = -1;
-    if (carriedByTransport) {
-      const carriedIdx = 14 * HW + markerY * this.mapWidth + markerX;
-      if (carriedIdx < this.tensor15Buf.length) {
-        this.tensor15Buf[carriedIdx] = 1.0;
-        this.lastCarriedIdx = carriedIdx;
+    if (ch14Value > 0) {
+      const ch14Idx = 14 * HW + markerY * this.mapWidth + markerX;
+      if (ch14Idx < this.tensor15Buf.length) {
+        this.tensor15Buf[ch14Idx] = ch14Value;
+        this.lastCarriedIdx = ch14Idx;
       }
     }
 
