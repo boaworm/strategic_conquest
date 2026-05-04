@@ -7,7 +7,7 @@ File layout (all in DATA_DIR/):
   worker-{i}-{type}.actions.jsonl  — {actionType, tileIdx}
   worker-{i}-production.states.bin
   worker-{i}-production.cities.bin  — int16   [N, 2]
-  worker-{i}-production.globals.bin — float32 [N, 22]
+  worker-{i}-production.globals.bin — float32 [N, 28]
   worker-{i}-production.unitTypes.jsonl — {unitType}
   meta.json
 """
