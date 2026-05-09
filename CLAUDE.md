@@ -107,7 +107,6 @@ DATA_DIR=./data NUM_GAMES=100 WORKERS=8 npm run record
 rm -fR tmp/* && DATA_DIR=tmp NUM_GAMES=8 MAX_TURNS=300 P1AGENT=basicAgent P2AGENT=basicAgent npm run record
 ```
 
-
 ## Architecture
 
 ### Monorepo structure

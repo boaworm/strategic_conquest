@@ -18,7 +18,7 @@
 
 import type { Agent, AgentAction, AgentConfig, AgentObservation } from './agent.js';
 import type { PlayerView, UnitView, CityView } from './types.js';
-import { UnitType, UnitDomain, UNIT_STATS, Terrain, wrapX } from './types.js';
+import { UnitType, UnitDomain, UNIT_STATS, Terrain, wrapX, wrappedDistX } from './types.js';
 import { fillViewTensor } from './engine/tensorUtils.js';
 
 // Lazy-load node modules to avoid browser build errors
@@ -273,7 +273,7 @@ export class NnMoEAgent implements Agent {
     };
 
     const units = obs.myUnits
-      .filter(u => this.pendingUnitIds.has(u.id) && u.carriedBy === null)
+      .filter(u => this.pendingUnitIds.has(u.id) && u.carriedBy === null && u.movesLeft > 0)
       .sort((a, b) => pass1Order(a) - pass1Order(b));
 
     for (const unit of units) {
@@ -296,7 +296,7 @@ export class NnMoEAgent implements Agent {
 
   private async runPass2(obs: AgentObservation): Promise<AgentAction | null> {
     const units = obs.myUnits.filter(
-      u => this.pendingUnitIds.has(u.id) && u.carriedBy !== null && u.type === UnitType.Army
+      u => this.pendingUnitIds.has(u.id) && u.carriedBy !== null && u.type === UnitType.Army && u.movesLeft > 0
     );
 
     for (const unit of units) {
@@ -354,7 +354,14 @@ export class NnMoEAgent implements Agent {
       targetTileData = results.target_tile.data as Float32Array;
     }
 
-    const actionIdx = this.argmax(actionTypeData);
+    // Mask out illegal actions before argmax
+    const mask = this.computeActionMask(unit, obs);
+    const maskedActionData = new Float32Array(actionTypeData);
+    for (let i = 0; i < maskedActionData.length; i++) {
+      if (!mask[i]) maskedActionData[i] = -Infinity;
+    }
+
+    const actionIdx = this.argmax(maskedActionData);
     const tileIdx = this.argmax(targetTileData);
     const actionType = MOVEMENT_ACTION_TYPES[actionIdx] ?? 'SKIP';
 
@@ -378,7 +385,8 @@ export class NnMoEAgent implements Agent {
     if (actionType === 'SLEEP') return { type: 'SLEEP', unitId: unit.id };
     if (actionType === 'SKIP')  return { type: 'SKIP',  unitId: unit.id };
     if (actionType === 'LOAD') {
-      const transport = obs.myUnits.find(u => u.type === UnitType.Transport);
+      // Pick the adjacent transport that triggered the mask
+      const transport = this.findAdjacentTransportWithRoom(unit, obs);
       if (!transport) return { type: 'SKIP', unitId: unit.id };
       return { type: 'LOAD', unitId: unit.id, transportId: transport.id };
     }
@@ -492,6 +500,53 @@ export class NnMoEAgent implements Agent {
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────────
+
+  /**
+   * Returns a boolean mask over MOVEMENT_ACTION_TYPES [MOVE,SLEEP,SKIP,LOAD,UNLOAD].
+   * false = that action is illegal for this unit right now and must be excluded.
+   */
+  private computeActionMask(unit: UnitView, obs: AgentObservation): boolean[] {
+    // MOVE=0, SLEEP=1, SKIP=2, LOAD=3, UNLOAD=4
+    const canLoad   = this.findAdjacentTransportWithRoom(unit, obs) !== null;
+    const canUnload = unit.type === UnitType.Transport && (unit as any).cargo?.length > 0;
+    // Only allow SKIP when the unit is physically stuck (no adjacent passable tile).
+    // This prevents the NN from idling when LOAD is masked out.
+    const canSkip   = !this.hasValidMoveTarget(unit, obs);
+    return [true, false, canSkip, canLoad, canUnload];
+  }
+
+  private hasValidMoveTarget(unit: UnitView, obs: AgentObservation): boolean {
+    const domain = UNIT_STATS[unit.type].domain;
+    const dirs = [
+      { x: 0, y: 1 }, { x: 0, y: -1 }, { x: 1, y: 0 }, { x: -1, y: 0 },
+      { x: 1, y: 1 }, { x: 1, y: -1 }, { x: -1, y: 1 }, { x: -1, y: -1 },
+    ];
+    const tiles = (obs as any as PlayerView).tiles;
+    for (const d of dirs) {
+      const nx = wrapX(unit.x + d.x, this.mapWidth);
+      const ny = unit.y + d.y;
+      if (ny < 0 || ny >= this.mapHeight) continue;
+      const tile = tiles[ny]?.[nx];
+      if (!tile) continue;
+      if (domain === UnitDomain.Land && tile.terrain === Terrain.Land) return true;
+      if (domain === UnitDomain.Sea && tile.terrain !== Terrain.Land) return true;
+      if (domain === UnitDomain.Air) return true;
+    }
+    return false;
+  }
+
+  /** Find a friendly transport adjacent to `unit` that has room for it. */
+  private findAdjacentTransportWithRoom(unit: UnitView, obs: AgentObservation): UnitView | null {
+    for (const t of obs.myUnits) {
+      const stats = UNIT_STATS[t.type];
+      if (!stats.canCarry.includes(unit.type)) continue;
+      if ((t as any).cargo?.length >= stats.cargoCapacity) continue;
+      const dx = wrappedDistX(unit.x, t.x, this.mapWidth);
+      const dy = Math.abs(unit.y - t.y);
+      if (dx <= 1 && dy <= 1) return t;
+    }
+    return null;
+  }
 
   private argmax(arr: Float32Array): number {
     let maxIdx = 0;

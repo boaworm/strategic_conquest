@@ -499,6 +499,33 @@ Both `record` and `collect` use the same pattern:
 3. Workers report progress by writing a game count to `tmp/progress-N.txt`; the coordinator polls these files once per second and prints `%` progress
 4. The coordinator waits for all workers via `Promise.all`, then merges/summarises output
 
+### Replay Analysis (Python)
+
+Analyze recorded replays to extract statistics and per-unit move data.
+
+```bash
+# Summary analysis
+python3 packages/trainer/ai/analyze_replays.py tmp/replays/
+
+# Extract moves as JSON for specific game and turn range
+python3 packages/trainer/ai/analyze_replays.py tmp/replays/ --extractMoves --player 1 --turns 18:20 --game <uuid>
+
+# Filter by unit type
+python3 packages/trainer/ai/analyze_replays.py tmp/replays/ --extractMoves --player 1 --unit-type army,transport --turns 18:20 --game <uuid>
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--extractMoves` | Output moves as JSON (per-unit, per-turn) |
+| `--player <1\|2>` | Player number |
+| `--turns <start:end>` | Turn range (inclusive, e.g., 18:20) |
+| `--game <uuid>` | Specific game UUID (required for single-game extraction) |
+| `--unit-type <a,b,c>` | Comma-separated list of unit types to filter (e.g., `army,transport`) |
+
+Output includes: turn, unit_id, unit_type, position, island, carried_by, cargo, action_attempted
+
 ---
 
 ## Multiplayer Architecture

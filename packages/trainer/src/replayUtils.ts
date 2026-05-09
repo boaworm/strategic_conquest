@@ -1,4 +1,4 @@
-import type { GameState, City, Unit, Terrain, Agent } from '@sc/shared';
+import type { GameState, City, Unit, Terrain, Agent, AgentAction } from '@sc/shared';
 import { BasicAgent } from '@sc/shared';
 
 export interface ReplayMeta {
@@ -24,6 +24,7 @@ export interface ReplayFrame {
   units: Unit[];
   winner: string | null;
   phases?: Record<string, number>;
+  actions?: Record<string, { proposed: AgentAction; applied: AgentAction }[]>;
 }
 
 export interface ReplayFile {

@@ -70,27 +70,35 @@ export async function spawnAIPlayer(
     socket.on('error', (err) => { reject(err); });
   });
 
+  // Track the last emitted action so actionRejected can SKIP that unit
+  const lastActionRef: { current: AgentAction | null } = { current: null };
+
   socket.on('gameStart', async (view: any) => {
-    await triggerAITurn(socket, agent, view, playerId);
+    await triggerAITurn(socket, agent, view, playerId, lastActionRef);
   });
 
   socket.on('stateUpdate', async (view: any) => {
-    await triggerAITurn(socket, agent, view, playerId);
+    await triggerAITurn(socket, agent, view, playerId, lastActionRef);
   });
 
   /**
    * actionRejected — the server refused the last action.
-   * No stateUpdate will follow, so we must self-recover here.
-   * Safest fallback: end the turn. This prevents the AI from
-   * silently freezing and blocking the game indefinitely.
+   * Consume only the offending unit's remaining moves (SKIP), then
+   * continue the turn. Falls back to END_TURN only when there is no
+   * unit to SKIP (e.g. SET_PRODUCTION or END_TURN rejections).
    */
   socket.on('actionRejected', (data: { reason: string }) => {
     if (data.reason === 'Game is not active') {
-      // Game has ended — stop trying to act
       return;
     }
-    console.error(`${TAG} ${playerId} action rejected: ${data.reason} — sending END_TURN to unblock`);
-    socket.emit('action', { type: 'END_TURN' });
+    const unitId = (lastActionRef.current as any)?.unitId as string | undefined;
+    if (unitId) {
+      console.error(`${TAG} ${playerId} action rejected: ${data.reason} — SKIPping unit ${unitId}`);
+      socket.emit('action', { type: 'SKIP', unitId });
+    } else {
+      console.error(`${TAG} ${playerId} action rejected: ${data.reason} — sending END_TURN`);
+      socket.emit('action', { type: 'END_TURN' });
+    }
   });
 
   return socket;
@@ -100,7 +108,13 @@ export async function spawnAIPlayer(
  * Trigger the AI to take its turn.
  * Decides the next action and emits it, with full debug logging.
  */
-async function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPlayerId: string) {
+async function triggerAITurn(
+  socket: Socket,
+  agent: Agent,
+  view: any,
+  expectedPlayerId: string,
+  lastActionRef: { current: AgentAction | null },
+) {
   if (view.currentPlayer !== expectedPlayerId) return;
 
   const prefix = `${TAG} ${expectedPlayerId} turn ${view.turn}`;
@@ -146,6 +160,7 @@ async function triggerAITurn(socket: Socket, agent: Agent, view: any, expectedPl
     myMissileBlastRadius: view.myMissileBlastRadius,
   });
 
+  lastActionRef.current = action;
   logAction(prefix, action, view);
   socket.emit('action', action);
 }

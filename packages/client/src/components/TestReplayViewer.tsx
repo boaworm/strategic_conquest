@@ -288,6 +288,7 @@ interface PlayerViewCanvasProps {
   frame: TestReplayFrame;
   player: 'player1' | 'player2';
   explored: Set<string>;
+  showCoordinates: boolean;
 }
 
 const PlayerViewCanvas = React.memo(({
@@ -295,6 +296,7 @@ const PlayerViewCanvas = React.memo(({
   frame,
   player,
   explored,
+  showCoordinates,
 }: PlayerViewCanvasProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [camState, setCamState] = useState({ ox: 0, oy: 0, scale: 1 });
@@ -400,6 +402,19 @@ const PlayerViewCanvas = React.memo(({
           drawIceCap(ctx, tx, ty, actualTileSize, y === mapH - 1);
           ctx.restore();
         }
+
+        // Tile coordinates (x,y) in top-left corner
+        if (showCoordinates && actualTileSize >= 8) {
+          ctx.save();
+          ctx.font = `8px monospace`;
+          ctx.fillStyle = 'rgba(255,255,255,0.7)';
+          ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+          ctx.lineWidth = 1;
+          const coordText = `(${x},${y})`;
+          ctx.strokeText(coordText, tx + 2, ty + 10);
+          ctx.fillText(coordText, tx + 2, ty + 10);
+          ctx.restore();
+        }
       }
     }
 
@@ -481,7 +496,7 @@ const PlayerViewCanvas = React.memo(({
     }
 
     ctx.restore();
-  }, [tiles, frame, player, explored, camState, canvasSize, imagesLoaded]);
+  }, [tiles, frame, player, explored, camState, canvasSize, imagesLoaded, showCoordinates]);
 
   
   // Camera controls
@@ -567,6 +582,7 @@ export function TestReplayViewer() {
   const [data, setData] = useState<TestReplayData | null>(null);
   const [replayList, setReplayList] = useState<TestReplayMeta[]>([]);
   const [frameIdx, setFrameIdx] = useState(0);
+  const [showCoordinates, setShowCoordinates] = useState(false);
 
   // Load replay list
   useEffect(() => {
@@ -615,7 +631,14 @@ export function TestReplayViewer() {
     <div style={{ margin: 0, padding: 0, fontFamily: 'sans-serif', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ marginBottom: 15, flexShrink: 0, padding: '10px', background: '#1a1a2e', borderRadius: '8px' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontWeight: 'bold', color: '#ccc' }}>Select Test Replay:</span>
+          <input
+            type="checkbox"
+            checked={showCoordinates}
+            onChange={(e) => setShowCoordinates(e.target.checked)}
+            style={{ width: 16, height: 16 }}
+          />
+          <span style={{ color: '#ccc' }}>Coords</span>
+          <span style={{ fontWeight: 'bold', color: '#ccc', marginLeft: '20px' }}>Select Test Replay:</span>
           <select
             value={meta.id}
             onChange={(e) => {
@@ -647,6 +670,7 @@ export function TestReplayViewer() {
               frame={frame}
               player="player1"
               explored={p1Explored}
+              showCoordinates={showCoordinates}
             />
           </div>
         </div>
@@ -659,6 +683,7 @@ export function TestReplayViewer() {
               frame={frame}
               player="player2"
               explored={p2Explored}
+              showCoordinates={showCoordinates}
             />
           </div>
         </div>

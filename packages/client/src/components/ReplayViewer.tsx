@@ -258,9 +258,10 @@ function drawUnit(
 interface ReplayCanvasProps {
   replay: ReplayData;
   frame: ReplayFrame;
+  showCoordinates: boolean;
 }
 
-function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
+function ReplayCanvas({ replay, frame, showCoordinates }: ReplayCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const camRef = useRef({ x: replay.mapWidth / 2, y: replay.mapHeight / 2, tileSize: 24 });
   const dragRef = useRef<{ sx: number; sy: number; cx: number; cy: number } | null>(null);
@@ -298,6 +299,18 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
         ctx.fillRect(sx, sy, ts, ts);
         if (wy === 0 || wy === mapH - 1) drawIceCap(ctx, sx, sy, ts, wy === mapH - 1);
         if (ts >= 12) { ctx.strokeStyle = COL_GRID; ctx.lineWidth = 0.5; ctx.strokeRect(sx, sy, ts, ts); }
+        // Tile coordinates (x,y) in top-left corner
+        if (showCoordinates && ts >= 8) {
+          ctx.save();
+          ctx.font = `8px monospace`;
+          ctx.fillStyle = 'rgba(255,255,255,0.7)';
+          ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+          ctx.lineWidth = 1;
+          const coordText = `(${tx},${wy})`;
+          ctx.strokeText(coordText, sx + 2, sy + 10);
+          ctx.fillText(coordText, sx + 2, sy + 10);
+          ctx.restore();
+        }
       }
     }
 
@@ -346,7 +359,7 @@ function ReplayCanvas({ replay, frame }: ReplayCanvasProps) {
         }
       }
     }
-  }, [frame, replay, mapW, mapH]);
+  }, [frame, replay, mapW, mapH, showCoordinates]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -471,6 +484,7 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
   const [replay, setReplay] = useState<ReplayData | null>(null);
   const [frameIdx, setFrameIdx] = useState(0);
   const [currentReplayIdx, setCurrentReplayIdx] = useState<number>(-1);
+  const [showCoordinates, setShowCoordinates] = useState(false);
 
   // Use same origin as page (works for both replay server on 4001 and game server on 4000)
   const serverOrigin = window.location.origin;
@@ -503,6 +517,10 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
       setReplay(data);
       setFrameIdx(0);
       setCurrentReplayIdx(idx);
+      // Update URL to reflect current replay
+      const url = new URL(window.location.href);
+      url.searchParams.set('replay', id);
+      window.history.pushState({}, '', url);
     } catch (e: unknown) {
       setError(`Failed to load: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -587,6 +605,15 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
       <div className="h-screen bg-gray-950 flex flex-col overflow-hidden">
         <div className="flex items-center gap-4 px-4 py-2 bg-gray-900 border-b border-gray-700 text-white text-sm shrink-0 flex-wrap">
           <button className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600" onClick={() => setReplay(null)}>← List</button>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showCoordinates}
+              onChange={(e) => setShowCoordinates(e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span className="text-gray-300">Coords</span>
+          </label>
           <button
             className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-40"
             disabled={currentReplayIdx <= 0}
@@ -697,7 +724,7 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
         )}
 
         <div className="flex-1 overflow-hidden">
-          <ReplayCanvas replay={replay} frame={frame} />
+          <ReplayCanvas replay={replay} frame={frame} showCoordinates={showCoordinates} />
         </div>
 
         {/* Phase tracks and slider - table layout */}

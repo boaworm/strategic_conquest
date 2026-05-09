@@ -5,6 +5,7 @@ Analyze nnMoEAgent replay files to understand army/transport movement behavior.
 Usage:
     python packages/trainer/ai/analyze_replays.py tmp/replays/
     python packages/trainer/ai/analyze_replays.py tmp/replays/ --player player1 --unit-types army transport
+    python packages/trainer/ai/analyze_replays.py tmp/replays/ --extractMoves --player 1 --turns 18:20 --game <uuid>
 """
 
 import argparse
@@ -214,15 +215,138 @@ def print_action_counts(results):
               f"{ac.get('UNLOAD', 0):>7}  {ac.get('SLEEP', 0):>6}  {ac.get('SKIP', 0):>6}")
 
 
+def extract_moves(replay, player_num=1, turn_range=None, unit_types=None):
+    """
+    Extract per-action records for a player across specified turns.
+
+    Uses the new frame.actions format: { player: [{proposed, applied}, ...] }.
+    Falls back to position-diff inference for old replays without action logs.
+
+    Returns one record per action per turn (a unit may appear multiple times
+    if the agent was called more than once for it in a turn).
+    """
+    player = f"player{player_num}"
+    width = replay["mapWidth"]
+    height = replay["mapHeight"]
+    tiles = replay["tiles"]
+    island_map = flood_fill_islands(tiles, width, height)
+
+    moves = []
+    frames = replay["frames"]
+
+    for frame in frames:
+        turn = frame["turn"]
+
+        if turn_range:
+            start, end = turn_range
+            if turn < start or turn > end:
+                continue
+
+        units_by_id = {u["id"]: u for u in frame["units"] if u["owner"] == player}
+
+        raw_actions = frame.get("actions", {})
+        player_logs = raw_actions.get(player) if isinstance(raw_actions, dict) else None
+
+        # New format: list of {proposed, applied}
+        if player_logs and isinstance(player_logs, list):
+            for log in player_logs:
+                proposed = log.get("proposed", {})
+                applied  = log.get("applied",  {})
+
+                # Determine which unit this action belongs to
+                uid = proposed.get("unitId") or applied.get("unitId")
+                unit = units_by_id.get(uid) if uid else None
+
+                if unit_types:
+                    if unit is None or unit["type"] not in unit_types:
+                        continue
+
+                record = {
+                    "turn": turn,
+                    "unit_id": uid,
+                    "unit_type": unit["type"] if unit else None,
+                    "position": {"x": unit["x"], "y": unit["y"]} if unit else None,
+                    "island": get_island(island_map, unit["x"], unit["y"], width) if unit else None,
+                    "carried_by": unit.get("carriedBy") if unit else None,
+                    "cargo": unit.get("cargo", []) if unit else [],
+                    "proposed": proposed,
+                    "applied": applied,
+                }
+                moves.append(record)
+        else:
+            # Old replay without action logs — one stub record per unit
+            for uid, unit in units_by_id.items():
+                if unit_types and unit["type"] not in unit_types:
+                    continue
+                moves.append({
+                    "turn": turn,
+                    "unit_id": uid,
+                    "unit_type": unit["type"],
+                    "position": {"x": unit["x"], "y": unit["y"]},
+                    "island": get_island(island_map, unit["x"], unit["y"], width),
+                    "carried_by": unit.get("carriedBy"),
+                    "cargo": unit.get("cargo", []),
+                    "proposed": None,
+                    "applied": None,
+                })
+
+    return moves
+
+
 def main():
     parser = argparse.ArgumentParser(description="Analyze MoE agent replay behavior")
-    parser.add_argument("replay_dir", help="Directory containing replay .json files")
-    parser.add_argument("--player", default="player1", help="Player to analyze (default: player1)")
-    parser.add_argument("--unit-types", nargs="+", default=None, help="Unit types to focus on (e.g. army transport)")
+    parser.add_argument("replay_dir", nargs="?", help="Directory containing replay .json files")
+    parser.add_argument("--player", type=int, default=1, help="Player number to analyze (1 or 2, default: 1)")
+    parser.add_argument("--unit-type", type=str, default=None, help="Comma-separated list of unit types to filter (e.g., army,transport)")
     parser.add_argument("--events", action="store_true", help="Print transport event timelines")
+    parser.add_argument("--extractMoves", action="store_true", help="Extract moves as JSON output")
+    parser.add_argument("--game", type=str, default=None, help="Specific game UUID to analyze")
+    parser.add_argument("--turns", type=str, default=None, help="Turn range to extract (e.g., 18:20 for turns 18-20)")
     args = parser.parse_args()
 
+    # Handle --extractMoves mode
+    if args.extractMoves:
+        if not args.replay_dir:
+            print("Error: replay_dir required when using --extractMoves", file=sys.stderr)
+            sys.exit(1)
+
+        replay_dir = Path(args.replay_dir)
+        turn_range = parse_turn_range(args.turns) if args.turns else None
+        unit_types = set(args.unit_type.split(",")) if args.unit_type else None
+
+        # Find the specific game if --game is provided
+        if args.game:
+            game_path = replay_dir / f"{args.game}.json"
+            if not game_path.exists():
+                print(f"Error: Game not found: {args.game}", file=sys.stderr)
+                sys.exit(1)
+            replay = load_replay(game_path)
+            moves = extract_moves(replay, player_num=args.player, turn_range=turn_range, unit_types=unit_types)
+            print(json.dumps(moves, indent=2))
+        else:
+            # Process all games
+            all_moves = []
+            paths = sorted(replay_dir.glob("*.json"))
+            if not paths:
+                print(f"No .json files found in {replay_dir}", file=sys.stderr)
+                sys.exit(1)
+
+            for path in paths:
+                replay = load_replay(path)
+                moves = extract_moves(replay, player_num=args.player, turn_range=turn_range, unit_types=unit_types)
+                for m in moves:
+                    m["game_id"] = path.stem
+                all_moves.extend(moves)
+            print(json.dumps(all_moves, indent=2))
+        return
+
+    # Original analysis mode
+    if not args.replay_dir:
+        print("Error: replay_dir required", file=sys.stderr)
+        sys.exit(1)
+
     replay_dir = Path(args.replay_dir)
+    player_str = f"player{args.player}"
     paths = sorted(replay_dir.glob("*.json"))
     if not paths:
         print(f"No .json files found in {replay_dir}", file=sys.stderr)
@@ -231,23 +355,21 @@ def main():
     results = []
     for path in paths:
         replay = load_replay(path)
-        result = analyze_replay(replay, player=args.player, unit_types=args.unit_types)
+        result = analyze_replay(replay, player=player_str, unit_types=args.unit_types)
         results.append(result)
 
-    # Sort by game number
     results.sort(key=lambda r: r["meta"].get("gameNum", 0))
 
-    print(f"\n=== Replay analysis: {replay_dir} (player={args.player}) ===")
+    print(f"\n=== Replay analysis: {replay_dir} (player={player_str}) ===")
     print_summary(results)
 
-    print(f"\n=== Army action distribution (player={args.player}) ===")
+    print(f"\n=== Army action distribution (player={player_str}) ===")
     print_action_counts(results)
 
     if args.events:
         print(f"\n=== Transport event timelines ===")
         print_transport_events(results)
 
-    # Overall stats
     total_loads = sum(r["loads"] for r in results)
     total_unloads = sum(r["unloads"] for r in results)
     total_idle = sum(r["idle_cycles"] for r in results)
@@ -260,6 +382,14 @@ def main():
     print(f"  Idle cycles:        {total_idle}  (LOAD+UNLOAD at same tile)")
     print(f"  Stranded events:    {total_stranded}  (transport with cargo, no movement 5+ turns)")
     print(f"  Cross-island armies:{total_cross}  (armies that reached a new island)")
+
+
+def parse_turn_range(range_str):
+    """Parse turn range like '18:20' into (start, end) tuple."""
+    if ":" in range_str:
+        parts = range_str.split(":")
+        return int(parts[0]), int(parts[1])
+    return int(range_str), int(range_str)
 
 
 if __name__ == "__main__":

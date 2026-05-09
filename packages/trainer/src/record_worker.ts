@@ -113,35 +113,52 @@ async function runGame(gameNum: number): Promise<GameResult> {
   let prevTurn = state.turn;
   let actionsThisTurn = 0;
   let prevPlayer = state.currentPlayer;
+  type ActionLog = { proposed: AgentAction; applied: AgentAction };
+  let turnLogs: Record<string, ActionLog[]> = { player1: [], player2: [] };
 
   while (state.winner === null && state.turn <= maxTurns) {
     const pid = state.currentPlayer as 'player1' | 'player2';
-    if (pid !== prevPlayer) { actionsThisTurn = 0; prevPlayer = pid; }
+    if (pid !== prevPlayer) {
+      actionsThisTurn = 0;
+      prevPlayer = pid;
+    }
 
     const view = getPlayerView(state, pid);
     const actionResult = agents[pid].act({ ...view, myPlayerId: pid } as any);
     const action: AgentAction = actionResult instanceof Promise ? await actionResult : actionResult;
 
     const res = applyAction(state, action, pid);
+    let applied: AgentAction;
     if (!res.success) {
       actionsThisTurn++;
       if (actionsThisTurn >= MAX_ACTIONS_PER_TURN) {
         applyAction(state, { type: 'END_TURN' }, pid);
         actionsThisTurn = 0;
+        applied = { type: 'END_TURN' };
+      } else {
+        applied = { type: 'SKIP', unitId: (action as any).unitId ?? '' };
       }
     } else if (action.type === 'END_TURN') {
       actionsThisTurn = 0;
+      applied = action;
     } else {
       actionsThisTurn++;
       if (actionsThisTurn >= MAX_ACTIONS_PER_TURN) {
         applyAction(state, { type: 'END_TURN' }, pid);
         actionsThisTurn = 0;
+        applied = { type: 'END_TURN' };
+      } else {
+        applied = action;
       }
     }
+    turnLogs[pid].push({ proposed: action, applied });
 
     if (state.turn !== prevTurn) {
-      frames.push(snapshotGame(state, agents));
+      const frame = snapshotGame(state, agents);
+      frame.actions = turnLogs;
+      frames.push(frame);
       prevTurn = state.turn;
+      turnLogs = { player1: [], player2: [] };
     }
   }
 
