@@ -59,8 +59,8 @@ function loadTestReplayMetas(): TestReplayMeta[] {
     try {
       const raw = JSON.parse(fs.readFileSync(path.join(TEST_REPLAY_DIR, f), 'utf-8'));
       if (raw.meta) {
-        // Determine pass/fail: passed only if neutralCities === 0 (all cities captured)
-        const passed = (raw.meta.neutralCities ?? 0) === 0;
+        // Use passed field from the replay meta (set by test runner)
+        const passed = raw.meta.passed ?? ((raw.meta.neutralCities ?? 0) === 0);
         metas.push({ ...raw.meta, passed });
       }
     } catch { /* skip corrupt files */ }
@@ -84,18 +84,12 @@ if (fs.existsSync(TEST_REPLAY_DIR)) {
 }
 
 console.log('Running test generators...\n');
-const testFiles = [
-  'test_armyMoveToCoastAndBoardTransport.ts',
-  'test_armyMoveToCoastAndBoardTransport_2.ts',
-  'test_battleshipPriorities.ts',
-  'test_missileDecision.ts',
-  'test_destroyerChasingTransport.ts',
-  'test_expansionOfIslandFirst.ts',
-  'test_exploreAndExpand_3.ts',
-  'test_exploreManyIslands.ts',
-  'test_transportEarlyDeparture.ts',
-  'test_transportsInCombatPhase.ts',
-];
+
+// Auto-discover all test_*.ts files in packages/shared/src/
+const testFiles = fs
+  .readdirSync(SHARED_SRC_DIR)
+  .filter((f) => f.startsWith('test_') && f.endsWith('.ts'))
+  .sort();
 
 for (const testFile of testFiles) {
   const testPath = path.join(SHARED_SRC_DIR, testFile);
@@ -151,7 +145,7 @@ function startServerAndOpen(replayId: string) {
     res.setHeader('Access-Control-Allow-Origin', '*');
 
     // GET /api/replays — list metas
-    if (pathname === '/api/replays') {
+    if (pathname === '/api/replays' || pathname === '/api/replays/') {
       const freshMetas = loadTestReplayMetas();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ replays: freshMetas }));

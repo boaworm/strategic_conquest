@@ -49,8 +49,8 @@ def load_replay(path):
 
 def analyze_replay(replay, player="player1", unit_types=None):
     meta = replay["meta"]
-    width = replay["mapWidth"]
-    height = replay["mapHeight"]
+    width = meta.get("mapWidth") or replay["mapWidth"]
+    height = meta.get("mapHeight") or replay["mapHeight"]
     tiles = replay["tiles"]
     frames = replay["frames"]
 
@@ -361,7 +361,7 @@ def main():
     results = []
     for path in paths:
         replay = load_replay(path)
-        result = analyze_replay(replay, player=player_str, unit_types=args.unit_types)
+        result = analyze_replay(replay, player=player_str, unit_types=args.unit_type)
         results.append(result)
 
     results.sort(key=lambda r: r["meta"].get("gameNum", 0))

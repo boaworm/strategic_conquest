@@ -145,6 +145,7 @@ export interface ReplayFile {
     frames: number;
     p1Agent: string;
     p2Agent: string;
+    passed?: boolean;
   };
   tiles: Terrain[][];
   frames: GameSnapshot[];
@@ -201,6 +202,10 @@ export function createGameStateFromConfig(config: TestConfig): GameState {
       };
     }),
     explored: {
+      player1: new Set(),
+      player2: new Set(),
+    },
+    turnVisible: {
       player1: new Set(),
       player2: new Set(),
     },
@@ -343,7 +348,7 @@ export async function runTest(
         const endState = snapshotGame(state);
         endState.turn = state.turn + 1;
         frames.push(endState);
-        const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames) : undefined;
+        const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames, true) : undefined;
         return { passed: true, turns: state.turn, message: 'Test passed', replayPath };
       }
 
@@ -390,7 +395,7 @@ export async function runTest(
           const endState = snapshotGame(state);
           endState.turn = state.turn + 1;
           frames.push(endState);
-          const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames) : undefined;
+          const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames, true) : undefined;
           return { passed: true, turns: state.turn, message: 'Test passed', replayPath };
         }
 
@@ -427,7 +432,7 @@ export async function runTest(
     console.log(passed ? 'TEST PASSED' : 'TEST FAILED');
   }
 
-  const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames) : undefined;
+  const replayPath = saveReplay ? saveReplayFile(config.testName, state, frames, passed) : undefined;
   return { passed, turns: state.turn, message, replayPath, frames };
 }
 
@@ -438,6 +443,7 @@ export function saveReplayFile(
   testName: string,
   state: GameState,
   frames: GameSnapshot[],
+  passed?: boolean,
 ): string {
   const replayDir = resolveReplayDir();
 
@@ -457,6 +463,7 @@ export function saveReplayFile(
       frames: frames.length,
       p1Agent: 'basicAgent',
       p2Agent: 'basicAgent',
+      passed,
     },
     tiles: state.tiles,
     frames,

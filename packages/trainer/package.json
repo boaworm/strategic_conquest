@@ -12,7 +12,7 @@
     "nn-sim": "node src/nn_simulator.ts",
     "record": "npx tsc -p ../shared/tsconfig.json && npm run build && node src/record_replay.ts",
     "replay": "cd ../client && npm run build 2>/dev/null; cd ../trainer && node src/replay_picker.ts",
-    "test_replay": "cd ../client && npm run build 2>/dev/null; cd ../trainer && node src/test_replay_picker.ts",
+    "test_replay": "npm run build --workspace=packages/client 2>/dev/null; DATA_DIR=${DATA_DIR:-data} && case $DATA_DIR in /*) ;; *) DATA_DIR=$PWD/$DATA_DIR;; esac && export DATA_DIR && node src/test_replay_picker.ts",
     "profile": "node src/profile_game.ts",
     "profile:cpu": "node src/profile_game.ts --profile",
     "nn-evolve": "python packages/trainer/ai/evolve.py",

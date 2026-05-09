@@ -224,6 +224,9 @@ export class MapQuery {
 
     for (let y = 1; y < h - 1; y++) {
       for (let x = 0; x < w; x++) {
+        // Exclude the current position - we want to move TO a target, not stay put
+        if (x === from.x && y === from.y) continue;
+
         const tile = obs.tiles[y]?.[x];
         if (!tile || tile.terrain !== Terrain.Ocean) continue;
 

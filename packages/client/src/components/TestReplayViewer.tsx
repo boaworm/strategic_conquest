@@ -107,94 +107,410 @@ function drawIceCap(ctx: CanvasRenderingContext2D, x: number, y: number, size: n
   const ph = size * 0.12;
 }
 
-function drawUnitShape(ctx: CanvasRenderingContext2D, type: UnitType, cx: number, cy: number, size: number, color: string) {
+/** Draw classic unit shapes programmatically. */
+function drawUnitShape(
+  ctx: CanvasRenderingContext2D,
+  type: UnitType,
+  cx: number,
+  cy: number,
+  size: number,
+  color: string,
+) {
   ctx.save();
   const r = size * 0.38;
-  ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, size / 12); ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, size / 12);
+  ctx.globalAlpha = 1;
+
   switch (type) {
     case UnitType.Army: {
-      const hw = r * 0.9, hh = r * 0.35, trackY = cy + r * 0.25, trackH = r * 0.3;
-      ctx.fillStyle = '#000'; ctx.globalAlpha = 0.4;
-      ctx.beginPath(); ctx.roundRect(cx - hw, trackY, hw * 2, trackH, trackH * 0.4); ctx.fill();
-      ctx.globalAlpha = 0.25; ctx.fillStyle = '#fff';
-      for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.arc(cx - hw * 0.7 + (i * hw * 1.4) / 3, trackY + trackH * 0.5, trackH * 0.25, 0, 2 * Math.PI); ctx.fill(); }
-      ctx.globalAlpha = 1; ctx.fillStyle = color;
+      // Side-profile tank: tracks on bottom, hull, turret + barrel on top
+      const hw = r * 0.9;
+      const hh = r * 0.35;
+      const trackY = cy + r * 0.25;
+      // Tracks (dark rounded rectangle at bottom)
+      ctx.fillStyle = '#000';
+      ctx.globalAlpha = 0.4;
+      const trackH = r * 0.3;
+      ctx.beginPath();
+      ctx.roundRect(cx - hw, trackY, hw * 2, trackH, trackH * 0.4);
+      ctx.fill();
+      // Track wheels (small circles)
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = '#fff';
+      const wheelR = trackH * 0.25;
+      for (let i = 0; i < 4; i++) {
+        const wx = cx - hw * 0.7 + (i * hw * 1.4) / 3;
+        ctx.beginPath();
+        ctx.arc(wx, trackY + trackH * 0.5, wheelR, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color;
+      // Hull body (trapezoid sitting on tracks)
       const hullTop = trackY - hh * 1.6;
-      ctx.beginPath(); ctx.moveTo(cx - hw, trackY); ctx.lineTo(cx - hw * 0.75, hullTop); ctx.lineTo(cx + hw * 0.85, hullTop); ctx.lineTo(cx + hw, trackY); ctx.closePath(); ctx.fill();
-      const tw = hw * 0.7, th = hh * 0.9, tl = cx - hw * 0.35, tt = hullTop - th;
-      ctx.fillRect(tl, tt, tw, th); ctx.fillRect(tl + tw, tt + th * 0.35, hw * 0.65, th * 0.3);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, trackY);
+      ctx.lineTo(cx - hw * 0.75, hullTop);
+      ctx.lineTo(cx + hw * 0.85, hullTop);
+      ctx.lineTo(cx + hw, trackY);
+      ctx.closePath();
+      ctx.fill();
+      // Turret (smaller rectangle on top-left of hull)
+      const turretW = hw * 0.7;
+      const turretH = hh * 0.9;
+      const turretLeft = cx - hw * 0.35;
+      const turretTop = hullTop - turretH;
+      ctx.fillRect(turretLeft, turretTop, turretW, turretH);
+      // Gun barrel (extends right from turret)
+      const barrelH = turretH * 0.3;
+      const barrelY = turretTop + turretH * 0.35;
+      ctx.fillRect(turretLeft + turretW, barrelY, hw * 0.65, barrelH);
       break;
     }
     case UnitType.Fighter: {
-      ctx.beginPath(); ctx.moveTo(cx, cy - r);
-      ctx.lineTo(cx + r * 0.15, cy - r * 0.2); ctx.lineTo(cx + r, cy + r * 0.1); ctx.lineTo(cx + r * 0.8, cy + r * 0.35); ctx.lineTo(cx + r * 0.15, cy + r * 0.15);
-      ctx.lineTo(cx + r * 0.15, cy + r * 0.55); ctx.lineTo(cx + r * 0.45, cy + r); ctx.lineTo(cx + r * 0.3, cy + r); ctx.lineTo(cx, cy + r * 0.7);
-      ctx.lineTo(cx - r * 0.3, cy + r); ctx.lineTo(cx - r * 0.45, cy + r); ctx.lineTo(cx - r * 0.15, cy + r * 0.55); ctx.lineTo(cx - r * 0.15, cy + r * 0.15);
-      ctx.lineTo(cx - r * 0.8, cy + r * 0.35); ctx.lineTo(cx - r, cy + r * 0.1); ctx.lineTo(cx - r * 0.15, cy - r * 0.2); ctx.closePath(); ctx.fill(); break;
+      // Top-down fighter jet: pointed nose, swept wings, tail fins
+      ctx.beginPath();
+      // Fuselage
+      ctx.moveTo(cx, cy - r);               // nose
+      ctx.lineTo(cx + r * 0.15, cy - r * 0.2);
+      // Right wing
+      ctx.lineTo(cx + r, cy + r * 0.1);
+      ctx.lineTo(cx + r * 0.8, cy + r * 0.35);
+      ctx.lineTo(cx + r * 0.15, cy + r * 0.15);
+      // Right tail fin
+      ctx.lineTo(cx + r * 0.15, cy + r * 0.55);
+      ctx.lineTo(cx + r * 0.45, cy + r);
+      ctx.lineTo(cx + r * 0.3, cy + r);
+      ctx.lineTo(cx, cy + r * 0.7);
+      // Left tail fin (mirror)
+      ctx.lineTo(cx - r * 0.3, cy + r);
+      ctx.lineTo(cx - r * 0.45, cy + r);
+      ctx.lineTo(cx - r * 0.15, cy + r * 0.55);
+      ctx.lineTo(cx - r * 0.15, cy + r * 0.15);
+      // Left wing
+      ctx.lineTo(cx - r * 0.8, cy + r * 0.35);
+      ctx.lineTo(cx - r, cy + r * 0.1);
+      ctx.lineTo(cx - r * 0.15, cy - r * 0.2);
+      ctx.closePath();
+      ctx.fill();
+      break;
     }
     case UnitType.Missile: {
-      ctx.beginPath(); ctx.moveTo(cx, cy - r);
-      ctx.lineTo(cx + r * 0.12, cy - r * 0.65); ctx.lineTo(cx + r * 0.12, cy - r * 0.15); ctx.lineTo(cx + r * 0.8, cy + r * 0.3); ctx.lineTo(cx + r * 0.12, cy + r * 0.35);
-      ctx.lineTo(cx + r * 0.35, cy + r); ctx.lineTo(cx + r * 0.12, cy + r * 0.75); ctx.lineTo(cx, cy + r * 0.88);
-      ctx.lineTo(cx - r * 0.12, cy + r * 0.75); ctx.lineTo(cx - r * 0.35, cy + r); ctx.lineTo(cx - r * 0.12, cy + r * 0.35);
-      ctx.lineTo(cx - r * 0.8, cy + r * 0.3); ctx.lineTo(cx - r * 0.12, cy - r * 0.15); ctx.lineTo(cx - r * 0.12, cy - r * 0.65);
-      ctx.closePath(); ctx.fill(); break;
+      // Top-down missile: sharp nose, narrow body, swept delta wings, small tail fins
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r);                      // nose tip
+      ctx.lineTo(cx + r * 0.12, cy - r * 0.65);   // right nose edge
+      ctx.lineTo(cx + r * 0.12, cy - r * 0.15);   // right body above wing
+      ctx.lineTo(cx + r * 0.8, cy + r * 0.3);     // right wingtip
+      ctx.lineTo(cx + r * 0.12, cy + r * 0.35);   // right wing trailing
+      ctx.lineTo(cx + r * 0.35, cy + r);           // right tail fin tip
+      ctx.lineTo(cx + r * 0.12, cy + r * 0.75);   // right tail fin inner
+      ctx.lineTo(cx, cy + r * 0.88);              // tail centre
+      ctx.lineTo(cx - r * 0.12, cy + r * 0.75);  // left tail fin inner
+      ctx.lineTo(cx - r * 0.35, cy + r);          // left tail fin tip
+      ctx.lineTo(cx - r * 0.12, cy + r * 0.35);  // left wing trailing
+      ctx.lineTo(cx - r * 0.8, cy + r * 0.3);    // left wingtip
+      ctx.lineTo(cx - r * 0.12, cy - r * 0.15);  // left body above wing
+      ctx.lineTo(cx - r * 0.12, cy - r * 0.65);  // left nose edge
+      ctx.closePath();
+      ctx.fill();
+      break;
     }
     case UnitType.Transport: {
-      const hw = r * 0.93, deckY = cy - r * 0.2, wl = cy + r * 0.1, keel = cy + r * 0.52;
-      ctx.beginPath(); ctx.moveTo(cx - hw, deckY); ctx.lineTo(cx + hw * 0.68, deckY); ctx.lineTo(cx + hw, wl); ctx.lineTo(cx + hw * 0.88, keel); ctx.lineTo(cx - hw, keel); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = '#000'; ctx.globalAlpha = 0.25; ctx.lineWidth = Math.max(1, size / 16);
-      ctx.beginPath(); ctx.moveTo(cx - hw, wl); ctx.lineTo(cx + hw, wl); ctx.stroke();
-      ctx.globalAlpha = 0.4; ctx.fillStyle = '#000';
-      ctx.fillRect(cx - hw + hw * 0.03, deckY - r * 0.72, hw * 0.22, r * 0.72);
-      ctx.globalAlpha = 0.32;
-      ctx.fillRect(cx + hw * 0.32, deckY - r * 0.38, hw * 0.22, r * 0.38);
-      ctx.fillRect(cx + hw * 0.04, deckY - r * 0.3, hw * 0.2, r * 0.3);
-      ctx.fillRect(cx - hw * 0.2, deckY - r * 0.22, hw * 0.18, r * 0.22);
-      ctx.globalAlpha = 1; ctx.fillStyle = color; break;
+      // Transport: low boxy hull, single bridge tower at stern
+      const hw = r * 0.93;
+      const deckY = cy + r * 0.04;   // LOW deck — sits close to the waterline
+      const wl = cy + r * 0.2;
+      const keel = cy + r * 0.46;
+      // Hull — boxy with slight bow taper
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, deckY);
+      ctx.lineTo(cx + hw * 0.72, deckY);
+      ctx.lineTo(cx + hw, wl);
+      ctx.lineTo(cx + hw * 0.88, keel);
+      ctx.lineTo(cx - hw, keel);
+      ctx.closePath();
+      ctx.fill();
+      // Waterline stripe
+      ctx.strokeStyle = '#000';
+      ctx.globalAlpha = 0.25;
+      ctx.lineWidth = Math.max(1, size / 16);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, wl);
+      ctx.lineTo(cx + hw, wl);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#000';
+      // Single bridge tower at stern
+      ctx.globalAlpha = 0.42;
+      const brW = hw * 0.28;
+      const brH = r * 0.62;
+      ctx.fillRect(cx - hw + hw * 0.02, deckY - brH, brW, brH);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color;
+      break;
     }
     case UnitType.Destroyer: {
-      const hw = r * 0.93, deckY = cy + r * 0.04, wl = cy + r * 0.2, keel = cy + r * 0.42;
-      ctx.beginPath(); ctx.moveTo(cx - hw, deckY + r * 0.06); ctx.lineTo(cx - hw, wl); ctx.lineTo(cx - hw * 0.8, keel);
-      ctx.lineTo(cx + hw * 0.72, keel); ctx.lineTo(cx + hw, wl - r * 0.04); ctx.lineTo(cx + hw * 0.58, deckY); ctx.lineTo(cx - hw * 0.9, deckY); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = '#000'; ctx.globalAlpha = 0.3; ctx.lineWidth = Math.max(1, size / 18);
-      ctx.beginPath(); ctx.moveTo(cx - hw, wl); ctx.lineTo(cx + hw, wl); ctx.stroke();
-      ctx.globalAlpha = 0.38; ctx.fillStyle = '#000';
-      ctx.beginPath(); ctx.moveTo(cx - hw * 0.16, deckY); ctx.lineTo(cx - hw * 0.16, deckY - r * 0.42); ctx.lineTo(cx + hw * 0.07, deckY - r * 0.28); ctx.lineTo(cx + hw * 0.07, deckY); ctx.closePath(); ctx.fill();
-      ctx.globalAlpha = 0.42; ctx.fillStyle = '#000';
-      ctx.beginPath(); ctx.arc(cx + hw * 0.28, deckY - r * 0.05, r * 0.1, 0, 2 * Math.PI); ctx.fill();
+      // Fast warship: very low sleek hull, sharp bow, angled bridge, radar mast, fore & aft guns
+      const hw = r * 0.93;
+      const deckY = cy + r * 0.04;  // LOW deck — nearly flush with waterline
+      const wl = cy + r * 0.2;
+      const keel = cy + r * 0.42;
+      // Hull — narrow, knife-like; sharp bow, slight stern step
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, deckY + r * 0.06);   // stern top (slight step)
+      ctx.lineTo(cx - hw, wl);                  // stern
+      ctx.lineTo(cx - hw * 0.8, keel);
+      ctx.lineTo(cx + hw * 0.72, keel);
+      ctx.lineTo(cx + hw, wl - r * 0.04);       // sharp bow tip, above waterline
+      ctx.lineTo(cx + hw * 0.58, deckY);
+      ctx.lineTo(cx - hw * 0.9, deckY);
+      ctx.closePath();
+      ctx.fill();
+      // Waterline
+      ctx.strokeStyle = '#000';
+      ctx.globalAlpha = 0.3;
+      ctx.lineWidth = Math.max(1, size / 18);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, wl);
+      ctx.lineTo(cx + hw, wl);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#000';
+      // Angled bridge (leans forward — fast-ship silhouette)
+      ctx.globalAlpha = 0.38;
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.16, deckY);
+      ctx.lineTo(cx - hw * 0.16, deckY - r * 0.42);
+      ctx.lineTo(cx + hw * 0.07,  deckY - r * 0.28);
+      ctx.lineTo(cx + hw * 0.07,  deckY);
+      ctx.closePath();
+      ctx.fill();
+      // Tall mast with radar crossbar
+      ctx.globalAlpha = 0.44;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = Math.max(1, size / 22);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.06, deckY - r * 0.42);
+      ctx.lineTo(cx - hw * 0.06, deckY - r * 0.74);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.16, deckY - r * 0.64);
+      ctx.lineTo(cx + hw * 0.04, deckY - r * 0.64);
+      ctx.stroke();
+      // Fore gun turret + barrel
+      ctx.globalAlpha = 0.42;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(cx + hw * 0.28, deckY - r * 0.05, r * 0.1, 0, 2 * Math.PI);
+      ctx.fill();
       ctx.fillRect(cx + hw * 0.38, deckY - r * 0.09, hw * 0.3, r * 0.05);
-      ctx.globalAlpha = 1; ctx.fillStyle = color; break;
+      // Aft gun turret + barrel (behind bridge, pointing stern)
+      ctx.globalAlpha = 0.38;
+      ctx.beginPath();
+      ctx.arc(cx - hw * 0.5, deckY - r * 0.04, r * 0.08, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillRect(cx - hw * 0.78, deckY - r * 0.07, hw * 0.27, r * 0.05);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color;
+      break;
     }
     case UnitType.Submarine: {
-      const hw = r * 0.9, mid = cy + r * 0.22, hullH = r * 0.28;
-      ctx.beginPath(); ctx.ellipse(cx, mid, hw, hullH, 0, 0, 2 * Math.PI); ctx.fill();
-      ctx.fillStyle = '#000'; ctx.globalAlpha = 0.38;
-      const sailBaseY = mid - hullH * 0.72, sailH = r * 0.52;
-      ctx.beginPath(); ctx.moveTo(cx - hw * 0.17, sailBaseY); ctx.lineTo(cx - hw * 0.11, sailBaseY - sailH); ctx.lineTo(cx + hw * 0.13, sailBaseY - sailH); ctx.lineTo(cx + hw * 0.19, sailBaseY); ctx.closePath(); ctx.fill();
-      ctx.globalAlpha = 1; ctx.fillStyle = color; break;
+      // Submarine: smooth cigar hull sitting low (mostly submerged), large conning tower, stern planes
+      const hw = r * 0.9;
+      const mid = cy + r * 0.22;  // hull centre sits below waterline
+      const hullH = r * 0.28;
+      // Hull — smooth ellipse (cigar shape)
+      ctx.beginPath();
+      ctx.ellipse(cx, mid, hw, hullH, 0, 0, 2 * Math.PI);
+      ctx.fill();
+      // Conning tower / sail — tall trapezoid rising above hull
+      ctx.fillStyle = '#000';
+      ctx.globalAlpha = 0.38;
+      const sailBaseY = mid - hullH * 0.72;
+      const sailH = r * 0.52;
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.17, sailBaseY);
+      ctx.lineTo(cx - hw * 0.11, sailBaseY - sailH);
+      ctx.lineTo(cx + hw * 0.13, sailBaseY - sailH);
+      ctx.lineTo(cx + hw * 0.19, sailBaseY);
+      ctx.closePath();
+      ctx.fill();
+      // Periscope + scope head
+      ctx.globalAlpha = 0.42;
+      ctx.fillRect(cx + hw * 0.02, sailBaseY - sailH - r * 0.22, hw * 0.05, r * 0.22);
+      ctx.fillRect(cx + hw * 0.02, sailBaseY - sailH - r * 0.22, hw * 0.1, r * 0.03);
+      // Stern diving planes — prominent X-fins make the stern unmistakeable
+      ctx.globalAlpha = 0.34;
+      const px = cx - hw * 0.78;
+      ctx.beginPath();
+      ctx.moveTo(px + hw * 0.06, mid);
+      ctx.lineTo(px - hw * 0.08, mid - hullH * 1.55);
+      ctx.lineTo(px - hw * 0.02, mid - hullH * 1.55);
+      ctx.lineTo(px + hw * 0.1, mid - hullH * 0.18);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(px + hw * 0.06, mid);
+      ctx.lineTo(px - hw * 0.08, mid + hullH * 1.55);
+      ctx.lineTo(px - hw * 0.02, mid + hullH * 1.55);
+      ctx.lineTo(px + hw * 0.1, mid + hullH * 0.18);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color;
+      break;
     }
     case UnitType.Carrier: {
-      const hw = r * 0.96, deckY = cy - r * 0.06, wl = cy + r * 0.18, keel = cy + r * 0.42;
-      ctx.beginPath(); ctx.moveTo(cx - hw, deckY); ctx.lineTo(cx + hw * 0.84, deckY); ctx.lineTo(cx + hw, deckY + r * 0.08); ctx.lineTo(cx + hw * 0.92, keel); ctx.lineTo(cx - hw * 0.88, keel); ctx.lineTo(cx - hw, wl); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = '#000'; ctx.globalAlpha = 0.2; ctx.lineWidth = Math.max(1, size / 14);
-      ctx.beginPath(); ctx.moveTo(cx - hw, wl); ctx.lineTo(cx + hw, wl); ctx.stroke();
-      ctx.globalAlpha = 0.44; ctx.fillStyle = '#000';
-      ctx.fillRect(cx - hw * 0.06, deckY - r * 0.46, hw * 0.17, r * 0.46);
-      ctx.globalAlpha = 1; ctx.fillStyle = color; break;
+      // Aircraft carrier: extremely flat wide deck, angled flight-deck stripe, island aft, 2 planes on deck
+      const hw = r * 0.96;
+      const deckY = cy - r * 0.06;
+      const wl = cy + r * 0.18;
+      const keel = cy + r * 0.42;
+      // Hull — very flat and wide
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, deckY);
+      ctx.lineTo(cx + hw * 0.84, deckY);
+      ctx.lineTo(cx + hw, deckY + r * 0.08);
+      ctx.lineTo(cx + hw * 0.92, keel);
+      ctx.lineTo(cx - hw * 0.88, keel);
+      ctx.lineTo(cx - hw, wl);
+      ctx.closePath();
+      ctx.fill();
+      // Waterline
+      ctx.strokeStyle = '#000';
+      ctx.globalAlpha = 0.2;
+      ctx.lineWidth = Math.max(1, size / 14);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, wl);
+      ctx.lineTo(cx + hw, wl);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#000';
+      // Angled flight-deck stripe (the defining visual of a carrier)
+      ctx.globalAlpha = 0.2;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = Math.max(2, size / 9);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.55, deckY + r * 0.02);
+      ctx.lineTo(cx + hw * 0.35, deckY + r * 0.02);
+      ctx.stroke();
+      // Island superstructure — aft starboard, tiered
+      ctx.globalAlpha = 0.44;
+      ctx.fillStyle = '#000';
+      const isW = hw * 0.17;
+      const isH = r * 0.46;
+      ctx.fillRect(cx - hw * 0.06, deckY - isH, isW, isH);
+      ctx.globalAlpha = 0.5;
+      ctx.fillRect(cx - hw * 0.04, deckY - isH - r * 0.14, isW * 0.68, r * 0.14);
+      // Mast + radar arm
+      ctx.globalAlpha = 0.44;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = Math.max(1, size / 22);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.01, deckY - isH - r * 0.14);
+      ctx.lineTo(cx - hw * 0.01, deckY - isH - r * 0.35);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.1, deckY - isH - r * 0.28);
+      ctx.lineTo(cx + hw * 0.06, deckY - isH - r * 0.28);
+      ctx.stroke();
+      // Two tiny plane silhouettes on deck
+      ctx.globalAlpha = 0.24;
+      ctx.fillStyle = '#000';
+      const pr = r * 0.1;
+      for (const px of [cx + hw * 0.52, cx + hw * 0.16]) {
+        const py = deckY - r * 0.04;
+        ctx.beginPath();
+        ctx.moveTo(px, py - pr);
+        ctx.lineTo(px + pr * 0.85, py + pr * 0.28);
+        ctx.lineTo(px + pr * 0.18, py + pr * 0.08);
+        ctx.lineTo(px + pr * 0.14, py + pr);
+        ctx.lineTo(px - pr * 0.14, py + pr);
+        ctx.lineTo(px - pr * 0.18, py + pr * 0.08);
+        ctx.lineTo(px - pr * 0.85, py + pr * 0.28);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color;
+      break;
     }
     case UnitType.Battleship: {
-      const hw = r * 0.95, deckY = cy - r * 0.08, wl = cy + r * 0.22, keel = cy + r * 0.6;
-      ctx.beginPath(); ctx.moveTo(cx - hw, deckY); ctx.lineTo(cx + hw * 0.58, deckY); ctx.lineTo(cx + hw, wl); ctx.lineTo(cx + hw * 0.86, keel); ctx.lineTo(cx - hw * 0.82, keel); ctx.lineTo(cx - hw, wl); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = '#000'; ctx.globalAlpha = 0.25; ctx.lineWidth = Math.max(1, size / 13);
-      ctx.beginPath(); ctx.moveTo(cx - hw, wl); ctx.lineTo(cx + hw, wl); ctx.stroke();
-      ctx.globalAlpha = 0.38; ctx.fillStyle = '#000';
-      ctx.fillRect(cx - hw * 0.36 * 0.58, deckY - r * 0.58, hw * 0.36, r * 0.58);
-      ctx.globalAlpha = 0.44; ctx.fillStyle = '#000';
-      ctx.beginPath(); ctx.arc(cx + hw * 0.38, deckY - r * 0.05, r * 0.13, 0, 2 * Math.PI); ctx.fill();
-      ctx.fillRect(cx + hw * 0.51, deckY - r * 0.1, hw * 0.32, r * 0.04);
-      ctx.fillRect(cx + hw * 0.51, deckY - r * 0.02, hw * 0.32, r * 0.04);
-      ctx.globalAlpha = 1; ctx.fillStyle = color; break;
+      // Battleship: larger destroyer silhouette — deeper hull, taller angled bridge, twin-barrel turrets
+      const hw = r * 0.95;
+      const deckY = cy - r * 0.02;  // slightly higher deck than destroyer (more freeboard)
+      const wl = cy + r * 0.26;
+      const keel = cy + r * 0.54;   // deeper keel — heavier ship
+      // Hull — same knife-bow shape as destroyer but deeper/heavier
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, deckY + r * 0.06);   // stern top
+      ctx.lineTo(cx - hw, wl);                  // stern
+      ctx.lineTo(cx - hw * 0.78, keel);
+      ctx.lineTo(cx + hw * 0.7, keel);
+      ctx.lineTo(cx + hw, wl - r * 0.04);       // sharp bow tip
+      ctx.lineTo(cx + hw * 0.56, deckY);
+      ctx.lineTo(cx - hw * 0.9, deckY);
+      ctx.closePath();
+      ctx.fill();
+      // Waterline
+      ctx.strokeStyle = '#000';
+      ctx.globalAlpha = 0.3;
+      ctx.lineWidth = Math.max(1, size / 16);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, wl);
+      ctx.lineTo(cx + hw, wl);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#000';
+      // Angled bridge — same forward-lean as destroyer but taller/wider
+      ctx.globalAlpha = 0.38;
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.16, deckY);
+      ctx.lineTo(cx - hw * 0.18, deckY - r * 0.58);
+      ctx.lineTo(cx + hw * 0.09, deckY - r * 0.38);
+      ctx.lineTo(cx + hw * 0.09, deckY);
+      ctx.closePath();
+      ctx.fill();
+      // Tall mast with radar crossbar
+      ctx.globalAlpha = 0.44;
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = Math.max(1, size / 22);
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.06, deckY - r * 0.58);
+      ctx.lineTo(cx - hw * 0.06, deckY - r * 0.90);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - hw * 0.17, deckY - r * 0.78);
+      ctx.lineTo(cx + hw * 0.05, deckY - r * 0.78);
+      ctx.stroke();
+      // Fore turret 1 (near bow) — twin barrels
+      ctx.globalAlpha = 0.44;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(cx + hw * 0.3, deckY - r * 0.06, r * 0.12, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillRect(cx + hw * 0.42, deckY - r * 0.12, hw * 0.34, r * 0.04);
+      ctx.fillRect(cx + hw * 0.42, deckY - r * 0.03, hw * 0.34, r * 0.04);
+      // Fore turret 2 (mid-fore) — twin barrels
+      ctx.globalAlpha = 0.42;
+      ctx.beginPath();
+      ctx.arc(cx + hw * 0.08, deckY - r * 0.06, r * 0.10, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillRect(cx + hw * 0.18, deckY - r * 0.10, hw * 0.26, r * 0.04);
+      ctx.fillRect(cx + hw * 0.18, deckY - r * 0.02, hw * 0.26, r * 0.04);
+      // Aft turret — twin barrels pointing stern
+      ctx.globalAlpha = 0.42;
+      ctx.beginPath();
+      ctx.arc(cx - hw * 0.52, deckY - r * 0.05, r * 0.10, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillRect(cx - hw * 0.82, deckY - r * 0.09, hw * 0.28, r * 0.04);
+      ctx.fillRect(cx - hw * 0.82, deckY - r * 0.01, hw * 0.28, r * 0.04);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color;
+      break;
     }
   }
   ctx.restore();

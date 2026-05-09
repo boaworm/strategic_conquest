@@ -20,6 +20,7 @@ interface ReplayMeta {
   mapWidth: number;
   mapHeight: number;
   frames: number;
+  passed?: boolean;
 }
 
 interface ReplayFrame {
@@ -803,19 +804,20 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
 
       {metas.length > 0 && (
         <div className="space-y-2">
-          <div className="text-xs text-gray-500 grid grid-cols-[1fr_6rem_6rem_8rem_8rem_6rem] gap-2 px-2">
-            <span>ID</span><span>Recorded</span><span>Turns</span><span className="text-center" style={{color:COL_P1}}>P1 cities</span><span className="text-center" style={{color:COL_P2}}>P2 cities</span><span>Winner</span>
+          <div className="text-xs text-gray-500 grid grid-cols-[1fr_6rem_6rem_4rem_6rem_6rem_6rem] gap-2 px-2">
+            <span>ID</span><span>Recorded</span><span>Turns</span><span>Status</span><span className="text-center" style={{color:COL_P1}}>P1 cities</span><span className="text-center" style={{color:COL_P2}}>P2 cities</span><span>Winner</span>
           </div>
           <div className="max-h-96 overflow-y-auto space-y-1">
             {metas.map((m, idx) => (
               <button
                 key={m.id}
-                className="w-full text-left px-2 py-2 bg-gray-900 rounded hover:bg-gray-700 text-sm grid grid-cols-[1fr_6rem_6rem_8rem_8rem_6rem] gap-2 items-center"
+                className="w-full text-left px-2 py-2 bg-gray-900 rounded hover:bg-gray-700 text-sm grid grid-cols-[1fr_6rem_6rem_4rem_6rem_6rem_6rem] gap-2 items-center"
                 onClick={() => loadReplay(m.id, idx)}
               >
                 <span className="font-mono text-xs text-gray-400">{m.id.slice(0, 8)}</span>
                 <span className="text-xs text-gray-400">{m.recordedAt.slice(5, 16).replace('T', ' ')}</span>
                 <span>{m.turns}</span>
+                <span className={m.passed === false ? 'text-red-500 font-semibold' : 'text-green-500'}>{m.passed === false ? 'FAIL' : 'PASS'}</span>
                 <span className="text-center" style={{color:COL_P1}}>{m.p1Cities}</span>
                 <span className="text-center" style={{color:COL_P2}}>{m.p2Cities}</span>
                 <span className={m.winner ? 'font-semibold' : 'text-gray-500'} style={{color: m.winner === 'player1' ? COL_P1 : m.winner === 'player2' ? COL_P2 : undefined}}>
