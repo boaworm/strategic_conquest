@@ -66,16 +66,16 @@
         },
         {
           "conditions": [
+            "island_not_explored"
+          ],
+          "action": "move_to_nearest_unexplored_land_on_island"
+        },
+        {
+          "conditions": [
             "island_friendly",
             "transport_on_island"
           ],
           "action": "move_to_transport_and_board"
-        },
-        {
-          "conditions": [
-            "island_not_explored"
-          ],
-          "action": "move_to_nearest_unexplored_land_on_island"
         },
         {
           "conditions": [
@@ -132,6 +132,13 @@
       "Expand": [
         {
           "conditions": [
+            "has_cargo",
+            "at_contested_island"
+          ],
+          "action": "wait"
+        },
+        {
+          "conditions": [
             "has_active_target"
           ],
           "action": "continue_toward_target"
@@ -146,16 +153,10 @@
         {
           "conditions": [
             "no_cargo",
-            "parked_at_coastal"
+            "parked_at_coastal",
+            "at_island_with_most_armies"
           ],
           "action": "wait"
-        },
-        {
-          "conditions": [
-            "no_cargo",
-            "at_friendly_island"
-          ],
-          "action": "park_at_nearest_friendly_coastal"
         },
         {
           "conditions": [
@@ -193,7 +194,7 @@
             "no_cargo",
             "at_island_with_most_armies"
           ],
-          "action": "wait"
+          "action": "park_at_nearest_friendly_coastal"
         },
         {
           "conditions": [
