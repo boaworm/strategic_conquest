@@ -61,7 +61,7 @@ const sessionCache = new Map<string, { movement: Map<UnitType, any>; production:
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const MOVEMENT_ACTION_TYPES = ['MOVE', 'SLEEP', 'SKIP', 'LOAD', 'UNLOAD'] as const;
+const MOVEMENT_ACTION_TYPES = ['MOVE', 'SKIP'] as const;
 type MovementActionType = typeof MOVEMENT_ACTION_TYPES[number];
 
 const UNIT_TYPE_NAMES: Record<UnitType, string> = {
@@ -382,18 +382,7 @@ export class NnMoEAgent implements Agent {
       }
       return { type: 'MOVE', unitId: unit.id, to };
     }
-    if (actionType === 'SLEEP') return { type: 'SLEEP', unitId: unit.id };
-    if (actionType === 'SKIP')  return { type: 'SKIP',  unitId: unit.id };
-    if (actionType === 'LOAD') {
-      // Pick the adjacent transport that triggered the mask
-      const transport = this.findAdjacentTransportWithRoom(unit, obs);
-      if (!transport) return { type: 'SKIP', unitId: unit.id };
-      return { type: 'LOAD', unitId: unit.id, transportId: transport.id };
-    }
-    if (actionType === 'UNLOAD') {
-      const to = this.stepToward(unit.x, unit.y, tx, ty);
-      return { type: 'UNLOAD', unitId: unit.id, to };
-    }
+    if (actionType === 'SKIP') return { type: 'SKIP', unitId: unit.id };
     return { type: 'SKIP', unitId: unit.id };
   }
 
@@ -502,17 +491,14 @@ export class NnMoEAgent implements Agent {
   // ── Utilities ─────────────────────────────────────────────────────────────
 
   /**
-   * Returns a boolean mask over MOVEMENT_ACTION_TYPES [MOVE,SLEEP,SKIP,LOAD,UNLOAD].
+   * Returns a boolean mask over MOVEMENT_ACTION_TYPES [MOVE,SLEEP,SKIP].
    * false = that action is illegal for this unit right now and must be excluded.
    */
   private computeActionMask(unit: UnitView, obs: AgentObservation): boolean[] {
-    // MOVE=0, SLEEP=1, SKIP=2, LOAD=3, UNLOAD=4
-    const canLoad   = this.findAdjacentTransportWithRoom(unit, obs) !== null;
-    const canUnload = unit.type === UnitType.Transport && (unit as any).cargo?.length > 0;
-    // Only allow SKIP when the unit is physically stuck (no adjacent passable tile).
-    // This prevents the NN from idling when LOAD is masked out.
-    const canSkip   = !this.hasValidMoveTarget(unit, obs);
-    return [true, false, canSkip, canLoad, canUnload];
+    // MOVE=0, SKIP=1
+    // SKIP only when physically stuck — this also covers carried armies (no valid land move → SKIP)
+    const canSkip = !this.hasValidMoveTarget(unit, obs);
+    return [true, canSkip];
   }
 
   private hasValidMoveTarget(unit: UnitView, obs: AgentObservation): boolean {

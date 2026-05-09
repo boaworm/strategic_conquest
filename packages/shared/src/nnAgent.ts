@@ -48,8 +48,6 @@ const ACTION_TYPES = [
   'END_TURN',
   'SET_PRODUCTION',
   'MOVE',
-  'LOAD',
-  'UNLOAD',
   'SLEEP',
   'WAKE',
   'SKIP',
@@ -151,21 +149,6 @@ export class NnAgent implements Agent {
       return { type: 'SKIP', unitId: unit.id };
     }
 
-    if (actionType === 'LOAD') {
-      // Find an army and a nearby transport
-      const army = observation.myUnits.find(u => u.type === UnitType.Army && u.movesLeft > 0 && !u.carriedBy);
-      const transport = observation.myUnits.find(u => u.type === UnitType.Transport);
-      if (!army || !transport) return { type: 'END_TURN' };
-      return { type: 'LOAD', unitId: army.id, transportId: transport.id };
-    }
-
-    if (actionType === 'UNLOAD') {
-      // Find a transport with cargo
-      const transport = observation.myUnits.find(u => u.type === UnitType.Transport && u.cargo && u.cargo.length > 0);
-      if (!transport || !transport.cargo?.length) return { type: 'END_TURN' };
-      const to = this.stepToward(transport.x, transport.y, targetX, targetY);
-      return { type: 'UNLOAD', unitId: transport.cargo[0], to };
-    }
 
     return { type: 'END_TURN' };
   }

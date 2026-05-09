@@ -28,8 +28,6 @@ ACTION_TYPES = [
     "SET_PRODUCTION",
     "SLEEP",
     "SKIP",
-    "LOAD",
-    "UNLOAD",
     "WAKE",
     "END_TURN",
 ]
@@ -58,7 +56,7 @@ class GameDataset(Dataset):
     Each item returns:
       state       — float32 tensor [C, H, W]
       action_type — long scalar in [0, NUM_ACTION_TYPES)
-      target_tile — long scalar in [0, H*W), or -1 if not applicable (non-MOVE/UNLOAD)
+      target_tile — long scalar in [0, H*W), or -1 if not applicable (non-MOVE)
       prod_type   — long scalar in [0, NUM_UNIT_TYPES), or -1 if not applicable
     """
 

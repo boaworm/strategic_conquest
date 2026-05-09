@@ -140,7 +140,7 @@ export class BasicAgent implements Agent {
           const adj = this.getAdjacentLand(obs, unit);
           if (adj) {
             const cargoId = unit.cargo[0];
-            return { type: 'UNLOAD', unitId: cargoId, to: adj };
+            return { type: 'MOVE', unitId: cargoId, to: adj };
           }
           return this.moveToward(obs, unit, coastalTarget);
         }
@@ -156,7 +156,7 @@ export class BasicAgent implements Agent {
           Math.abs(u.y - unit.y) <= 1,
       );
       if (armyToLoad) {
-        return { type: 'LOAD', unitId: armyToLoad.id, transportId: unit.id };
+        return { type: 'MOVE', unitId: armyToLoad.id, to: { x: unit.x, y: unit.y } };
       }
     }
 

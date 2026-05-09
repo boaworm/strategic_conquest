@@ -4,7 +4,7 @@ MoE dataset loaders for movement experts and production expert.
 File layout (all in DATA_DIR/):
   worker-{i}-{type}.states.bin     — float32 [N, 14, H, W]
   worker-{i}-{type}.positions.bin  — int16   [N, 2]  (x, y of the acting unit)
-  worker-{i}-{type}.actions.jsonl  — {actionType, tileIdx}
+  worker-{i}-{type}.actions.bin    — uint8 action index (0=MOVE, 1=SKIP)
   worker-{i}-production.states.bin
   worker-{i}-production.cities.bin  — int16   [N, 2]
   worker-{i}-production.globals.bin — float32 [N, 28]
@@ -21,7 +21,7 @@ import torch
 from torch.utils.data import Dataset
 
 # Movement action types (must match collect_moe_worker.ts)
-MOVEMENT_ACTION_TYPES = ['MOVE', 'SLEEP', 'SKIP', 'LOAD', 'UNLOAD']
+MOVEMENT_ACTION_TYPES = ['MOVE', 'SKIP']
 MOVEMENT_ACTION_TO_IDX = {a: i for i, a in enumerate(MOVEMENT_ACTION_TYPES)}
 NUM_MOVEMENT_ACTIONS = len(MOVEMENT_ACTION_TYPES)
 
@@ -48,7 +48,7 @@ class MovementDataset(Dataset):
     Each item:
       state       — float32 [15, H, W]  (14 base channels + unit marker channel)
       action_type — long scalar in [0, NUM_MOVEMENT_ACTIONS)
-      target_tile — long scalar in [0, H*W), or -1 if not a MOVE/UNLOAD action
+      target_tile — long scalar in [0, H*W), or -1 if not a MOVE action
     """
 
     def __init__(self, data_dir: str, unit_type: str, file_idx: int | None = None):

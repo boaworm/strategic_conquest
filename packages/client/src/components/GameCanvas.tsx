@@ -1991,7 +1991,7 @@ export function GameCanvas({ view, onCityClick, selectedCityId }: Props) {
         if (dx === 0 && dy === 0) return;
 
         if (unit.carriedBy && dx <= 1 && dy <= 1) {
-          sendAction({ type: 'UNLOAD', unitId: selectedUnitId, to: { x: tx, y: ty } });
+          sendAction({ type: 'MOVE', unitId: selectedUnitId, to: { x: tx, y: ty } });
           return;
         }
 

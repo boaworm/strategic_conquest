@@ -19,8 +19,6 @@ export interface AgentObservation {
 export type AgentAction =
   | { type: 'MOVE'; unitId: string; to: Coord }
   | { type: 'SET_PRODUCTION'; cityId: string; unitType: UnitType }
-  | { type: 'LOAD'; unitId: string; transportId: string }
-  | { type: 'UNLOAD'; unitId: string; to: Coord }
   | { type: 'SLEEP'; unitId: string }
   | { type: 'WAKE'; unitId: string }
   | { type: 'SKIP'; unitId: string }

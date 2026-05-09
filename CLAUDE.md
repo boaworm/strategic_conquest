@@ -199,7 +199,7 @@ Key files:
 The map is cylindrical: X wraps (use `wrapX(x, mapW)` and `wrappedDistX(a, b, mapW)` for all X-axis math), Y does not. Ice caps at `y=0` and `y=mapHeight-1` are impassable. Playable rows are `1..mapHeight-2`.
 
 ### Turn flow
-A player takes multiple actions (MOVE, SET_PRODUCTION, LOAD, UNLOAD, SLEEP, WAKE, SKIP) then emits `END_TURN`. The server advances `currentPlayer`, resets `movesLeft` for all units of the new player, and broadcasts a fresh `stateUpdate`.
+A player takes multiple actions (MOVE, SET_PRODUCTION, SLEEP, WAKE, SKIP) then emits `END_TURN`. The server advances `currentPlayer`, resets `movesLeft` for all units of the new player, and broadcasts a fresh `stateUpdate`.
 
 ### Fog of war
 `getPlayerView(state, playerId)` computes what one player can see. `explored` (a `Set<"x,y">`) persists across turns. `seenEnemies` resets each turn. Units outside vision radius are hidden.

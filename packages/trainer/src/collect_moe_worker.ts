@@ -29,7 +29,7 @@ const MAX_PER_BUCKET       = Math.max(50, Math.floor(MAX_SAMPLES_PER_GAME / 9));
 const PROD_SAMPLE_MULTIPLIER = parseInt(process.env.PROD_SAMPLE_MULTIPLIER ?? '3');
 const MAX_PER_PROD_BUCKET    = prodOnly ? Infinity : MAX_PER_BUCKET * PROD_SAMPLE_MULTIPLIER;
 
-const MOVEMENT_ACTION_TO_IDX: Record<string, number> = { MOVE: 0, SLEEP: 1, SKIP: 2, LOAD: 3, UNLOAD: 4 };
+const MOVEMENT_ACTION_TO_IDX: Record<string, number> = { MOVE: 0, SKIP: 1 };
 const UNIT_TYPE_NAMES = ['army', 'fighter', 'missile', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'] as const;
 const UNIT_TYPE_TO_IDX: Record<string, number> = { army: 0, fighter: 1, missile: 2, transport: 3, destroyer: 4, submarine: 5, carrier: 6, battleship: 7 };
 
@@ -209,10 +209,10 @@ while (true) {
 
     if (pid === 'player1') {
       const tensor = playerViewToTensor(view);
-      if (!prodOnly && (action.type === 'MOVE' || action.type === 'SLEEP' || action.type === 'SKIP' || action.type === 'LOAD' || action.type === 'UNLOAD')) {
+      if (!prodOnly && (action.type === 'MOVE' || action.type === 'SKIP')) {
         const unit = view.myUnits.find((u: any) => u.id === (action as any).unitId);
         if (unit && (!unitTypeFilter || unit.type === unitTypeFilter) && gameCounts[unit.type] < MAX_PER_BUCKET) {
-          const tileIdx = (action.type === 'MOVE' || action.type === 'UNLOAD') ? ((action as any).to.y * state.mapWidth + (action as any).to.x) : -1;
+          const tileIdx = action.type === 'MOVE' ? ((action as any).to.y * state.mapWidth + (action as any).to.x) : -1;
           const isCarried = unit.type === 'army' && unit.carriedBy != null;
           const cargoCount = unit.type === 'transport' ? (unit.cargo?.length ?? 0) : 0;
           saveMovementSample(unit.type, tensor, unit.x, unit.y, action.type, tileIdx, isCarried, cargoCount);

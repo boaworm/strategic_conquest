@@ -41,9 +41,8 @@ One model per unit type: `army`, `fighter`, `missile`, `transport`, `destroyer`,
 - Channel 14: army carried-by-transport flag — 1.0 if this army is currently aboard a transport, 0 otherwise (army model only; 0 for all other unit types)
 
 **Output heads:**
-- `action_type` — logits over `[MOVE, SLEEP, SKIP, LOAD, UNLOAD]` (only the subset
-  valid for the unit type is used at inference; invalid actions are masked to −∞)
-- `target_tile` — logits over H×W (used when action_type = MOVE or UNLOAD)
+- `action_type` — logits over `[MOVE, SKIP]` (invalid actions are masked to −∞)
+- `target_tile` — logits over H×W (used when action_type = MOVE)
 
 **Backbone:** 3 conv layers with cylindrical X-padding, BatchNorm, ReLU; action head via global-avg-pool → MLP; tile head via 1×1 conv.
 

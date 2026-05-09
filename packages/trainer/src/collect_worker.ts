@@ -88,7 +88,7 @@ for (let gameNumber = gameStart; gameNumber <= gameEnd; gameNumber++) {
 
     // Encode action as int8 (0-7) and tileIdx as int32
     const actionType = encodeActionType(action.type);
-    const tileIdx = (action.type === 'MOVE' || action.type === 'UNLOAD')
+    const tileIdx = action.type === 'MOVE'
       ? ((action as any).to.y * state.mapWidth + (action as any).to.x)
       : -1;
 
@@ -190,8 +190,6 @@ function encodeActionType(type: string): number {
     case 'SET_PRODUCTION':return 1;
     case 'SLEEP':         return 2;
     case 'SKIP':          return 3;
-    case 'LOAD':          return 4;
-    case 'UNLOAD':        return 5;
     case 'WAKE':          return 6;
     case 'END_TURN':      return 7;
     default:              return 3; // SKIP as default

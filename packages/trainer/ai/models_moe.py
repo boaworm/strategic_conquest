@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 NUM_BASE_CHANNELS    = 13  # fillViewTensor output (channels 0–12); caller adds ch13+ markers
-NUM_MOVEMENT_ACTIONS = 5   # MOVE, SLEEP, SKIP, LOAD, UNLOAD
+NUM_MOVEMENT_ACTIONS = 3   # MOVE, SLEEP, SKIP
 NUM_UNIT_TYPES       = 8   # army … battleship
 NUM_GLOBAL           = 28  # production expert global feature vector length
 

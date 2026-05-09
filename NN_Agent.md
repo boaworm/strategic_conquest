@@ -64,8 +64,6 @@ Actions are discrete classifications:
 | `END_TURN` | Finish all actions |
 | `SET_PRODUCTION` | Set city production (requires city ID + unit type) |
 | `MOVE` | Move unit (requires unit ID + destination coordinates) |
-| `LOAD` | Load army onto transport (requires unit ID + transport ID) |
-| `UNLOAD` | Unload cargo (requires unit ID + destination coordinates) |
 | `SLEEP` | Sleep unit until woken |
 | `WAKE` | Wake sleeping unit |
 | `SKIP` | Skip this unit for now |
@@ -118,8 +116,7 @@ Specialized experts for different decision types:
 | **CityProductionExpert** | City state + context | Unit type distribution | City production |
 | **UnitMovementExpert** | Unit state + visible map | Move destination | Unit movement |
 | **CombatTargetExpert** | Unit state + enemies | Target selection | Combat decisions |
-| **TransportLoadExpert** | Transport state | Cargo assignment | Loading decisions |
-| **TransportUnloadExpert** | Transport state | Unload location | Unloading decisions |
+| **TransportLoadExpert** | Transport state | Cargo assignment | Loading decisions (via MOVE to transport tile) |
 
 **Pros**:
 - Specialized learning per task

@@ -197,12 +197,6 @@ function logAction(prefix: string, action: AgentAction, view: any) {
       log(`${prefix} | → SET_PRODUCTION city (${city?.x ?? '?'},${city?.y ?? '?'}): ${change}`);
       break;
     }
-    case 'LOAD':
-      log(`${prefix} | → LOAD unit ${action.unitId} onto transport ${action.transportId}`);
-      break;
-    case 'UNLOAD':
-      log(`${prefix} | → UNLOAD unit ${action.unitId} to (${action.to.x},${action.to.y})`);
-      break;
     case 'END_TURN':
       log(`${prefix} | → END_TURN`);
       break;

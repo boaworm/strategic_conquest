@@ -62,13 +62,13 @@ def analyze_replay(replay, player="player1", unit_types=None):
 
     loads = 0
     unloads = 0
-    idle_cycles = 0      # LOAD+UNLOAD at same tile within 3 turns
+    idle_cycles = 0      # embark+disembark at same tile within 3 turns
     stranded = 0         # transport with cargo, no movement for 5+ turns
 
     cross_island_armies = set()   # army ids that reached a new island
     transport_events = []         # (turn, transport_id, event, detail)
 
-    # For idle cycle detection: track last LOAD position per army
+    # For idle cycle detection: track last embark position per army
     last_load_pos = {}
 
     # For stranded detection: transport_id -> (turns_since_moved, has_cargo)
@@ -106,15 +106,15 @@ def analyze_replay(replay, player="player1", unit_types=None):
                 cb_prev = prev.get("carriedBy")
 
                 if cb_prev is None and cb_now is not None:
-                    # LOAD
+                    # Embarked onto transport (MOVE to transport tile)
                     loads += 1
-                    action_counts["LOAD"] += 1
+                    action_counts["EMBARK"] += 1
                     last_load_pos[uid] = (u["x"], u["y"])
 
                 elif cb_prev is not None and cb_now is None:
-                    # UNLOAD / disembark
+                    # Disembarked (MOVE from transport to land)
                     unloads += 1
-                    action_counts["UNLOAD"] += 1
+                    action_counts["DISEMBARK"] += 1
 
                     # Idle cycle: unloaded at same pos as loaded
                     lp = last_load_pos.get(uid)
@@ -143,9 +143,9 @@ def analyze_replay(replay, player="player1", unit_types=None):
                     loaded = cargo_now - cargo_prev
                     unloaded_cargo = cargo_prev - cargo_now
                     if loaded:
-                        transport_events.append((turn, uid, "LOADED", f"{len(loaded)} armies at ({u['x']},{u['y']})"))
+                        transport_events.append((turn, uid, "EMBARKED", f"{len(loaded)} armies at ({u['x']},{u['y']})"))
                     if unloaded_cargo:
-                        transport_events.append((turn, uid, "UNLOADED", f"{len(unloaded_cargo)} armies at ({u['x']},{u['y']})"))
+                        transport_events.append((turn, uid, "DISEMBARKED", f"{len(unloaded_cargo)} armies at ({u['x']},{u['y']})"))
 
                 if moved:
                     transport_events.append((turn, uid, "MOVE", f"({prev['x']},{prev['y']})->({u['x']},{u['y']}) cargo={len(cargo_now)}"))
@@ -182,13 +182,13 @@ def analyze_replay(replay, player="player1", unit_types=None):
 
 
 def print_summary(results):
-    print(f"\n{'Game':>4}  {'Turns':>5}  {'Winner':<8}  {'P1Cities':>8}  {'P2Cities':>8}  {'Trans':>5}  {'Loads':>5}  {'Unloads':>7}  {'IdleCycles':>10}  {'CrossIsland':>11}")
-    print("-" * 105)
+    print(f"\n{'Game':>4}  {'Turns':>5}  {'Winner':<8}  {'P1Cities':>8}  {'P2Cities':>8}  {'Trans':>5}  {'Embarks':>7}  {'Disembarks':>10}  {'IdleCycles':>10}  {'CrossIsland':>11}")
+    print("-" * 110)
     for r in results:
         m = r["meta"]
         winner = str(m.get("winner") or "draw")[:8]
         print(f"{m.get('gameNum', '?'):>4}  {m['turns']:>5}  {winner:<8}  {m['p1Cities']:>8}  {m['p2Cities']:>8}  "
-              f"{r['transport_count']:>5}  {r['loads']:>5}  {r['unloads']:>7}  {r['idle_cycles']:>10}  {r['cross_island_armies']:>11}")
+              f"{r['transport_count']:>5}  {r['loads']:>7}  {r['unloads']:>10}  {r['idle_cycles']:>10}  {r['cross_island_armies']:>11}")
 
 
 def print_transport_events(results, max_per_game=30):
@@ -206,16 +206,16 @@ def print_transport_events(results, max_per_game=30):
 
 
 def print_action_counts(results):
-    print(f"\n{'Game':>4}  {'MOVE':>6}  {'LOAD':>6}  {'UNLOAD':>7}  {'SLEEP':>6}  {'SKIP':>6}")
-    print("-" * 50)
+    print(f"\n{'Game':>4}  {'MOVE':>6}  {'EMBARK':>7}  {'DISEMBARK':>10}  {'SLEEP':>6}  {'SKIP':>6}")
+    print("-" * 55)
     for r in results:
         m = r["meta"]
         ac = r["action_counts"]
-        print(f"{m.get('gameNum', '?'):>4}  {ac.get('MOVE', 0):>6}  {ac.get('LOAD', 0):>6}  "
-              f"{ac.get('UNLOAD', 0):>7}  {ac.get('SLEEP', 0):>6}  {ac.get('SKIP', 0):>6}")
+        print(f"{m.get('gameNum', '?'):>4}  {ac.get('MOVE', 0):>6}  {ac.get('EMBARK', 0):>7}  "
+              f"{ac.get('DISEMBARK', 0):>10}  {ac.get('SLEEP', 0):>6}  {ac.get('SKIP', 0):>6}")
 
 
-def extract_moves(replay, player_num=1, turn_range=None, unit_types=None):
+def extract_moves(replay, player_num=1, turn_range=None, unit_types=None, unit_id=None):
     """
     Extract per-action records for a player across specified turns.
 
@@ -257,6 +257,8 @@ def extract_moves(replay, player_num=1, turn_range=None, unit_types=None):
                 uid = proposed.get("unitId") or applied.get("unitId")
                 unit = units_by_id.get(uid) if uid else None
 
+                if unit_id and uid != unit_id:
+                    continue
                 if unit_types:
                     if unit is None or unit["type"] not in unit_types:
                         continue
@@ -276,6 +278,8 @@ def extract_moves(replay, player_num=1, turn_range=None, unit_types=None):
         else:
             # Old replay without action logs — one stub record per unit
             for uid, unit in units_by_id.items():
+                if unit_id and uid != unit_id:
+                    continue
                 if unit_types and unit["type"] not in unit_types:
                     continue
                 moves.append({
@@ -298,6 +302,7 @@ def main():
     parser.add_argument("replay_dir", nargs="?", help="Directory containing replay .json files")
     parser.add_argument("--player", type=int, default=1, help="Player number to analyze (1 or 2, default: 1)")
     parser.add_argument("--unit-type", type=str, default=None, help="Comma-separated list of unit types to filter (e.g., army,transport)")
+    parser.add_argument("--unit-id", type=str, default=None, help="Filter to a specific unit ID (e.g., unit_20)")
     parser.add_argument("--events", action="store_true", help="Print transport event timelines")
     parser.add_argument("--extractMoves", action="store_true", help="Extract moves as JSON output")
     parser.add_argument("--game", type=str, default=None, help="Specific game UUID to analyze")
@@ -313,6 +318,7 @@ def main():
         replay_dir = Path(args.replay_dir)
         turn_range = parse_turn_range(args.turns) if args.turns else None
         unit_types = set(args.unit_type.split(",")) if args.unit_type else None
+        unit_id = args.unit_id
 
         # Find the specific game if --game is provided
         if args.game:
@@ -321,7 +327,7 @@ def main():
                 print(f"Error: Game not found: {args.game}", file=sys.stderr)
                 sys.exit(1)
             replay = load_replay(game_path)
-            moves = extract_moves(replay, player_num=args.player, turn_range=turn_range, unit_types=unit_types)
+            moves = extract_moves(replay, player_num=args.player, turn_range=turn_range, unit_types=unit_types, unit_id=unit_id)
             print(json.dumps(moves, indent=2))
         else:
             # Process all games
@@ -333,7 +339,7 @@ def main():
 
             for path in paths:
                 replay = load_replay(path)
-                moves = extract_moves(replay, player_num=args.player, turn_range=turn_range, unit_types=unit_types)
+                moves = extract_moves(replay, player_num=args.player, turn_range=turn_range, unit_types=unit_types, unit_id=unit_id)
                 for m in moves:
                     m["game_id"] = path.stem
                 all_moves.extend(moves)
@@ -377,9 +383,9 @@ def main():
     total_stranded = sum(r["stranded_events"] for r in results)
 
     print(f"\n=== Totals across {len(results)} games ===")
-    print(f"  Loads:              {total_loads}")
-    print(f"  Unloads:            {total_unloads}")
-    print(f"  Idle cycles:        {total_idle}  (LOAD+UNLOAD at same tile)")
+    print(f"  Embarks:            {total_loads}")
+    print(f"  Disembarks:         {total_unloads}")
+    print(f"  Idle cycles:        {total_idle}  (embark+disembark at same tile)")
     print(f"  Stranded events:    {total_stranded}  (transport with cargo, no movement 5+ turns)")
     print(f"  Cross-island armies:{total_cross}  (armies that reached a new island)")
 

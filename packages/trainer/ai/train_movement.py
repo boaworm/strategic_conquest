@@ -38,6 +38,12 @@ def train(args):
     file_label = f"file {args.file_idx + 1}" if args.file_idx is not None else "all files"
     print(f"Loaded {len(dataset):,} samples for '{args.unit_type}' ({file_label})")
 
+    # Inverse-frequency class weights so rare actions get equal gradient weight
+    counts = torch.bincount(torch.from_numpy(dataset.action_types), minlength=NUM_MOVEMENT_ACTIONS).float()
+    counts = counts.clamp(min=1)
+    class_weights = (counts.sum() / (NUM_MOVEMENT_ACTIONS * counts)).to(device)
+    print(f"Action class weights: { {MOVEMENT_ACTION_TYPES[i]: f'{class_weights[i].item():.2f}' for i in range(NUM_MOVEMENT_ACTIONS)} }")
+
     val_n   = max(1, int(len(dataset) * 0.1))
     train_n = len(dataset) - val_n
     train_ds, val_ds = random_split(dataset, [train_n, val_n],
@@ -79,11 +85,11 @@ def train(args):
 
             out = model(states)
 
-            # Action type loss
-            loss_at = F.cross_entropy(out['action_type'], action_types)
+            # Action type loss (inverse-frequency weighted so rare actions aren't drowned out)
+            loss_at = F.cross_entropy(out['action_type'], action_types, weight=class_weights)
 
-            # Tile loss — only for MOVE (idx=0) and UNLOAD (idx=4) with valid tile
-            move_mask = ((action_types == 0) | (action_types == 4)) & (tile_idxs >= 0)
+            # Tile loss — only for MOVE (idx=0) with valid tile
+            move_mask = (action_types == 0) & (tile_idxs >= 0)
             if move_mask.any():
                 loss_tile = F.cross_entropy(out['target_tile'][move_mask], tile_idxs[move_mask])
             else:

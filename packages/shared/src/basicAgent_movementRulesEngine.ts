@@ -368,7 +368,7 @@ function buildActionResolvers(): Map<string, ActionResolver> {
   a.set('move_to_transport_and_board', (ctx) => {
     // If adjacent to a transport, load immediately
     const adj = ctx.map.findAdjacentTransportWithRoom(ctx.unit, ctx.obs);
-    if (adj) return { type: 'LOAD', unitId: ctx.unit.id, transportId: adj.id };
+    if (adj) return { type: 'MOVE', unitId: ctx.unit.id, to: { x: adj.x, y: adj.y } };
     // Otherwise move toward the nearest transport on this island
     const transport = ctx.map.findTransportOnIsland(ctx.unit, ctx.obs);
     if (!transport) return null;

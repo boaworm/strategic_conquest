@@ -47,7 +47,7 @@ Eliminate all enemy cities and units. The last player with cities standing wins.
 - **Sleep**: unit stays put, skips future turns until woken
 - **Wake**: wake a sleeping unit
 - **Skip**: defer this unit for now
-- **Load / Unload**: armies board/disembark transports
+- **Embark / Disembark**: armies board transports by moving onto them; they disembark by moving off to an adjacent land tile
 - **End Turn**: finish all actions
 
 ---
@@ -281,8 +281,6 @@ export interface AgentObservation {
 export type AgentAction =
   | { type: 'MOVE';            unitId: string; to: Coord }
   | { type: 'SET_PRODUCTION';  cityId: string; unitType: UnitType }
-  | { type: 'LOAD';            unitId: string; transportId: string }
-  | { type: 'UNLOAD';          unitId: string; to: Coord }
   | { type: 'SLEEP';           unitId: string }
   | { type: 'WAKE';            unitId: string }
   | { type: 'SKIP';            unitId: string }
@@ -512,6 +510,9 @@ python3 packages/trainer/ai/analyze_replays.py tmp/replays/ --extractMoves --pla
 
 # Filter by unit type
 python3 packages/trainer/ai/analyze_replays.py tmp/replays/ --extractMoves --player 1 --unit-type army,transport --turns 18:20 --game <uuid>
+
+# Filter by specific unit ID
+python3 packages/trainer/ai/analyze_replays.py tmp/replays/ --extractMoves --player 1 --unit-id unit_20 --turns 18:20 --game <uuid>
 ```
 
 **Flags:**
@@ -523,8 +524,9 @@ python3 packages/trainer/ai/analyze_replays.py tmp/replays/ --extractMoves --pla
 | `--turns <start:end>` | Turn range (inclusive, e.g., 18:20) |
 | `--game <uuid>` | Specific game UUID (required for single-game extraction) |
 | `--unit-type <a,b,c>` | Comma-separated list of unit types to filter (e.g., `army,transport`) |
+| `--unit-id <id>` | Filter to a specific unit ID (e.g., `unit_20`) |
 
-Output includes: turn, unit_id, unit_type, position, island, carried_by, cargo, action_attempted
+**Output fields:** turn, unit_id, unit_type, position, island, carried_by, cargo, proposed, applied
 
 ---
 
