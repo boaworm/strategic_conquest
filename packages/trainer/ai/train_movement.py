@@ -35,7 +35,7 @@ def train(args):
     print(f"Device: {device}  Unit type: {args.unit_type}")
 
     dataset = MovementDataset(args.data_dir, args.unit_type, file_idx=args.file_idx)
-    file_label = f"file {args.file_idx}" if args.file_idx is not None else "all files"
+    file_label = f"file {args.file_idx + 1}" if args.file_idx is not None else "all files"
     print(f"Loaded {len(dataset):,} samples for '{args.unit_type}' ({file_label})")
 
     val_n   = max(1, int(len(dataset) * 0.1))

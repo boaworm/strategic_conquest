@@ -22,7 +22,7 @@ cd packages/trainer/ai
 for UNIT_TYPE in army fighter missile transport destroyer submarine carrier battleship; do
   echo "=== Training movement expert: $UNIT_TYPE ==="
   for FILE_IDX in $(seq 0 $((NUM_FILES - 1))); do
-    echo "--- $UNIT_TYPE file $FILE_IDX/$((NUM_FILES - 1)) ---"
+    echo "--- $UNIT_TYPE file $((FILE_IDX + 1))/$NUM_FILES ---"
     python -u train_movement.py \
       --unit-type "$UNIT_TYPE" \
       --data-dir  "$DATA_DIR" \
@@ -35,7 +35,7 @@ done
 
 echo "=== Training production expert ==="
 for FILE_IDX in $(seq 0 $((NUM_FILES - 1))); do
-  echo "--- production file $FILE_IDX/$((NUM_FILES - 1)) ---"
+  echo "--- production file $((FILE_IDX + 1))/$NUM_FILES ---"
   python -u train_production.py \
     --data-dir "$DATA_DIR" \
     --out-dir  "$OUT_DIR" \

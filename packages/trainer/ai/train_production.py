@@ -35,7 +35,7 @@ def train(args):
     print(f"Device: {device}  Task: production expert")
 
     dataset = ProductionDataset(args.data_dir, file_idx=args.file_idx)
-    file_label = f"file {args.file_idx}" if args.file_idx is not None else "all files"
+    file_label = f"file {args.file_idx + 1}" if args.file_idx is not None else "all files"
     print(f"Loaded {len(dataset):,} production samples ({file_label})")
 
     val_n   = max(1, int(len(dataset) * 0.1))

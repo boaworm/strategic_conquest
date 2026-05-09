@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "profile": "npx tsx src/profile_game.ts"
+    "profile": "node src/profile_game.ts"
   },
   "dependencies": {
     "@sc/shared": "*"
