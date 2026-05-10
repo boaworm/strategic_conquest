@@ -36,7 +36,7 @@ Eliminate all enemy cities and units. The last player with cities standing wins.
 - Captured cities reset production
 
 ### Turn Structure
-1. Player moves all units (or skips/sleeps them)
+1. Player moves all units (or skips them)
 2. Cities advance their production counters
 3. Newly produced units appear in their city
 4. AI takes its turn
@@ -44,8 +44,6 @@ Eliminate all enemy cities and units. The last player with cities standing wins.
 
 ### Unit Commands
 - **Move**: click destination or use directional input
-- **Sleep**: unit stays put, skips future turns until woken
-- **Wake**: wake a sleeping unit
 - **Skip**: defer this unit for now
 - **Embark / Disembark**: armies board transports by moving onto them; they disembark by moving off to an adjacent land tile
 - **End Turn**: finish all actions
@@ -281,8 +279,6 @@ export interface AgentObservation {
 export type AgentAction =
   | { type: 'MOVE';            unitId: string; to: Coord }
   | { type: 'SET_PRODUCTION';  cityId: string; unitType: UnitType }
-  | { type: 'SLEEP';           unitId: string }
-  | { type: 'WAKE';            unitId: string }
   | { type: 'SKIP';            unitId: string }
   | { type: 'END_TURN' };
 
@@ -609,7 +605,7 @@ VERBOSE=1 npm start     # alternative env-var form
 npm run dev             # build and start with hot-reload
 ```
 
-`--verbose` enables per-action `[AI]` log lines (unit moves, city production, SKIP/SLEEP/WAKE, END_TURN). Without it the server is silent except for errors.
+`--verbose` enables per-action `[AI]` log lines (unit moves, city production, SKIP, END_TURN). Without it the server is silent except for errors.
 
 ---
 

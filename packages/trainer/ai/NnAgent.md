@@ -416,10 +416,7 @@ grep -c "Draw" *.log
 | `END_TURN` | Finish all actions |
 | `SET_PRODUCTION` | Set city production (requires city ID + unit type) |
 | `MOVE` | Move unit (requires unit ID + destination) |
-| `SLEEP` | Sleep unit |
-| `WAKE` | Wake sleeping unit |
 | `SKIP` | Skip this unit |
-| `DISBAND` | Disband unit (not yet implemented) |
 
 ---
 

@@ -108,10 +108,10 @@ Phase 1 — Production (end of turn):
     apply SET_PRODUCTION
 
 Pass 1 — Free armies → sea units → air units:
-  For each unit (movesLeft > 0, not sleeping, not carriedBy):
+  For each unit (movesLeft > 0, not carriedBy):
     action = movementExperts[unit.type].act(mapTensor + unitMarkerChannel)
     apply action
-    if SLEEP or SKIP: move on to next unit
+    if SKIP: move on to next unit
     loop until unit.movesLeft == 0
 
 Pass 2 — Carried armies (disembark after transports have moved):

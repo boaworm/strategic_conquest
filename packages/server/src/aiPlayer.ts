@@ -121,20 +121,13 @@ async function triggerAITurn(
 
   // Log current unit status
   const activeUnits = (view.myUnits as any[]).filter(
-    (u: any) => !u.sleeping && u.movesLeft > 0 && u.carriedBy === null,
+    (u: any) => u.movesLeft > 0 && u.carriedBy === null,
   );
   for (const u of activeUnits) {
     const stats = UNIT_STATS[u.type as keyof typeof UNIT_STATS];
     log(
       `${prefix} | Unit ${u.type} (${u.id}) at (${u.x},${u.y}) — moves ${u.movesLeft}/${stats.movesPerTurn}`,
     );
-  }
-
-  const sleepingUnits = (view.myUnits as any[]).filter(
-    (u: any) => u.sleeping && u.movesLeft > 0 && u.carriedBy === null,
-  );
-  for (const u of sleepingUnits) {
-    log(`${prefix} | Unit ${u.type} (${u.id}) at (${u.x},${u.y}) — sleeping, will wake`);
   }
 
   // Log city production status
@@ -177,16 +170,6 @@ function logAction(prefix: string, action: AgentAction, view: any) {
     case 'SKIP': {
       const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
       log(`${prefix} | → SKIP ${unit?.type ?? action.unitId} (stuck — no valid moves)`);
-      break;
-    }
-    case 'SLEEP': {
-      const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
-      log(`${prefix} | → SLEEP ${unit?.type ?? action.unitId}`);
-      break;
-    }
-    case 'WAKE': {
-      const unit = (view.myUnits as any[]).find((u: any) => u.id === action.unitId);
-      log(`${prefix} | → WAKE ${unit?.type ?? action.unitId}`);
       break;
     }
     case 'SET_PRODUCTION': {

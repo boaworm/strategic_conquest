@@ -48,8 +48,6 @@ const ACTION_TYPES = [
   'END_TURN',
   'SET_PRODUCTION',
   'MOVE',
-  'SLEEP',
-  'WAKE',
   'SKIP',
 ] as const;
 
@@ -131,18 +129,6 @@ export class NnAgent implements Agent {
       return { type: 'SET_PRODUCTION', cityId: city.id, unitType };
     }
 
-    if (actionType === 'SLEEP') {
-      const unit = this.selectUnitClosestTo(observation, targetX, targetY);
-      if (!unit) return { type: 'END_TURN' };
-      return { type: 'SLEEP', unitId: unit.id };
-    }
-
-    if (actionType === 'WAKE') {
-      const sleepingUnit = observation.myUnits.find(u => u.sleeping && !u.carriedBy);
-      if (!sleepingUnit) return { type: 'END_TURN' };
-      return { type: 'WAKE', unitId: sleepingUnit.id };
-    }
-
     if (actionType === 'SKIP') {
       const unit = this.selectUnitClosestTo(observation, targetX, targetY);
       if (!unit) return { type: 'END_TURN' };
@@ -169,7 +155,7 @@ export class NnAgent implements Agent {
    * Find the moveable unit closest to (tx, ty), accounting for cylindrical X wrapping.
    */
   private selectUnitClosestTo(obs: AgentObservation, tx: number, ty: number): AgentObservation['myUnits'][0] | undefined {
-    const candidates = obs.myUnits.filter(u => u.movesLeft > 0 && !u.sleeping && !u.carriedBy);
+    const candidates = obs.myUnits.filter(u => u.movesLeft > 0 && !u.carriedBy);
     if (candidates.length === 0) return undefined;
     return candidates.reduce((best, u) => {
       const dx = wrappedDistX(u.x, tx, this.mapWidth);

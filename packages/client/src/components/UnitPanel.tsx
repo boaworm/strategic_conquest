@@ -57,25 +57,9 @@ export function UnitPanel() {
             {selected.cargo.length > 0 && (
               <div>Cargo: {selected.cargo.length}/{selectedStats.cargoCapacity}</div>
             )}
-            {selected.sleeping && <div className="text-yellow-400">Sleeping</div>}
             {selected.hasAttacked && <div className="text-orange-400">Attacked</div>}
           </div>
           <div className="flex gap-1 flex-wrap mt-1">
-            {selected.sleeping ? (
-              <button
-                className="px-2 py-1 bg-green-700 rounded text-xs hover:bg-green-600"
-                onClick={() => sendAction({ type: 'WAKE', unitId: selected.id })}
-              >
-                Wake
-              </button>
-            ) : (
-              <button
-                className="px-2 py-1 bg-yellow-700 rounded text-xs hover:bg-yellow-600"
-                onClick={() => sendAction({ type: 'SLEEP', unitId: selected.id })}
-              >
-                Sleep
-              </button>
-            )}
             <button
               className="px-2 py-1 bg-gray-600 rounded text-xs hover:bg-gray-500"
               onClick={() => selectUnit(null)}
@@ -124,7 +108,7 @@ export function UnitPanel() {
             if (!addedIds.has(u.id)) sorted.push(u);
           }
           return sorted.map((u) => {
-            const canAct = u.movesLeft > 0 && !u.sleeping;
+            const canAct = u.movesLeft > 0;
             const carried = u.carriedBy !== null;
             return (
               <button

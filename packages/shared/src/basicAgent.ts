@@ -162,10 +162,6 @@ export class BasicAgent implements Agent {
     const pass1 = [...obs.myUnits].sort((a, b) => pass1Order(a) - pass1Order(b));
     for (const unit of pass1) {
       if (unit.carriedBy !== null) continue; // skip carried units in pass 1
-      if (unit.sleeping) {
-        if (unit.movesLeft > 0) return { type: 'WAKE', unitId: unit.id };
-        continue;
-      }
       if (unit.movesLeft <= 0) continue;
       if (unit.hasAttacked) continue;
 

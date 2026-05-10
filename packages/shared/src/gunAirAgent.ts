@@ -81,7 +81,7 @@ export class GunAirAgent implements Agent {
 
     // ── 2. Move each army one step in a random legal direction ────────────
     const armies = obs.myUnits.filter(
-      (u) => u.type === UnitType.Army && u.movesLeft > 0 && u.carriedBy === null && !u.sleeping,
+      (u) => u.type === UnitType.Army && u.movesLeft > 0 && u.carriedBy === null,
     );
 
     for (const army of armies) {

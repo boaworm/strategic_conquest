@@ -311,8 +311,6 @@ export interface PlayerView {
 export type GameAction =
   | { type: 'MOVE'; unitId: string; to: Coord }
   | { type: 'SET_PRODUCTION'; cityId: string; unitType: UnitType | null }
-  | { type: 'SLEEP'; unitId: string }
-  | { type: 'WAKE'; unitId: string }
   | { type: 'SKIP'; unitId: string }
   | { type: 'DISBAND'; unitId: string }
   | { type: 'END_TURN' };

@@ -278,17 +278,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (get().autoSelectNext && view.currentPlayer === pid) {
         const selId = get().selectedUnitId;
         const selUnit = selId ? view.myUnits.find((u) => u.id === selId) : null;
-        const needNext = !selUnit || selUnit.movesLeft <= 0 || selUnit.sleeping ||
+        const needNext = !selUnit || selUnit.movesLeft <= 0 ||
           (selUnit.carriedBy !== null && selUnit.type === UnitType.Army && !carriedNearLand(selUnit, view));
         if (needNext) {
           // Prefer uncarried moveable units; then fighters on carriers; then transport with disembarkable army
           const next = view.myUnits.find(
-            (u) => u.movesLeft > 0 && !u.sleeping && u.carriedBy === null,
+            (u) => u.movesLeft > 0 && u.carriedBy === null,
           ) ?? view.myUnits.find(
-            (u) => u.movesLeft > 0 && !u.sleeping && u.carriedBy !== null && u.type === UnitType.Fighter,
+            (u) => u.movesLeft > 0 && u.carriedBy !== null && u.type === UnitType.Fighter,
           ) ?? (() => {
             const carriedArmy = view.myUnits.find(
-              (u) => u.movesLeft > 0 && !u.sleeping && u.carriedBy !== null && u.type === UnitType.Army && carriedNearLand(u, view),
+              (u) => u.movesLeft > 0 && u.carriedBy !== null && u.type === UnitType.Army && carriedNearLand(u, view),
             );
             return carriedArmy ? view.myUnits.find((t) => t.id === carriedArmy.carriedBy) ?? null : null;
           })();
@@ -297,13 +297,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
       }
 
-      // Auto end turn: if it's my turn and all my units have 0 moves (or are sleeping/carried)
+      // Auto end turn: if it's my turn and all my units have 0 moves (or are carried)
       // BUT skip if any city is idle — give the player a chance to set production
       // Also skip if a carried army is adjacent to land (it may want to disembark)
       if (get().autoEndTurn && view.currentPlayer === pid) {
         const hasIdleCity = view.myCities.some((c) => c.producing === null);
         const allDone = view.myUnits.length > 0 && view.myUnits.every(
-          (u) => u.movesLeft <= 0 || u.sleeping ||
+          (u) => u.movesLeft <= 0 ||
             (u.carriedBy !== null && u.type === UnitType.Army && !carriedNearLand(u, view)),
         );
         if (allDone && !hasIdleCity) {

@@ -44,7 +44,7 @@ export class BasicAgent implements Agent {
 
     // 2. Move units that still have moves
     for (const unit of obs.myUnits) {
-      if (unit.sleeping || unit.movesLeft <= 0 || unit.carriedBy !== null) continue;
+      if (unit.movesLeft <= 0 || unit.carriedBy !== null) continue;
 
       const action = this.decideUnitAction(obs, unit);
       if (action) return action;

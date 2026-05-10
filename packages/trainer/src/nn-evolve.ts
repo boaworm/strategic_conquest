@@ -84,7 +84,7 @@ class EvolutionNnAgent {
     const targetTileIdx = this.argmax(results.target_tile.data as Float32Array);
     const prodTypeIdx = this.argmax(results.prod_type.data as Float32Array);
 
-    const ACTION_TYPES = ['END_TURN', 'SET_PRODUCTION', 'MOVE', 'SLEEP', 'WAKE', 'SKIP', 'DISBAND'] as const;
+    const ACTION_TYPES = ['END_TURN', 'SET_PRODUCTION', 'MOVE', 'SKIP'] as const;
     const UNIT_TYPES = ['army', 'fighter', 'missile', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'] as const;
 
     const actionType = ACTION_TYPES[actionTypeIdx];
@@ -167,7 +167,7 @@ class EvolutionNnAgent {
   }
 
   private selectMoveableUnit(obs: any): string {
-    const unit = obs.myUnits?.find((u: any) => u.movesLeft > 0 && !u.sleeping && !u.carriedBy);
+    const unit = obs.myUnits?.find((u: any) => u.movesLeft > 0 && !u.carriedBy);
     return unit?.id ?? obs.myUnits?.[0]?.id ?? 'unit_0';
   }
 

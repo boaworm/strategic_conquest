@@ -255,7 +255,7 @@ export class NnMoEAgent implements Agent {
   private startTurn(obs: AgentObservation): void {
     this.pass = 'prod';
     this.pendingUnitIds = new Set(
-      obs.myUnits.filter(u => u.movesLeft > 0 && !u.sleeping).map(u => u.id)
+      obs.myUnits.filter(u => u.movesLeft > 0).map(u => u.id)
     );
     this.pendingCityIds = new Set(
       obs.myCities.filter(c => c.producing === null).map(c => c.id)
@@ -279,7 +279,7 @@ export class NnMoEAgent implements Agent {
     for (const unit of units) {
       const action = await this.askMovementExpert(unit, obs);
       if (action) {
-        if (action.type === 'SLEEP' || action.type === 'SKIP') {
+        if (action.type === 'SKIP') {
           this.pendingUnitIds.delete(unit.id);
         } else if (unit.movesLeft <= 1) {
           // After this move the unit will have 0 moves left
@@ -302,7 +302,7 @@ export class NnMoEAgent implements Agent {
     for (const unit of units) {
       const action = await this.askMovementExpert(unit, obs);
       if (action) {
-        if (action.type === 'SLEEP' || action.type === 'SKIP' || unit.movesLeft <= 1) {
+        if (action.type === 'SKIP' || unit.movesLeft <= 1) {
           this.pendingUnitIds.delete(unit.id);
         }
         return action;
@@ -491,7 +491,7 @@ export class NnMoEAgent implements Agent {
   // ── Utilities ─────────────────────────────────────────────────────────────
 
   /**
-   * Returns a boolean mask over MOVEMENT_ACTION_TYPES [MOVE,SLEEP,SKIP].
+   * Returns a boolean mask over MOVEMENT_ACTION_TYPES [MOVE,SKIP].
    * false = that action is illegal for this unit right now and must be excluded.
    */
   private computeActionMask(unit: UnitView, obs: AgentObservation): boolean[] {

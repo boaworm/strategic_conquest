@@ -188,10 +188,8 @@ function encodeActionType(type: string): number {
   switch (type) {
     case 'MOVE':          return 0;
     case 'SET_PRODUCTION':return 1;
-    case 'SLEEP':         return 2;
-    case 'SKIP':          return 3;
-    case 'WAKE':          return 6;
-    case 'END_TURN':      return 7;
-    default:              return 3;
+    case 'SKIP':          return 2;
+    case 'END_TURN':      return 3;
+    default:              return 2;
   }
 }

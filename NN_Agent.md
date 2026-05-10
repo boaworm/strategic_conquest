@@ -64,10 +64,7 @@ Actions are discrete classifications:
 | `END_TURN` | Finish all actions |
 | `SET_PRODUCTION` | Set city production (requires city ID + unit type) |
 | `MOVE` | Move unit (requires unit ID + destination coordinates) |
-| `SLEEP` | Sleep unit until woken |
-| `WAKE` | Wake sleeping unit |
 | `SKIP` | Skip this unit for now |
-| `DISBAND` | Disband unit (not yet implemented) |
 
 ## Architecture Options for NN Agent
 

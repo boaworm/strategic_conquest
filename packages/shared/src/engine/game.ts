@@ -50,10 +50,6 @@ export function applyAction(
   switch (action.type) {
     case 'SET_PRODUCTION':
       return handleSetProduction(state, action.cityId, action.unitType, playerId);
-    case 'SLEEP':
-      return handleSleep(state, action.unitId, playerId, true);
-    case 'WAKE':
-      return handleSleep(state, action.unitId, playerId, false);
     case 'SKIP':
       return handleSkip(state, action.unitId, playerId);
     case 'DISBAND':
@@ -760,21 +756,6 @@ function handleSetProduction(
   setProduction(city, unitType);
   return { success: true };
 }
-
-function handleSleep(
-  state: GameState,
-  unitId: string,
-  playerId: PlayerId,
-  sleep: boolean,
-): ActionResult {
-  const unit = state.units.find((u) => u.id === unitId);
-  if (!unit) return { success: false, error: 'Unit not found' };
-  if (unit.owner !== playerId) return { success: false, error: 'Not your unit' };
-
-  unit.sleeping = sleep;
-  return { success: true };
-}
-
 
 /**
  * Handle the beginning of a player's turn:
