@@ -55,7 +55,7 @@ echo "Target size per worker file: ${TARGET_SIZE_GB}G (${TARGET_SIZE_BYTES} byte
 echo "Workers: $WORKERS"
 
 echo "=== Starting data collection ==="
-npx tsx packages/trainer/src/collect_moe_data.ts
+node packages/trainer/dist/collect_moe_data.js
 
 echo "=== All workers reached target size ==="
 

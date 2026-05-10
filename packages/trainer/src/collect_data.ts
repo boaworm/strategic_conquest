@@ -5,21 +5,22 @@
  * child processes and records every (state tensor, action) pair to disk.
  *
  * Output (in OUTPUT_DIR/):
- *   states.bin    — raw float32 bytes, N × (C × H × W) floats, no header
- *   actions.bin   — raw int8 bytes, N action type encodings (0-7)
- *   tiles.bin     — raw int32 bytes, N tile indices (-1 for non-move actions)
- *   meta.json     — mapWidth, mapHeight, numChannels, numSamples, numGames, wins
+ *   worker-N.states.bin  — raw float32 bytes, per worker
+ *   worker-N.actions.bin — raw int8 bytes, per worker
+ *   worker-N.tiles.bin   — raw int32 bytes, per worker
+ *   meta.json            — mapWidth, mapHeight, numChannels, numSamples, numGames, wins
  *
  * Usage:
- *   NUM_GAMES=50000 WORKERS=8 OUTPUT_DIR=./data npm run collect
+ *   TARGET_SIZE_GB=50 NUM_GAMES=999999 WORKERS=8 DATA_DIR=./data npm run collect
  */
 
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import type { ChildProcess } from 'child_process';
 
-const NUM_GAMES  = parseInt(process.env.NUM_GAMES  ?? '1000');
+const NUM_GAMES  = parseInt(process.env.NUM_GAMES  ?? '999999');
 const WORKERS    = parseInt(process.env.WORKERS    ?? '1');
 if (!process.env.DATA_DIR) { console.error('DATA_DIR env var is required'); process.exit(1); }
 const OUTPUT_DIR = path.join(process.env.DATA_DIR, 'training');
@@ -28,29 +29,40 @@ const MAP_HEIGHT = parseInt(process.env.MAP_HEIGHT ?? '20');
 const MAX_TURNS          = parseInt(process.env.MAX_TURNS          ?? '500');
 const MAX_SAMPLES_PER_GAME = parseInt(process.env.MAX_SAMPLES_PER_GAME ?? '3000');
 
+const TARGET_SIZE_GB = parseFloat(process.env.TARGET_SIZE_GB ?? '0'); // 0 = unlimited
+const TARGET_SIZE_KB = TARGET_SIZE_GB > 0 ? TARGET_SIZE_GB * 1024 * 1024 : Infinity;
+
 const NUM_CHANNELS = 14;
 const TENSOR_BYTES = NUM_CHANNELS * (MAP_HEIGHT + 2) * MAP_WIDTH * 4;  // +2 for ice cap rows
 
-// Use compiled JS worker — avoids tsx startup overhead on every child process
 const workerScript = fileURLToPath(new URL('../dist/collect_worker.js', import.meta.url));
 const tmpDir = path.join(OUTPUT_DIR, 'tmp');
 
-function spawnWorker(workerId: number, gameStart: number, gameEnd: number): Promise<void> {
+function currentSizeKB(): number {
+  try {
+    const out = execSync(`du -sk "${OUTPUT_DIR}"`, { encoding: 'utf-8' });
+    return parseInt(out.split('\t')[0]);
+  } catch {
+    return 0;
+  }
+}
+
+function spawnWorker(workerId: number, onRequest: (child: ChildProcess) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [workerScript], {
       env: {
         ...process.env,
         WORKER_ID:   String(workerId),
-        GAME_START:  String(gameStart),
-        GAME_END:    String(gameEnd),
         MAP_WIDTH:   String(MAP_WIDTH),
         MAP_HEIGHT:  String(MAP_HEIGHT),
         MAX_TURNS:   String(MAX_TURNS),
         MAX_SAMPLES_PER_GAME: String(MAX_SAMPLES_PER_GAME),
         TMP_DIR:     tmpDir,
       },
-      stdio: ['ignore', 'ignore', 'inherit'],
+      stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
     });
+
+    child.on('message', () => onRequest(child));
 
     child.on('exit', (code) => {
       if (code === 0) resolve();
@@ -63,75 +75,86 @@ function spawnWorker(workerId: number, gameStart: number, gameEnd: number): Prom
   });
 }
 
-function readProgress(workerId: number, gameStart: number, gameEnd: number): number {
+function readProgress(workerId: number): number {
   try {
-    const done = parseInt(fs.readFileSync(path.join(tmpDir, `progress-${workerId}.txt`), 'utf-8')) || 0;
-    return Math.max(0, Math.min(done - gameStart + 1, gameEnd - gameStart + 1));
+    return parseInt(fs.readFileSync(path.join(tmpDir, `progress-${workerId}.txt`), 'utf-8')) || 0;
   } catch {
     return 0;
   }
-}
-
-function mb(bytes: number): string {
-  return (bytes / 1_000_000).toFixed(0) + ' MB';
 }
 
 async function main(): Promise<void> {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  console.log(`Collecting data: ${NUM_GAMES} games across ${WORKERS} worker(s), map ${MAP_WIDTH}×${MAP_HEIGHT}`);
+  const limitStr = TARGET_SIZE_GB > 0 ? `, limit ${TARGET_SIZE_GB} GB` : '';
+  console.log(`Collecting data: up to ${NUM_GAMES} games across ${WORKERS} worker(s), map ${MAP_WIDTH}×${MAP_HEIGHT}${limitStr}`);
 
   const t0 = Date.now();
-  let lastReportedPct = -1;
+  let nextGameId = 1;
+  let totalAssigned = 0;
+  let stopSignaled = false;
 
-  // Pre-assign game ranges to each worker - no locking needed
-  const workerRanges = Array.from({ length: WORKERS }, (_, i) => {
-    const gamesPerWorker = Math.ceil(NUM_GAMES / WORKERS);
-    const start = i * gamesPerWorker + 1;
-    const end = Math.min(start + gamesPerWorker - 1, NUM_GAMES);
-    return { start, end };
-  });
-
-  // Poll progress files every second
-  const pollInterval = setInterval(() => {
-    const workerProgress = workerRanges.map(({ start, end }, i) => ({
-      id: i,
-      done: readProgress(i, start, end),
-      total: end - start + 1,
-    }));
-    const totalDone = workerProgress.reduce((sum, w) => sum + w.done, 0);
-    const pct = Math.min(100, Math.floor((totalDone / NUM_GAMES) * 100));
-    if (pct > lastReportedPct) {
-      lastReportedPct = pct;
-      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-      const status = workerProgress.map(w => `W${w.id}:${w.done}/${w.total}`).join('  ');
-      console.log(`${pct}% (${totalDone}/${NUM_GAMES} games, ${elapsed}s)  ${status}`);
+  function handleRequest(child: ChildProcess): void {
+    if (stopSignaled || totalAssigned >= NUM_GAMES) {
+      child.send({ gameId: -1 });
+      return;
     }
-  }, 1000);
+    // Check size limit every 10 games
+    if (TARGET_SIZE_KB < Infinity && totalAssigned % 10 === 0) {
+      const sizeKB = currentSizeKB();
+      if (sizeKB >= TARGET_SIZE_KB) {
+        stopSignaled = true;
+        console.log(`Size limit reached (${(sizeKB / 1024 / 1024).toFixed(2)} GB >= ${TARGET_SIZE_GB} GB), winding down workers`);
+        child.send({ gameId: -1 });
+        return;
+      }
+    }
+    child.send({ gameId: nextGameId++ });
+    totalAssigned++;
+  }
 
-  const workers = workerRanges.map(({ start, end }, i) => spawnWorker(i, start, end));
+  let lastReportedTotal = -1;
+
+  const pollInterval = setInterval(() => {
+    const totalDone = Array.from({ length: WORKERS }, (_, i) => readProgress(i))
+      .reduce((sum, n) => sum + n, 0);
+    if (totalDone !== lastReportedTotal) {
+      lastReportedTotal = totalDone;
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      const sizeStr = TARGET_SIZE_KB < Infinity
+        ? `  ${(currentSizeKB() / 1024 / 1024).toFixed(2)}/${TARGET_SIZE_GB} GB`
+        : '';
+      console.log(`${totalDone} games done (${elapsed}s)${sizeStr}`);
+    }
+  }, 5000);
+
+  const workers = Array.from({ length: WORKERS }, (_, i) => spawnWorker(i, handleRequest));
 
   await Promise.all(workers);
-
   clearInterval(pollInterval);
 
   // Aggregate results from workers
   let totalSamples = 0;
   const wins = { player1: 0, player2: 0, draw: 0 };
   for (let i = 0; i < WORKERS; i++) {
-    const result = JSON.parse(fs.readFileSync(path.join(tmpDir, `result-${i}.json`), 'utf-8'));
-    totalSamples += result.samples;
-    wins.player1 += result.wins.player1;
-    wins.player2 += result.wins.player2;
-    wins.draw += result.wins.draw;
+    try {
+      const result = JSON.parse(fs.readFileSync(path.join(tmpDir, `result-${i}.json`), 'utf-8'));
+      totalSamples += result.samples;
+      wins.player1 += result.wins.player1;
+      wins.player2 += result.wins.player2;
+      wins.draw += result.wins.draw;
+    } catch { /* worker may have done zero games */ }
   }
 
-  // Move worker files to output dir (no merge — keep per-worker files)
+  // Move worker files to output dir
   for (let i = 0; i < WORKERS; i++) {
-    fs.renameSync(path.join(tmpDir, `worker-${i}.states.bin`), path.join(OUTPUT_DIR, `worker-${i}.states.bin`));
-    fs.renameSync(path.join(tmpDir, `worker-${i}.actions.bin`),  path.join(OUTPUT_DIR, `worker-${i}.actions.bin`));
-    fs.renameSync(path.join(tmpDir, `worker-${i}.tiles.bin`),    path.join(OUTPUT_DIR, `worker-${i}.tiles.bin`));
+    for (const ext of ['states.bin', 'actions.bin', 'tiles.bin']) {
+      const src = path.join(tmpDir, `worker-${i}.${ext}`);
+      if (fs.existsSync(src)) {
+        fs.renameSync(src, path.join(OUTPUT_DIR, `worker-${i}.${ext}`));
+      }
+    }
   }
   fs.rmSync(tmpDir, { recursive: true });
 
@@ -140,7 +163,7 @@ async function main(): Promise<void> {
     mapHeight:   MAP_HEIGHT + 2,
     numChannels: NUM_CHANNELS,
     numSamples:  totalSamples,
-    numGames:    NUM_GAMES,
+    numGames:    totalAssigned,
     wins,
   };
   fs.writeFileSync(path.join(OUTPUT_DIR, 'meta.json'), JSON.stringify(meta, null, 2));
@@ -149,10 +172,10 @@ async function main(): Promise<void> {
   const mbPerWorker = ((TENSOR_BYTES * (totalSamples / WORKERS)) / 1e6).toFixed(1);
 
   console.log(`Done in ${elapsed}s`);
-  console.log(`  ${totalSamples.toLocaleString()} samples, ${NUM_GAMES.toLocaleString()} games`);
+  console.log(`  ${totalSamples.toLocaleString()} samples, ${totalAssigned.toLocaleString()} games`);
   console.log(`  P1 wins: ${wins.player1}  P2 wins: ${wins.player2}  Draws: ${wins.draw}`);
   console.log(`  Per-worker states: ~${mbPerWorker} MB each`);
-  console.log(`  Output: ${OUTPUT_DIR}/ (worker-*.states.bin, worker-*.actions.bin, worker-*.tiles.bin)`);
+  console.log(`  Output: ${OUTPUT_DIR}/`);
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });
