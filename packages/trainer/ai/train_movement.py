@@ -147,23 +147,12 @@ def train(args):
 def export_onnx(model: MovementCNN, map_height: int, map_width: int, output_path: Path):
     model.eval().cpu()
     dummy = torch.randn(1, 15, map_height, map_width)
-    warnings.filterwarnings("ignore")
-    logging.getLogger("torch.onnx").setLevel(logging.ERROR)
     torch.onnx.export(
-        model, dummy, str(output_path),
-        export_params=True,
-        opset_version=18,
-        do_constant_folding=True,
+        model, (dummy,), str(output_path),
+        dynamo=True,
         input_names=["input"],
         output_names=["action_type", "target_tile"],
     )
-    # Merge external data
-    import onnx
-    from onnx.external_data_helper import load_external_data_for_model
-    import os
-    proto = onnx.load(str(output_path), load_external_data=False)
-    load_external_data_for_model(proto, str(output_path.parent))
-    onnx.save_model(proto, str(output_path), save_as_external_data=False)
 
 
 def main():

@@ -131,29 +131,14 @@ def export_onnx(model: ProductionCNN, map_height: int, map_width: int, output_pa
     model.eval().cpu()
     dummy_spatial = torch.randn(1, 15, map_height, map_width)
     dummy_global  = torch.randn(1, NUM_GLOBAL)
-    warnings.filterwarnings("ignore")
-    logging.getLogger("torch.onnx").setLevel(logging.ERROR)
     torch.onnx.export(
         model,
         (dummy_spatial, dummy_global),
         str(output_path),
-        export_params=True,
-        opset_version=18,
-        do_constant_folding=True,
+        dynamo=True,
         input_names=["input", "global_features"],
         output_names=["unit_type"],
     )
-    import onnx
-    from onnx.external_data_helper import load_external_data_for_model
-    proto = onnx.load(str(output_path), load_external_data=False)
-    load_external_data_for_model(proto, str(output_path.parent))
-    for t in proto.graph.initializer:
-        t.data_location = 0  # DEFAULT (inline)
-        del t.external_data[:]
-    onnx.save_model(proto, str(output_path), save_as_external_data=False)
-    stale = str(output_path) + '.data'
-    if os.path.exists(stale):
-        os.remove(stale)
 
 
 def main():
