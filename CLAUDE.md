@@ -3,6 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 # Critical Instructions
+- **NEVER fabricate explanations.** If asked to explain observed behavior (game replays, training results, agent decisions), look at the actual data first. Do not synthesize a plausible-sounding story. If the data doesn't support a conclusion, say so.
 - **nnMoEAgent.ts is a facilitator only.** It calls the NN and translates outputs to actions. Do NOT add heuristics, overrides, or logic that changes which action is selected — that is the NN's job. The only permitted changes are action masking (marking actions as illegal/impossible) and infrastructure (routing, session management, transport lookups). Never change move selection logic unless explicitly instructed.
 - **TRUST ME** If i say something, take that as true. If i say a process is hung, assume it is.
 - **Brevity is mandatory.** Do not explain your reasoning unless explicitly asked.

@@ -19,6 +19,7 @@
 import type { Agent, AgentAction, AgentConfig, AgentObservation } from './agent.js';
 import type { PlayerView, UnitView, CityView } from './types.js';
 import { UnitType, UnitDomain, UNIT_STATS, Terrain, wrapX, wrappedDistX } from './types.js';
+import { bestStepToward } from './agentPathfinding.js';
 import { fillViewTensor } from './engine/tensorUtils.js';
 
 // Lazy-load node modules to avoid browser build errors
@@ -369,17 +370,8 @@ export class NnMoEAgent implements Agent {
     const ty = Math.floor(tileIdx / this.mapWidth);
 
     if (actionType === 'MOVE') {
-      const to = this.stepToward(unit.x, unit.y, tx, ty);
-      // Same tile (no-op step) or terrain mismatch → consume move as SKIP
-      if (to.x === unit.x && to.y === unit.y) return { type: 'SKIP', unitId: unit.id };
-      const targetTile = (obs as any as PlayerView).tiles[to.y]?.[to.x];
-      const domain = UNIT_STATS[unit.type].domain;
-      if (domain === UnitDomain.Land && targetTile?.terrain !== Terrain.Land) {
-        return { type: 'SKIP', unitId: unit.id };
-      }
-      if (domain === UnitDomain.Sea && targetTile?.terrain === Terrain.Land) {
-        return { type: 'SKIP', unitId: unit.id };
-      }
+      const to = bestStepToward(obs, unit, { x: tx, y: ty }, this.mapWidth, this.mapHeight);
+      if (!to) return { type: 'SKIP', unitId: unit.id };
       return { type: 'MOVE', unitId: unit.id, to };
     }
     if (actionType === 'SKIP') return { type: 'SKIP', unitId: unit.id };
@@ -542,14 +534,4 @@ export class NnMoEAgent implements Agent {
     return maxIdx;
   }
 
-  private stepToward(fx: number, fy: number, tx: number, ty: number): { x: number; y: number } {
-    let dx = tx - fx;
-    if (dx > this.mapWidth / 2) dx -= this.mapWidth;
-    else if (dx < -this.mapWidth / 2) dx += this.mapWidth;
-    const dy = ty - fy;
-    let stepX = 0, stepY = 0;
-    if (Math.abs(dx) >= Math.abs(dy)) stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0;
-    else stepY = dy > 0 ? 1 : dy < 0 ? -1 : 0;
-    return { x: wrapX(fx + stepX, this.mapWidth), y: fy + stepY };
-  }
 }
