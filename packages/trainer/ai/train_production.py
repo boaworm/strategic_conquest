@@ -131,6 +131,7 @@ def export_onnx(model: ProductionCNN, map_height: int, map_width: int, output_pa
     model.eval().cpu()
     dummy_spatial = torch.randn(1, 15, map_height, map_width)
     dummy_global  = torch.randn(1, NUM_GLOBAL)
+    logging.getLogger("torch.onnx._internal.exporter._registration").setLevel(logging.ERROR)
     torch.onnx.export(
         model,
         (dummy_spatial, dummy_global),

@@ -147,6 +147,7 @@ def train(args):
 def export_onnx(model: MovementCNN, map_height: int, map_width: int, output_path: Path):
     model.eval().cpu()
     dummy = torch.randn(1, 15, map_height, map_width)
+    logging.getLogger("torch.onnx._internal.exporter._registration").setLevel(logging.ERROR)
     torch.onnx.export(
         model, (dummy,), str(output_path),
         dynamo=True,
