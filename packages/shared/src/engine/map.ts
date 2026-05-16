@@ -364,7 +364,51 @@ export function generateMap(opts: MapOptions): {
     },
   ];
 
+  removeLakes(tiles, width, totalHeight);
+
   return { tiles, cities, units, totalHeight };
+}
+
+/**
+ * Remove lake tiles: ocean not reachable from the polar ice cap rows
+ * (y=0 and y=totalHeight-1). Converts enclosed ocean to land.
+ */
+function removeLakes(tiles: Terrain[][], width: number, height: number): void {
+  const reachable: boolean[][] = Array.from({ length: height }, () =>
+    Array.from({ length: width }, () => false),
+  );
+  const dirs = [
+    { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+    { x: -1, y: 0  },                   { x: 1, y: 0  },
+    { x: -1, y: 1  }, { x: 0, y: 1  }, { x: 1, y: 1  },
+  ];
+  const queue: Array<{ x: number; y: number }> = [];
+  for (let x = 0; x < width; x++) {
+    for (const y of [0, height - 1]) {
+      if (tiles[y][x] === Terrain.Ocean && !reachable[y][x]) {
+        reachable[y][x] = true;
+        queue.push({ x, y });
+      }
+    }
+  }
+  while (queue.length > 0) {
+    const { x, y } = queue.shift()!;
+    for (const d of dirs) {
+      const nx = wrapX(x + d.x, width);
+      const ny = y + d.y;
+      if (ny < 0 || ny >= height || reachable[ny][nx]) continue;
+      if (tiles[ny][nx] !== Terrain.Ocean) continue;
+      reachable[ny][nx] = true;
+      queue.push({ x: nx, y: ny });
+    }
+  }
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (tiles[y][x] === Terrain.Ocean && !reachable[y][x]) {
+        tiles[y][x] = Terrain.Land;
+      }
+    }
+  }
 }
 
 /**
