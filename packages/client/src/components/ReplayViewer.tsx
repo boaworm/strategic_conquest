@@ -23,6 +23,12 @@ interface ReplayMeta {
   passed?: boolean;
 }
 
+interface ReplayAction {
+  type: string;
+  unitId?: string;
+  to?: { x: number; y: number };
+}
+
 interface ReplayFrame {
   turn: number;
   currentPlayer: string;
@@ -30,6 +36,7 @@ interface ReplayFrame {
   units: Unit[];
   winner: string | null;
   phases?: Record<string, number>;
+  actions?: Record<string, { proposed: ReplayAction; applied: ReplayAction }[]>;
 }
 
 interface ReplayData {
@@ -577,15 +584,27 @@ export function ReplayViewer({ onBack, initialId }: ReplayViewerProps) {
       const prevFrame = replay.frames[i - 1];
       const currFrame = replay.frames[i];
 
-      // Build set of units in current frame
       const currUnitIds = new Set(currFrame.units.map(u => u.id));
 
-      // Check which units from previous frame are gone
+      // Build set of tiles targeted by MOVE actions per player this frame
+      const moveTiles: Record<string, Set<string>> = { player1: new Set(), player2: new Set() };
+      if (currFrame.actions) {
+        for (const [pid, acts] of Object.entries(currFrame.actions)) {
+          for (const { applied } of acts) {
+            if (applied.type === 'MOVE' && applied.to) {
+              moveTiles[pid]?.add(`${applied.to.x},${applied.to.y}`);
+            }
+          }
+        }
+      }
+
       for (const u of prevFrame.units) {
         if (!currUnitIds.has(u.id)) {
-          // Unit died between frames - attribute kill to enemy player
+          // Only count as a kill if the opposing player moved onto this tile
           const killerOwner = u.owner === 'player1' ? 'player2' : 'player1';
-          killsByKiller[killerOwner][u.type]++;
+          if (moveTiles[killerOwner]?.has(`${u.x},${u.y}`)) {
+            killsByKiller[killerOwner][u.type]++;
+          }
         }
       }
     }

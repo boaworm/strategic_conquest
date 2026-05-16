@@ -7,8 +7,9 @@ import {
 } from '../types.js';
 
 let nextProdId = 1000;
-function genUnitId(): string {
-  return `unit_${nextProdId++}`;
+function genUnitId(playerId: string): string {
+  const prefix = playerId === 'player1' ? 'p1' : 'p2';
+  return `${prefix}unit_${nextProdId++}`;
 }
 
 export function resetProductionIdCounter(): void {
@@ -35,7 +36,7 @@ export function advanceProduction(
     if (city.productionTurnsLeft <= 0) {
       const stats = UNIT_STATS[city.producing];
       const unit: Unit = {
-        id: genUnitId(),
+        id: genUnitId(playerId),
         type: city.producing,
         owner: playerId as 'player1' | 'player2',
         x: city.x,

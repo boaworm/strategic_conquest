@@ -297,6 +297,87 @@ def extract_moves(replay, player_num=1, turn_range=None, unit_types=None, unit_i
     return moves
 
 
+SEA_TYPES = {"destroyer", "submarine", "carrier", "battleship", "transport"}
+AIR_TYPES = {"fighter", "missile"}
+
+
+def find_combat(replay, attacker="player1", turn_range=None):
+    """
+    Find all combat events where `attacker` kills an enemy unit.
+    Returns list of dicts: turn, attacker_id, attacker_type, victim_id, victim_type, x, y, domain.
+    domain: 'naval' | 'land' | 'air'
+    """
+    frames = replay["frames"]
+    events = []
+
+    for i, frame in enumerate(frames):
+        if i == 0:
+            continue
+        turn = frame["turn"]
+        if turn_range:
+            s, e = turn_range
+            if turn < s or turn > e:
+                continue
+
+        prev = frames[i - 1]
+        defender = "player2" if attacker == "player1" else "player1"
+
+        prev_units = {u["id"]: u for u in prev["units"]}
+        curr_units = {u["id"]: u for u in frame["units"]}
+
+        # Units owned by defender that vanished this frame
+        killed = {uid: u for uid, u in prev_units.items()
+                  if uid not in curr_units and u["owner"] == defender}
+
+        if not killed:
+            continue
+
+        # Attacker's MOVE actions this frame
+        attacker_moves = {
+            (a["applied"]["to"]["x"], a["applied"]["to"]["y"]): a["applied"]["unitId"]
+            for a in frame["actions"].get(attacker, [])
+            if a["applied"].get("type") == "MOVE" and "to" in a["applied"]
+        }
+
+        for uid, victim in killed.items():
+            pos = (victim["x"], victim["y"])
+            attacker_unit_id = attacker_moves.get(pos)
+            if not attacker_unit_id:
+                continue
+            src = prev_units.get(attacker_unit_id) or curr_units.get(attacker_unit_id)
+            att_type = src["type"] if src else "?"
+            vtype = victim["type"]
+            if vtype in SEA_TYPES or att_type in SEA_TYPES:
+                domain = "naval"
+            elif vtype in AIR_TYPES or att_type in AIR_TYPES:
+                domain = "air"
+            else:
+                domain = "land"
+            events.append({
+                "turn": turn,
+                "attacker_id": attacker_unit_id,
+                "attacker_type": att_type,
+                "victim_id": uid,
+                "victim_type": vtype,
+                "x": victim["x"],
+                "y": victim["y"],
+                "domain": domain,
+            })
+
+    return events
+
+
+def print_combat(events, attacker="player1"):
+    if not events:
+        print(f"  No combat events found for {attacker}.")
+        return
+    print(f"\n{'Turn':>5}  {'Domain':<7}  {'Attacker':<12}  {'AttType':<12}  {'Victim':<12}  {'VictType':<12}  {'Pos'}")
+    print("-" * 80)
+    for e in events:
+        print(f"  T{e['turn']:3d}  {e['domain']:<7}  {e['attacker_id']:<12}  {e['attacker_type']:<12}  "
+              f"{e['victim_id']:<12}  {e['victim_type']:<12}  ({e['x']},{e['y']})")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Analyze MoE agent replay behavior")
     parser.add_argument("replay_dir", nargs="?", help="Directory containing replay .json files")
@@ -307,6 +388,7 @@ def main():
     parser.add_argument("--extractMoves", action="store_true", help="Extract moves as JSON output")
     parser.add_argument("--game", type=str, default=None, help="Specific game UUID to analyze")
     parser.add_argument("--turns", type=str, default=None, help="Turn range to extract (e.g., 18:20 for turns 18-20)")
+    parser.add_argument("--combat", action="store_true", help="Find all combat events where player kills enemy")
     args = parser.parse_args()
 
     # Handle --extractMoves mode
@@ -375,6 +457,16 @@ def main():
     if args.events:
         print(f"\n=== Transport event timelines ===")
         print_transport_events(results)
+
+    if args.combat:
+        turn_range = parse_turn_range(args.turns) if args.turns else None
+        print(f"\n=== Combat events where player{args.player} attacks ===")
+        for path, r in zip(paths, results):
+            replay = load_replay(path)
+            events = find_combat(replay, attacker=f"player{args.player}", turn_range=turn_range)
+            m = r["meta"]
+            print(f"\n--- Game {m.get('gameNum','?')} ({path.stem[:8]}) ---")
+            print_combat(events, attacker=f"player{args.player}")
 
     total_loads = sum(r["loads"] for r in results)
     total_unloads = sum(r["unloads"] for r in results)
