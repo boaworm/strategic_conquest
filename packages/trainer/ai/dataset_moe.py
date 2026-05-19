@@ -51,7 +51,7 @@ class MovementDataset(Dataset):
       target_tile — long scalar in [0, H*W), or -1 if not a MOVE action
     """
 
-    def __init__(self, data_dir: str, unit_type: str, file_idx: int | None = None):
+    def __init__(self, data_dir: str, unit_type: str, file_idx: int | None = None, use_bf16: bool = True):
         data_dir = Path(data_dir)
         meta = _load_meta(data_dir)
         self.map_height = meta.get('mapHeight', 22)
@@ -133,8 +133,8 @@ class MovementDataset(Dataset):
             del raw_states, states13, raw_pos
             offset += n
 
-        # Convert to bfloat16 — halves dataset memory; autocast in training loop expects this
-        self.states17     = torch.from_numpy(states17).bfloat16()
+        # CUDA: store as bfloat16 (halves memory, matches autocast); MPS: keep float32 (bfloat16 support limited)
+        self.states17 = torch.from_numpy(states17).bfloat16() if use_bf16 else torch.from_numpy(states17)
         self.action_types = torch.from_numpy(self.action_types)
         self.tile_idxs    = torch.from_numpy(self.tile_idxs)
 

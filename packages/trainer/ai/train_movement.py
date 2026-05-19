@@ -39,7 +39,7 @@ def train(args):
         device = torch.device("cpu")
     print(f"Device: {device}  Unit type: {args.unit_type}")
 
-    dataset = MovementDataset(args.data_dir, args.unit_type, file_idx=args.file_idx)
+    dataset = MovementDataset(args.data_dir, args.unit_type, file_idx=args.file_idx, use_bf16=(device.type == "cuda"))
     file_label = f"file {args.file_idx + 1}" if args.file_idx is not None else "all files"
     print(f"Loaded {len(dataset):,} samples for '{args.unit_type}' ({file_label})")
 
@@ -50,21 +50,25 @@ def train(args):
     print(f"Action class weights: { {MOVEMENT_ACTION_TYPES[i]: f'{class_weights[i].item():.2f}' for i in range(NUM_MOVEMENT_ACTIONS)} }")
 
     batch_size = args.batch_size
-    if args.target_memory_gb > 0:
+    if args.target_vram_usage_gb > 0:
         # Empirical: ~3.4 MB activation memory per sample (measured on GB10 with this model)
         # Fixed overhead: dataset + CUDA context + model + ~2 GB headroom
         fixed_bytes   = dataset.states17.nbytes + 2 * 1024 ** 3
-        target_bytes  = int(args.target_memory_gb * 1024 ** 3)
+        target_bytes  = int(args.target_vram_usage_gb * 1024 ** 3)
         batch_size    = max(256, ((target_bytes - fixed_bytes) // (3_400_000)) // 256 * 256)
-        print(f"Auto batch size: {batch_size:,}  (target {args.target_memory_gb} GB, dataset {dataset.states17.nbytes / 1024**3:.1f} GB)")
+        print(f"Auto batch size: {batch_size:,}  (target {args.target_vram_usage_gb} GB, dataset {dataset.states17.nbytes / 1024**3:.1f} GB)")
 
     val_n   = max(1, int(len(dataset) * 0.1))
     train_n = len(dataset) - val_n
     train_ds, val_ds = random_split(dataset, [train_n, val_n],
                                     generator=torch.Generator().manual_seed(42))
 
-    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=4, persistent_workers=True, prefetch_factor=2)
-    val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=4, persistent_workers=True, prefetch_factor=2)
+    # MPS (Apple Silicon): no DataLoader workers (causes issues), no bfloat16, no torch.compile
+    # CUDA (DGX Spark):    workers + prefetch for pipelining, bfloat16 autocast, torch.compile
+    dl_workers = 4 if device.type == "cuda" else 0
+    dl_kwargs  = dict(num_workers=dl_workers, persistent_workers=(dl_workers > 0), prefetch_factor=(2 if dl_workers > 0 else None))
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  **dl_kwargs)
+    val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, **dl_kwargs)
 
     model = MovementCNN(
         channels=17,
@@ -81,8 +85,9 @@ def train(args):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    scaler    = torch.amp.GradScaler(enabled=(device.type == "cuda"))
-    autocast  = lambda: torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=(device.type == "cuda"))
+    use_amp  = (device.type == "cuda")
+    scaler   = torch.amp.GradScaler(enabled=use_amp)
+    autocast = lambda: torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=use_amp)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -183,8 +188,8 @@ def main():
     parser.add_argument('--data-dir',   required=True)
     parser.add_argument('--out-dir',    default='./checkpoints/moe')
     parser.add_argument('--epochs',     type=int,   default=50)
-    parser.add_argument('--batch-size',       type=int,   default=0,    help="Fixed batch size (0 = use --target-memory-gb)")
-    parser.add_argument('--target-memory-gb', type=float, default=0,    help="Auto-compute batch size to hit this RAM target")
+    parser.add_argument('--batch-size',       type=int,   default=0,    help="Fixed batch size (0 = use --target-vram-usage-gb)")
+    parser.add_argument('--target-vram-usage-gb', type=float, default=0,    help="Auto-compute batch size to hit this RAM target")
     parser.add_argument('--lr',         type=float, default=1e-3)
     parser.add_argument('--file-idx',   type=int,   default=None,
                         help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')

@@ -1,9 +1,10 @@
 #!/bin/bash
 # Train MoE expert models.
 # Usage:
-#   ./train_2_learn_moe.sh            # Train all movement experts + production
-#   ./train_2_learn_moe.sh army       # Train only army movement expert
-#   ./train_2_learn_moe.sh production # Train only production expert
+#   ./train_2_learn_moe.sh                                    # Train all movement experts + production
+#   ./train_2_learn_moe.sh army                               # Train only army movement expert
+#   ./train_2_learn_moe.sh army missile transport             # Train specific units
+#   ./train_2_learn_moe.sh production                         # Train only production expert
 # Run from the project root with the venv active.
 
 set -e
@@ -19,7 +20,7 @@ fi
 OUT_DIR=$(pwd)/packages/trainer/ai/checkpoints/moe
 EPOCHS=40
 NUM_FILES=8
-TARGET_MEMORY_GB=100
+TARGET_VRAM_USAGE_GB=100
 
 cd packages/trainer/ai
 
@@ -34,7 +35,7 @@ train_movement() {
       --out-dir          "$OUT_DIR" \
       --epochs           "$EPOCHS" \
       --file-idx         "$FILE_IDX" \
-      --target-memory-gb "$TARGET_MEMORY_GB" \
+      --target-vram-usage-gb "$TARGET_VRAM_USAGE_GB" \
       $([ "$RESUME" = "1" ] && echo --resume)
   done
 }
@@ -57,10 +58,14 @@ if [ -z "$1" ]; then
     train_movement "$UNIT_TYPE"
   done
   train_production
-elif [ "$1" = "production" ]; then
-  train_production
 else
-  train_movement "$1"
+  for ARG in "$@"; do
+    if [ "$ARG" = "production" ]; then
+      train_production
+    else
+      train_movement "$ARG"
+    fi
+  done
 fi
 
 echo "=== Done. Checkpoints in $OUT_DIR ==="
