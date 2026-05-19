@@ -19,6 +19,7 @@ fi
 OUT_DIR=$(pwd)/packages/trainer/ai/checkpoints/moe
 EPOCHS=40
 NUM_FILES=8
+TARGET_MEMORY_GB=100
 
 cd packages/trainer/ai
 
@@ -28,11 +29,12 @@ train_movement() {
   for FILE_IDX in $(seq 0 $((NUM_FILES - 1))); do
     echo "--- $UNIT_TYPE file $((FILE_IDX + 1))/$NUM_FILES ---"
     python -u train_movement.py \
-      --unit-type "$UNIT_TYPE" \
-      --data-dir  "$DATA_DIR" \
-      --out-dir   "$OUT_DIR" \
-      --epochs    "$EPOCHS" \
-      --file-idx  "$FILE_IDX" \
+      --unit-type        "$UNIT_TYPE" \
+      --data-dir         "$DATA_DIR" \
+      --out-dir          "$OUT_DIR" \
+      --epochs           "$EPOCHS" \
+      --file-idx         "$FILE_IDX" \
+      --target-memory-gb "$TARGET_MEMORY_GB" \
       $([ "$RESUME" = "1" ] && echo --resume)
   done
 }

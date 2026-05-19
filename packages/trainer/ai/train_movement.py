@@ -31,7 +31,12 @@ from models_moe import MovementCNN
 # ── Training ──────────────────────────────────────────────────────────────────
 
 def train(args):
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     print(f"Device: {device}  Unit type: {args.unit_type}")
 
     dataset = MovementDataset(args.data_dir, args.unit_type, file_idx=args.file_idx)
@@ -39,27 +44,45 @@ def train(args):
     print(f"Loaded {len(dataset):,} samples for '{args.unit_type}' ({file_label})")
 
     # Inverse-frequency class weights so rare actions get equal gradient weight
-    counts = torch.bincount(torch.from_numpy(dataset.action_types), minlength=NUM_MOVEMENT_ACTIONS).float()
+    counts = torch.bincount(dataset.action_types.cpu(), minlength=NUM_MOVEMENT_ACTIONS).float()
     counts = counts.clamp(min=1)
     class_weights = (counts.sum() / (NUM_MOVEMENT_ACTIONS * counts)).to(device)
     print(f"Action class weights: { {MOVEMENT_ACTION_TYPES[i]: f'{class_weights[i].item():.2f}' for i in range(NUM_MOVEMENT_ACTIONS)} }")
+
+    batch_size = args.batch_size
+    if args.target_memory_gb > 0:
+        # Empirical: ~3.4 MB activation memory per sample (measured on GB10 with this model)
+        # Fixed overhead: dataset + CUDA context + model + ~2 GB headroom
+        fixed_bytes   = dataset.states17.nbytes + 2 * 1024 ** 3
+        target_bytes  = int(args.target_memory_gb * 1024 ** 3)
+        batch_size    = max(256, ((target_bytes - fixed_bytes) // (3_400_000)) // 256 * 256)
+        print(f"Auto batch size: {batch_size:,}  (target {args.target_memory_gb} GB, dataset {dataset.states17.nbytes / 1024**3:.1f} GB)")
 
     val_n   = max(1, int(len(dataset) * 0.1))
     train_n = len(dataset) - val_n
     train_ds, val_ds = random_split(dataset, [train_n, val_n],
                                     generator=torch.Generator().manual_seed(42))
 
-    train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=0)
-    val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=0)
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=4, persistent_workers=True, prefetch_factor=2)
+    val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=4, persistent_workers=True, prefetch_factor=2)
 
     model = MovementCNN(
-        channels=15,
+        channels=17,
         map_height=dataset.map_height,
         map_width=dataset.map_width,
     ).to(device)
 
+    if device.type == "cuda":
+        try:
+            model = torch.compile(model)
+            print("Using torch.compile")
+        except Exception:
+            pass
+
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scaler    = torch.amp.GradScaler(enabled=(device.type == "cuda"))
+    autocast  = lambda: torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=(device.type == "cuda"))
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -83,22 +106,17 @@ def train(args):
             action_types = action_types.to(device)
             tile_idxs    = tile_idxs.to(device)
 
-            out = model(states)
+            with autocast():
+                out = model(states)
+                loss_at = F.cross_entropy(out['action_type'], action_types, weight=class_weights)
+                move_mask = (action_types == 0) & (tile_idxs >= 0)
+                loss_tile = F.cross_entropy(out['target_tile'][move_mask], tile_idxs[move_mask]) if move_mask.any() else torch.tensor(0.0, device=device)
+                loss = loss_at + loss_tile
 
-            # Action type loss (inverse-frequency weighted so rare actions aren't drowned out)
-            loss_at = F.cross_entropy(out['action_type'], action_types, weight=class_weights)
-
-            # Tile loss — only for MOVE (idx=0) with valid tile
-            move_mask = (action_types == 0) & (tile_idxs >= 0)
-            if move_mask.any():
-                loss_tile = F.cross_entropy(out['target_tile'][move_mask], tile_idxs[move_mask])
-            else:
-                loss_tile = torch.tensor(0.0, device=device)
-
-            loss = loss_at + loss_tile
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             total_loss += loss.item()
 
         scheduler.step()
@@ -112,7 +130,8 @@ def train(args):
                 states       = states.to(device)
                 action_types = action_types.to(device)
                 tile_idxs    = tile_idxs.to(device)
-                out = model(states)
+                with autocast():
+                    out = model(states)
                 val_loss += F.cross_entropy(out['action_type'], action_types).item()
                 correct_at += (out['action_type'].argmax(1) == action_types).sum().item()
 
@@ -128,7 +147,7 @@ def train(args):
             torch.save({
                 'model_state': model.state_dict(),
                 'config': {
-                    'channels': 15,
+                    'channels': 17,
                     'map_height': dataset.map_height,
                     'map_width':  dataset.map_width,
                 },
@@ -146,7 +165,7 @@ def train(args):
 
 def export_onnx(model: MovementCNN, map_height: int, map_width: int, output_path: Path):
     model.eval().cpu()
-    dummy = torch.randn(1, 15, map_height, map_width)
+    dummy = torch.randn(1, 17, map_height, map_width)
     logging.getLogger("torch.onnx._internal.exporter._registration").setLevel(logging.ERROR)
     program = torch.onnx.export(
         model, (dummy,),
@@ -164,7 +183,8 @@ def main():
     parser.add_argument('--data-dir',   required=True)
     parser.add_argument('--out-dir',    default='./checkpoints/moe')
     parser.add_argument('--epochs',     type=int,   default=50)
-    parser.add_argument('--batch-size', type=int,   default=512)
+    parser.add_argument('--batch-size',       type=int,   default=0,    help="Fixed batch size (0 = use --target-memory-gb)")
+    parser.add_argument('--target-memory-gb', type=float, default=0,    help="Auto-compute batch size to hit this RAM target")
     parser.add_argument('--lr',         type=float, default=1e-3)
     parser.add_argument('--file-idx',   type=int,   default=None,
                         help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')

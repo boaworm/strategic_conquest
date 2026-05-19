@@ -173,8 +173,10 @@ def run_epoch(
 
 
 def train(args: argparse.Namespace) -> None:
-    # GPU selection: MPS (Apple Silicon) > CPU
-    if torch.backends.mps.is_available():
+    # GPU selection: CUDA (DGX/Spark) > MPS (Apple Silicon) > CPU
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
@@ -221,8 +223,8 @@ def train(args: argparse.Namespace) -> None:
         scheduler.last_epoch = start_epoch - 1
         print(f"Resumed from epoch {ckpt['epoch']} (val_loss={best_val_loss:.4f})")
 
-    # torch.compile has stride bugs on MPS backend, skip for now
-    if device.type != "mps":
+    # torch.compile: works on CUDA; skip for MPS (stride bugs)
+    if device.type not in ("mps",):
         try:
             model = torch.compile(model)
             print("Using torch.compile")
@@ -257,7 +259,7 @@ def train(args: argparse.Namespace) -> None:
         loader_kwargs = dict(
             batch_size=args.batch_size,
             num_workers=args.workers,
-            pin_memory=False,
+            pin_memory=(device.type == "cuda"),
         )
         if args.workers > 0:
             loader_kwargs["persistent_workers"] = True
@@ -272,6 +274,8 @@ def train(args: argparse.Namespace) -> None:
             scheduler.step()
             if device.type == "mps":
                 torch.mps.empty_cache()
+            elif device.type == "cuda":
+                torch.cuda.empty_cache()
 
             elapsed = time.time() - t0
             print(
@@ -319,6 +323,6 @@ if __name__ == "__main__":
     parser.add_argument("--epochs",     type=int,   default=50)
     parser.add_argument("--batch-size", type=int,   default=1024)
     parser.add_argument("--lr",         type=float, default=1e-3, help="Base LR (scaled linearly with batch size, base=256)")
-    parser.add_argument("--workers",    type=int,   default=0,    help="DataLoader worker processes (0 recommended for MPS)")
+    parser.add_argument("--workers",    type=int,   default=0,    help="DataLoader worker processes (0 for MPS; 4-8 recommended for CUDA)")
     args = parser.parse_args()
     train(args)

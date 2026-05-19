@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-MoE MPS inference server — spawned once per eval_server.js process.
-Loads 9 PyTorch models and runs inference on MPS (Apple GPU).
+MoE GPU inference server — spawned once per eval_server.js process.
+Loads 9 PyTorch models and runs inference on CUDA (DGX/Spark) or MPS (Apple Silicon).
 
 Binary protocol over stdin / stdout:
 
@@ -38,7 +38,12 @@ from models_moe import MovementCNN, ProductionCNN, UNIT_TYPE_NAMES, ALL_MODEL_NA
 
 # ── Device ────────────────────────────────────────────────────────────────────
 
-device = 'mps' if torch.backends.mps.is_available() else 'cpu'
+if torch.cuda.is_available():
+    device = 'cuda'
+elif torch.backends.mps.is_available():
+    device = 'mps'
+else:
+    device = 'cpu'
 sys.stderr.write(f'[moe_mps_server] device={device}\n')
 sys.stderr.flush()
 
@@ -63,7 +68,7 @@ def _read_exact(n: int) -> bytes:
 # ── Model state ───────────────────────────────────────────────────────────────
 
 _models: dict = {}
-_base_tensors: dict = {}  # {f'{model_name}/{layer}': MPS tensor} — set once per run
+_base_tensors: dict = {}  # {f'{model_name}/{layer}': GPU tensor} — set once per run
 _H: int = 0
 _W: int = 0
 
@@ -178,6 +183,27 @@ def _handle_set_weights(payload: bytes) -> None:
     _stdout.flush()
 
 
+def _append_relative_position(x15: torch.Tensor, H: int, W: int) -> torch.Tensor:
+    """Append dx/dy channels (ch15, ch16) derived from the unit marker in ch13."""
+    marker = x15[0, 13]  # [H, W] — 1.0 at unit position, 0 elsewhere
+    pos = (marker > 0.5).nonzero(as_tuple=False)
+    if len(pos) > 0:
+        uy, ux = pos[0, 0].item(), pos[0, 1].item()
+    else:
+        uy, ux = 0, 0
+
+    tile_x = torch.arange(W, dtype=torch.float32, device=x15.device)
+    tile_y = torch.arange(H, dtype=torch.float32, device=x15.device)
+    grid_x = tile_x.unsqueeze(0).expand(H, -1)  # [H, W]
+    grid_y = tile_y.unsqueeze(1).expand(-1, W)  # [H, W]
+
+    dx = (grid_x - ux) / W
+    dx = dx - dx.round()  # cylindrical wrap to [-0.5, 0.5]
+    dy = (grid_y - uy) / H
+
+    return torch.cat([x15, dx.unsqueeze(0).unsqueeze(0), dy.unsqueeze(0).unsqueeze(0)], dim=1)
+
+
 def _handle_infer_movement(payload: bytes) -> None:
     unit_idx = payload[0]
     name = UNIT_TYPE_NAMES[unit_idx] if unit_idx < len(UNIT_TYPE_NAMES) else None
@@ -188,7 +214,8 @@ def _handle_infer_movement(payload: bytes) -> None:
         return
 
     arr = np.frombuffer(payload[1:], dtype='<f4').copy()
-    x = torch.from_numpy(arr).reshape(1, 15, _H, _W).to(device)
+    x15 = torch.from_numpy(arr).reshape(1, 15, _H, _W).to(device)
+    x = _append_relative_position(x15, _H, _W)  # [1, 17, H, W]
 
     with torch.no_grad():
         out = _models[name](x)

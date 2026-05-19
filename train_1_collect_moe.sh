@@ -10,7 +10,7 @@ set -e
 if [ -z "$DATA_DIR" ]; then echo "DATA_DIR env var required"; exit 1; fi
 BASE_DATA_DIR="$DATA_DIR"
 
-TARGET_SIZE_GB=50
+TARGET_SIZE_GB=100
 TARGET_SIZE_BYTES=$((TARGET_SIZE_GB * 1024 * 1024 * 1024))
 
 RUN_NUM=$(ls -1 "$BASE_DATA_DIR" 2>/dev/null | grep -E '^sample_[0-9]+$' | sed 's/sample_//' | sort -n | tail -1)
@@ -61,7 +61,7 @@ echo "=== All workers reached target size ==="
 
 # Sanity check
 echo "=== Sanity checking collected data ==="
-python - <<EOF
+python3 - <<EOF
 import sys, os
 sys.path.insert(0, os.path.join(os.getcwd(), 'packages/trainer/ai'))
 from models_moe import NUM_BASE_CHANNELS

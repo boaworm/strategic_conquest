@@ -67,82 +67,82 @@ class MovementDataset(Dataset):
             state_files = [state_files[file_idx]]
 
         self.unit_type = unit_type
-        state_arrays, pos_arrays, action_type_list, tile_idx_list, carried_arrays, cargo_arrays = [], [], [], [], [], []
 
+        # Build LUT [H, W, 2, H, W] upfront — tiny (~10 MB)
+        grid_x = np.tile(np.arange(self.W, dtype=np.float32)[np.newaxis, :], (self.H, 1))
+        grid_y = np.tile(np.arange(self.H, dtype=np.float32)[:, np.newaxis], (1, self.W))
+        lut = np.empty((self.H, self.W, 2, self.H, self.W), dtype=np.float32)
+        for uy in range(self.H):
+            for ux in range(self.W):
+                dx = (grid_x - ux) / self.W
+                lut[uy, ux, 0] = dx - np.round(dx)
+                lut[uy, ux, 1] = (grid_y - uy) / self.H
+
+        # Pass 1: count total samples from file sizes — no data loaded yet
+        file_ns = []
         for sf in state_files:
+            n = sf.stat().st_size // (13 * self.H * self.W * 4)
+            file_ns.append(n)
+        N = sum(file_ns)
+        if N == 0:
+            raise ValueError(f"No valid data loaded for unit type '{unit_type}' (all files empty or missing)")
+
+        # Pre-allocate final arrays — one allocation each, no concatenation needed
+        states17          = np.zeros((N, 17, self.H, self.W), dtype=np.float32)  # built in fp32, converted to bf16 at end
+        self.positions    = np.empty((N, 2),  dtype=np.int16)
+        self.action_types = np.empty(N,       dtype=np.int64)
+        self.tile_idxs    = np.empty(N,       dtype=np.int64)
+
+        # Pass 2: fill slice by slice — peak extra RAM = one file's raw states at a time
+        offset = 0
+        for sf, n in zip(state_files, file_ns):
+            if n == 0:
+                print(f"  .states.bin file is empty, ignoring: {sf.name}")
+                continue
             base = str(sf)[:-len('.states.bin')]
             pf  = Path(base + '.positions.bin')
             af  = Path(base + '.actions.bin')
             tf  = Path(base + '.tiles.bin')
-            cf  = Path(base + '.carried.bin')  # army only: 1 byte per sample (1=carried, 0=free)
-            cgf = Path(base + '.cargo.bin')    # transport only: 1 byte per sample (raw cargo count 0–6)
+            cf  = Path(base + '.carried.bin')
+            cgf = Path(base + '.cargo.bin')
 
-            raw_states = np.frombuffer(sf.read_bytes(), dtype=np.float32)
-            n = len(raw_states) // (13 * self.H * self.W)
-            if n == 0:
-                print(f"  .states.bin file is empty, ignoring: {sf.name}")
-                continue
-            states = raw_states[:n * 13 * self.H * self.W].reshape(n, 13, self.H, self.W)
+            raw_states = np.memmap(sf, dtype=np.float32, mode='r')
+            states13 = raw_states[:n * 13 * self.H * self.W].reshape(n, 13, self.H, self.W)
 
-            raw_pos = np.frombuffer(pf.read_bytes(), dtype=np.int16)
-            positions = raw_pos[:n * 2].reshape(n, 2)
+            raw_pos  = np.memmap(pf, dtype=np.int16, mode='r')[:n * 2].reshape(n, 2)
+            xs = raw_pos[:, 0].astype(np.int32)
+            ys = raw_pos[:, 1].astype(np.int32)
+            valid = (xs >= 0) & (xs < self.W) & (ys >= 0) & (ys < self.H)
+            rows  = np.where(valid)[0]
 
-            raw_actions = np.frombuffer(af.read_bytes(), dtype=np.int8)
-            raw_tiles = np.frombuffer(tf.read_bytes(), dtype=np.int32)
+            carried = np.memmap(cf,  dtype=np.uint8, mode='r')[:n].astype(np.float32) if cf.exists()  else np.zeros(n, dtype=np.float32)
+            cargo   = np.memmap(cgf, dtype=np.uint8, mode='r')[:n].astype(np.float32) / 6.0          if cgf.exists() else np.zeros(n, dtype=np.float32)
 
-            # Carried flag (army only) — zeros if file absent
-            if cf.exists():
-                carried = np.frombuffer(cf.read_bytes(), dtype=np.uint8)[:n].astype(np.float32)
-            else:
-                carried = np.zeros(n, dtype=np.float32)
+            sl = slice(offset, offset + n)
+            states17[sl, :13] = states13
+            states17[offset + rows, 13, ys[rows], xs[rows]] = 1.0
+            states17[offset + rows, 14, ys[rows], xs[rows]] = (carried + cargo)[rows]
+            # ch15-16: dx/dy from LUT
+            states17[sl, 15] = lut[ys.clip(0, self.H-1), xs.clip(0, self.W-1), 0]
+            states17[sl, 16] = lut[ys.clip(0, self.H-1), xs.clip(0, self.W-1), 1]
 
-            # Cargo fraction (transport only) — zeros if file absent; normalised by capacity 6
-            if cgf.exists():
-                cargo = np.frombuffer(cgf.read_bytes(), dtype=np.uint8)[:n].astype(np.float32) / 6.0
-            else:
-                cargo = np.zeros(n, dtype=np.float32)
+            self.positions[sl]    = raw_pos
+            self.action_types[sl] = np.memmap(af, dtype=np.int8,  mode='r')[:n].astype(np.int64)
+            self.tile_idxs[sl]    = np.memmap(tf, dtype=np.int32, mode='r')[:n].astype(np.int64)
 
-            state_arrays.append(states)
-            pos_arrays.append(positions)
-            action_type_list.append(raw_actions[:n])
-            tile_idx_list.append(raw_tiles[:n])
-            carried_arrays.append(carried)
-            cargo_arrays.append(cargo)
+            del raw_states, states13, raw_pos
+            offset += n
 
-        if not state_arrays:
-            raise ValueError(f"No valid data loaded for unit type '{unit_type}' (all files empty or missing)")
-        self.states    = np.concatenate(state_arrays, axis=0)      # [N, 13, H, W]
-        self.positions = np.concatenate(pos_arrays, axis=0)         # [N, 2]
-        self.action_types = np.concatenate(action_type_list, axis=0).astype(np.int64)
-        self.tile_idxs    = np.concatenate(tile_idx_list,    axis=0).astype(np.int64)
-        carried_flat      = np.concatenate(carried_arrays, axis=0)  # [N]
-        cargo_flat        = np.concatenate(cargo_arrays,   axis=0)  # [N]
-
-        assert len(self.states) == len(self.positions) == len(self.action_types) == len(self.tile_idxs)
-
-        # Build states15: ch0-12 = base state, ch13 = position marker, ch14 = carried/cargo signal
-        N = len(self.states)
-        states15 = np.zeros((N, 15, self.H, self.W), dtype=np.float32)
-        states15[:, :13] = self.states
-        del self.states
-        xs = self.positions[:, 0].astype(np.int32)
-        ys = self.positions[:, 1].astype(np.int32)
-        valid = (xs >= 0) & (xs < self.W) & (ys >= 0) & (ys < self.H)
-        rows = np.where(valid)[0]
-        states15[rows, 13, ys[rows], xs[rows]] = 1.0  # ch13: unit position marker
-        # ch14: army=carried flag (0/1), transport=cargo fraction (0–1), others=0
-        states15[rows, 14, ys[rows], xs[rows]] = (carried_flat + cargo_flat)[rows]
-        self.states15 = states15
+        # Convert to bfloat16 — halves dataset memory; autocast in training loop expects this
+        self.states17     = torch.from_numpy(states17).bfloat16()
+        self.action_types = torch.from_numpy(self.action_types)
+        self.tile_idxs    = torch.from_numpy(self.tile_idxs)
 
     def __len__(self) -> int:
-        return len(self.states15)
+        return len(self.states17)
 
     def __getitem__(self, idx: int):
-        return (
-            torch.from_numpy(self.states15[idx].copy()),
-            torch.tensor(self.action_types[idx], dtype=torch.long),
-            torch.tensor(self.tile_idxs[idx],    dtype=torch.long),
-        )
+        return self.states17[idx], self.action_types[idx], self.tile_idxs[idx]
 
 
 class ProductionDataset(Dataset):

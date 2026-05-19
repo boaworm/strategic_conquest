@@ -24,12 +24,21 @@ def _circular_pad(x: torch.Tensor, pad: int) -> torch.Tensor:
 
 class MovementCNN(nn.Module):
     """
-    15-channel CNN for a single unit-type movement expert.
-    Inputs : [B, 15, H, W]  (13 base + ch13 unit-marker + ch14 army-carried/transport-cargo flag)
-    Outputs: action_type [B, 5], target_tile [B, H*W]
+    17-channel CNN for a single unit-type movement expert.
+    Inputs : [B, 17, H, W]
+      ch0-12: base state (terrain, units, ownership)
+      ch13:   unit position marker
+      ch14:   army-carried / transport-cargo flag
+      ch15:   dx from unit to each tile (cylindrical-wrapped, normalised to [-0.5, 0.5])
+      ch16:   dy from unit to each tile (normalised to [-0.5, 0.5])
+    Outputs: action_type [B, 2], target_tile [B, H*W]
+
+    target_tile head uses global average-pooled context concatenated with per-tile
+    features so each tile score accounts for the full board state, not just its
+    local 7x7 neighbourhood.
     """
 
-    def __init__(self, channels: int = 15, map_height: int = 22, map_width: int = 50):
+    def __init__(self, channels: int = 17, map_height: int = 22, map_width: int = 50):
         super().__init__()
         self.map_height = map_height
         self.map_width  = map_width
@@ -48,7 +57,8 @@ class MovementCNN(nn.Module):
             nn.ReLU(),
             nn.Linear(64, NUM_MOVEMENT_ACTIONS),
         )
-        self.target_tile_head = nn.Conv2d(128, 1, kernel_size=1)
+        # 128 local features + 128 global context → score per tile
+        self.target_tile_head = nn.Conv2d(256, 1, kernel_size=1)
 
     def _backbone(self, x):
         x = F.relu(self.bn1(self.conv1(_circular_pad(x, 1))))
@@ -57,10 +67,15 @@ class MovementCNN(nn.Module):
         return x
 
     def forward(self, x):
-        feat = self._backbone(x)
+        feat = self._backbone(x)  # [B, 128, H, W]
+
+        # Broadcast global avg pool across spatial dims so every tile sees full board
+        global_ctx = feat.mean(dim=[2, 3], keepdim=True).expand_as(feat)  # [B, 128, H, W]
+        combined   = torch.cat([feat, global_ctx], dim=1)                  # [B, 256, H, W]
+
         return {
             "action_type": self.action_type_head(feat),
-            "target_tile": self.target_tile_head(feat).flatten(1),
+            "target_tile": self.target_tile_head(combined).flatten(1),
         }
 
 

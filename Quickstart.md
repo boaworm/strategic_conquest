@@ -28,8 +28,15 @@ npx tsx packages/trainer/src/replay_picker.ts tmp/test-*.json
 
 ## Prerequisites
 
-- Node.js 18+
-- npm 9+
+- Node.js 22+ and npm 9+
+  - Ubuntu 24.04 ships Node 18 — upgrade via NodeSource:
+    ```bash
+    sudo apt remove -y nodejs
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+    sudo apt install -y nodejs
+    ```
+- Python 3.12+ (for NN training)
+  - Project venv: `python3 -m venv sc_env && source sc_env/bin/activate && pip install -r requirements.txt`
 
 ## Install
 
