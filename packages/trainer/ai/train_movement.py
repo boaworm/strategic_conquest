@@ -81,13 +81,6 @@ def train(args):
         map_width=dataset.map_width,
     ).to(device)
 
-    if device.type == "cuda":
-        try:
-            model = torch.compile(model)
-            print("Using torch.compile")
-        except Exception:
-            pass
-
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     use_amp  = (device.type == "cuda")
@@ -102,13 +95,17 @@ def train(args):
     should_resume = ckpt_path.exists() and (args.resume or (args.file_idx is not None and args.file_idx > 0))
     if should_resume:
         ckpt = torch.load(ckpt_path, weights_only=False, map_location=device)
-        state = ckpt['model_state']
-        # Strip _orig_mod. prefix left by torch.compile when loading on a device that doesn't compile
-        if any(k.startswith('_orig_mod.') for k in state):
-            state = {k.replace('_orig_mod.', '', 1): v for k, v in state.items()}
+        state = {k.replace('_orig_mod.', '', 1): v for k, v in ckpt['model_state'].items()}
         model.load_state_dict(state)
         best_val_loss = ckpt['val_loss']
         print(f"Warm-started from checkpoint  best_val_loss={best_val_loss:.4f}")
+
+    if device.type == "cuda":
+        try:
+            model = torch.compile(model)
+            print("Using torch.compile")
+        except Exception:
+            pass
 
     for epoch in range(1, args.epochs + 1):
         model.train()

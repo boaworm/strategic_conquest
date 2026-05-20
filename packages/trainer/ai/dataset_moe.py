@@ -14,6 +14,7 @@ File layout (all in DATA_DIR/):
 
 import json
 import glob
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -109,9 +110,11 @@ class MovementDataset(Dataset):
 
             # ch0-12: mmap → assign directly into final tensor (fp32→tgt_dtype on the fly)
             raw_states = np.memmap(sf, dtype=np.float32, mode='r')
-            self.states17[sl, :13] = torch.from_numpy(
-                raw_states[:n * 13 * self.H * self.W].reshape(n, 13, self.H, self.W)
-            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                self.states17[sl, :13] = torch.from_numpy(
+                    raw_states[:n * 13 * self.H * self.W].reshape(n, 13, self.H, self.W)
+                )
             del raw_states
 
             raw_pos = np.memmap(pf, dtype=np.int16, mode='r')[:n * 2].reshape(n, 2)
@@ -179,52 +182,57 @@ class ProductionDataset(Dataset):
         if file_idx is not None:
             state_files = [state_files[file_idx]]
 
-        state_arrays, city_arrays, global_arrays, unit_type_list = [], [], [], []
-
+        # Pass 1: count total samples from file sizes
+        file_ns = []
         for sf in state_files:
+            n = sf.stat().st_size // (13 * self.H * self.W * 4)
+            file_ns.append(n)
+        N = sum(file_ns)
+        if N == 0:
+            raise ValueError(f"No valid data loaded (all files empty or missing)")
+
+        # Allocate only the final tensor — no fp32 intermediate ever exists in full
+        tgt_dtype = torch.bfloat16 if use_bf16 else torch.float32
+        self.states15   = torch.zeros((N, 15, self.H, self.W), dtype=tgt_dtype)
+        self.cities     = np.empty((N, 2),  dtype=np.int16)
+        self.globals    = np.empty((N, NUM_GLOBAL), dtype=np.float32)
+        self.unit_types = np.empty(N, dtype=np.int64)
+
+        offset = 0
+        for sf, n in zip(state_files, file_ns):
+            if n == 0:
+                print(f"  .states.bin file is empty, ignoring: {sf.name}")
+                continue
             base = str(sf)[:-len('.states.bin')]
             cf  = Path(base + '.cities.bin')
             gf  = Path(base + '.globals.bin')
             uf  = Path(base + '.unitTypes.bin')
+            sl  = slice(offset, offset + n)
 
-            raw_states = np.frombuffer(sf.read_bytes(), dtype=np.float32)
-            n = len(raw_states) // (13 * self.H * self.W)
-            if n == 0:
-                print(f"  .states.bin file is empty, ignoring: {sf.name}")
-                continue
-            states = raw_states[:n * 13 * self.H * self.W].reshape(n, 13, self.H, self.W)
+            # ch0-12: mmap → assign directly into final tensor (fp32→tgt_dtype on the fly)
+            raw_states = np.memmap(sf, dtype=np.float32, mode='r')
+            self.states15[sl, :13] = torch.from_numpy(
+                raw_states[:n * 13 * self.H * self.W].reshape(n, 13, self.H, self.W)
+            )
+            del raw_states
 
-            raw_cities = np.frombuffer(cf.read_bytes(), dtype=np.int16)
-            cities = raw_cities[:n * 2].reshape(n, 2)
+            # ch13: city marker — small fp32 temp per file
+            raw_cities = np.memmap(cf, dtype=np.int16, mode='r')[:n * 2].reshape(n, 2)
+            cxs = raw_cities[:, 0].astype(np.int32)
+            cys = raw_cities[:, 1].astype(np.int32)
+            valid = (cxs >= 0) & (cxs < self.W) & (cys >= 0) & (cys < self.H)
+            rows = np.where(valid)[0]
+            marker = torch.zeros(n, self.H, self.W)
+            marker[rows, cys[rows], cxs[rows]] = 1.0
+            self.states15[sl, 13] = marker.to(tgt_dtype)
+            del marker
 
-            raw_globals = np.frombuffer(gf.read_bytes(), dtype=np.float32)
-            globals_ = raw_globals[:n * NUM_GLOBAL].reshape(n, NUM_GLOBAL)
+            self.cities[sl] = raw_cities
+            self.globals[sl] = np.memmap(gf, dtype=np.float32, mode='r')[:n * NUM_GLOBAL].reshape(n, NUM_GLOBAL)
+            self.unit_types[sl] = np.memmap(uf, dtype=np.int8, mode='r')[:n].astype(np.int64)
 
-            raw_units = np.frombuffer(uf.read_bytes(), dtype=np.int8)
-
-            state_arrays.append(states)
-            city_arrays.append(cities)
-            global_arrays.append(globals_)
-            unit_type_list.append(raw_units[:n])
-
-        if not state_arrays:
-            raise ValueError(f"No valid data loaded (all files empty or missing)")
-        self.states    = np.concatenate(state_arrays,  axis=0)
-        self.cities    = np.concatenate(city_arrays,   axis=0)
-        self.globals   = np.concatenate(global_arrays, axis=0)
-        self.unit_types = np.concatenate(unit_type_list, axis=0).astype(np.int64)
-
-        # Build states15: ch0-12 = base state, ch13 = city marker, ch14 = 0 (unused for production)
-        N = len(self.states)
-        states15 = np.zeros((N, 15, self.H, self.W), dtype=np.float32)
-        states15[:, :13] = self.states
-        del self.states
-        cxs = self.cities[:, 0].astype(np.int32)
-        cys = self.cities[:, 1].astype(np.int32)
-        valid = (cxs >= 0) & (cxs < self.W) & (cys >= 0) & (cys < self.H)
-        rows = np.where(valid)[0]
-        states15[rows, 13, cys[rows], cxs[rows]] = 1.0  # ch13: city position marker
-        self.states15 = torch.from_numpy(states15).bfloat16() if use_bf16 else torch.from_numpy(states15)
+            del raw_cities
+            offset += n
 
     def __len__(self) -> int:
         return len(self.states15)
