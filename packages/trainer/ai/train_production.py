@@ -44,17 +44,27 @@ def train(args):
         torch.backends.cudnn.benchmark = True
     print(f"Device: {device}  Task: production expert")
 
-    dataset = ProductionDataset(args.data_dir, file_idx=args.file_idx)
+    dataset = ProductionDataset(args.data_dir, file_idx=args.file_idx, use_bf16=(device.type == "cuda"))
     file_label = f"file {args.file_idx + 1}" if args.file_idx is not None else "all files"
     print(f"Loaded {len(dataset):,} production samples ({file_label})")
+
+    use_amp  = (device.type == "cuda")
+    batch_size = args.batch_size
+    if args.target_vram_usage_gb > 0:
+        bytes_per_sample = 3_400_000 if use_amp else 6_800_000
+        dataset_bytes = dataset.states15.nbytes if hasattr(dataset.states15, 'nbytes') else dataset.states15.numel() * dataset.states15.element_size()
+        fixed_bytes   = dataset_bytes + 2 * 1024 ** 3
+        target_bytes  = int(args.target_vram_usage_gb * 1024 ** 3)
+        batch_size    = max(256, ((target_bytes - fixed_bytes) // bytes_per_sample) // 256 * 256)
+        print(f"Auto batch size: {batch_size:,}  (target {args.target_vram_usage_gb} GB, dataset {dataset_bytes / 1024**3:.1f} GB, {'bf16' if use_amp else 'fp32'})")
 
     val_n   = max(1, int(len(dataset) * 0.1))
     train_n = len(dataset) - val_n
     train_ds, val_ds = random_split(dataset, [train_n, val_n],
                                     generator=torch.Generator().manual_seed(42))
 
-    train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=0)
-    val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=0)
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=0)
+    val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=0)
 
     model = ProductionCNN(
         channels=15,
@@ -64,6 +74,8 @@ def train(args):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scaler   = torch.amp.GradScaler(enabled=use_amp)
+    autocast = lambda: torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=use_amp)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -87,12 +99,14 @@ def train(args):
             globals_   = globals_.to(device)
             unit_types = unit_types.to(device)
 
-            out = model(states, globals_)
-            loss = F.cross_entropy(out['unit_type'], unit_types)
+            with autocast():
+                out = model(states, globals_)
+                loss = F.cross_entropy(out['unit_type'], unit_types)
 
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             total_loss += loss.detach()
 
         scheduler.step()
@@ -105,7 +119,8 @@ def train(args):
                 states     = states.to(device)
                 globals_   = globals_.to(device)
                 unit_types = unit_types.to(device)
-                out = model(states, globals_)
+                with autocast():
+                    out = model(states, globals_)
                 val_loss += F.cross_entropy(out['unit_type'], unit_types).detach()
                 correct  += (out['unit_type'].argmax(1) == unit_types).sum()
 
@@ -131,7 +146,7 @@ def train(args):
             }, out_dir / 'production.pt')
 
     map_height, map_width = dataset.map_height, dataset.map_width
-    del train_dl, val_dl, optimizer, dataset
+    del train_dl, val_dl, optimizer, scaler, dataset
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -165,7 +180,8 @@ def main():
     parser.add_argument('--data-dir',   required=True)
     parser.add_argument('--out-dir',    default='./checkpoints/moe')
     parser.add_argument('--epochs',     type=int,   default=50)
-    parser.add_argument('--batch-size', type=int,   default=512)
+    parser.add_argument('--batch-size',           type=int,   default=0,   help="Fixed batch size (0 = use --target-vram-usage-gb)")
+    parser.add_argument('--target-vram-usage-gb', type=float, default=0,   help="Auto-compute batch size to hit this RAM target")
     parser.add_argument('--lr',         type=float, default=1e-3)
     parser.add_argument('--weight-decay', type=float, default=0.0)
     parser.add_argument('--file-idx',   type=int,   default=None,

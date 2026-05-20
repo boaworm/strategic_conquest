@@ -155,7 +155,7 @@ class ProductionDataset(Dataset):
       unit_type      — long scalar in [0, NUM_UNIT_TYPES)
     """
 
-    def __init__(self, data_dir: str, file_idx: int | None = None):
+    def __init__(self, data_dir: str, file_idx: int | None = None, use_bf16: bool = True):
         data_dir = Path(data_dir)
         meta = _load_meta(data_dir)
         self.map_height = meta.get('mapHeight', 22)
@@ -214,14 +214,14 @@ class ProductionDataset(Dataset):
         valid = (cxs >= 0) & (cxs < self.W) & (cys >= 0) & (cys < self.H)
         rows = np.where(valid)[0]
         states15[rows, 13, cys[rows], cxs[rows]] = 1.0  # ch13: city position marker
-        self.states15 = states15
+        self.states15 = torch.from_numpy(states15).bfloat16() if use_bf16 else torch.from_numpy(states15)
 
     def __len__(self) -> int:
         return len(self.states15)
 
     def __getitem__(self, idx: int):
         return (
-            torch.from_numpy(self.states15[idx].copy()),
+            self.states15[idx],
             torch.from_numpy(self.globals[idx].copy()),
             torch.tensor(self.unit_types[idx], dtype=torch.long),
         )

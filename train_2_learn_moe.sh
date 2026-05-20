@@ -56,7 +56,7 @@ python -u train_movement.py --unit-type $UNIT_TYPE --data-dir $DATA_DIR --out-di
   if $DO_PRODUCTION; then
     inner="$inner
 echo '=== Training production expert ==='
-python -u train_production.py --data-dir $DATA_DIR --out-dir $OUT_DIR --epochs $EPOCHS --num-files $NUM_FILES $RESUME_FLAG"
+python -u train_production.py --data-dir $DATA_DIR --out-dir $OUT_DIR --epochs $EPOCHS --num-files $NUM_FILES --target-vram-usage-gb $TARGET_VRAM_USAGE_GB $RESUME_FLAG"
   fi
 
   docker rm -f sc-train-run &>/dev/null || true
@@ -83,10 +83,11 @@ else
   if $DO_PRODUCTION; then
     echo "=== Training production expert ==="
     python -u train_production.py \
-      --data-dir  "$DATA_DIR" \
-      --out-dir   "$OUT_DIR" \
-      --epochs    "$EPOCHS" \
-      --num-files "$NUM_FILES" \
+      --data-dir             "$DATA_DIR" \
+      --out-dir              "$OUT_DIR" \
+      --epochs               "$EPOCHS" \
+      --num-files            "$NUM_FILES" \
+      --target-vram-usage-gb "$TARGET_VRAM_USAGE_GB" \
       $RESUME_FLAG
   fi
 fi
