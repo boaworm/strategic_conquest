@@ -37,6 +37,10 @@ def train(args):
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
+    if device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
     print(f"Device: {device}  Task: production expert")
 
     dataset = ProductionDataset(args.data_dir, file_idx=args.file_idx)
@@ -74,7 +78,7 @@ def train(args):
 
     for epoch in range(1, args.epochs + 1):
         model.train()
-        total_loss = 0.0
+        total_loss = torch.zeros((), device=device)
         t0 = time.time()
 
         for states, globals_, unit_types in train_dl:
@@ -88,27 +92,27 @@ def train(args):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
+            total_loss += loss.detach()
 
         scheduler.step()
 
         model.eval()
-        val_loss = 0.0
-        correct  = 0
+        val_loss = torch.zeros((), device=device)
+        correct  = torch.zeros((), device=device)
         with torch.no_grad():
             for states, globals_, unit_types in val_dl:
                 states     = states.to(device)
                 globals_   = globals_.to(device)
                 unit_types = unit_types.to(device)
                 out = model(states, globals_)
-                val_loss += F.cross_entropy(out['unit_type'], unit_types).item()
-                correct  += (out['unit_type'].argmax(1) == unit_types).sum().item()
+                val_loss += F.cross_entropy(out['unit_type'], unit_types).detach()
+                correct  += (out['unit_type'].argmax(1) == unit_types).sum()
 
-        val_loss /= len(val_dl)
-        val_acc   = correct / len(val_ds)
+        val_loss  = val_loss.item() / len(val_dl)
+        val_acc   = correct.item() / len(val_ds)
         elapsed   = time.time() - t0
 
-        print(f"Epoch {epoch:3d}/{args.epochs}  train={total_loss/len(train_dl):.4f}"
+        print(f"Epoch {epoch:3d}/{args.epochs}  train={total_loss.item()/len(train_dl):.4f}"
               f"  val={val_loss:.4f}  acc={val_acc:.3f}  ({elapsed:.1f}s)")
 
         if val_loss < best_val_loss:
@@ -124,6 +128,8 @@ def train(args):
                 'epoch':    epoch,
                 'val_loss': val_loss,
             }, out_dir / 'production.pt')
+
+    del train_dl, val_dl
 
     print(f"\nBest val loss: {best_val_loss:.4f}")
     best_ckpt = torch.load(out_dir / 'production.pt', weights_only=False, map_location='cpu')
@@ -157,10 +163,18 @@ def main():
     parser.add_argument('--weight-decay', type=float, default=0.0)
     parser.add_argument('--file-idx',   type=int,   default=None,
                         help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')
+    parser.add_argument('--num-files',  type=int,   default=None,
+                        help='Train sequentially on this many files (0..N-1) in one process.')
     parser.add_argument('--resume',     action='store_true',
                         help='Warm-start from existing checkpoint even at file-idx 0.')
     args = parser.parse_args()
-    train(args)
+    if args.num_files:
+        for file_idx in range(args.num_files):
+            print(f"--- production file {file_idx + 1}/{args.num_files} ---")
+            args.file_idx = file_idx
+            train(args)
+    else:
+        train(args)
 
 
 if __name__ == '__main__':

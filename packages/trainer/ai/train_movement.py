@@ -37,6 +37,10 @@ def train(args):
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
+    if device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
     print(f"Device: {device}  Unit type: {args.unit_type}")
 
     dataset = MovementDataset(args.data_dir, args.unit_type, file_idx=args.file_idx, use_bf16=(device.type == "cuda"))
@@ -66,7 +70,7 @@ def train(args):
     # MPS (Apple Silicon): no DataLoader workers (causes issues), no bfloat16, no torch.compile
     # CUDA (DGX Spark):    workers + prefetch for pipelining, bfloat16 autocast, torch.compile
     dl_workers = 4 if device.type == "cuda" else 0
-    dl_kwargs  = dict(num_workers=dl_workers, persistent_workers=(dl_workers > 0), prefetch_factor=(2 if dl_workers > 0 else None))
+    dl_kwargs  = dict(num_workers=dl_workers, persistent_workers=False, prefetch_factor=(2 if dl_workers > 0 else None))
     train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  **dl_kwargs)
     val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, **dl_kwargs)
 
@@ -103,7 +107,7 @@ def train(args):
 
     for epoch in range(1, args.epochs + 1):
         model.train()
-        total_loss = 0.0
+        total_loss = torch.zeros((), device=device)
         t0 = time.time()
 
         for states, action_types, tile_idxs in train_dl:
@@ -114,22 +118,21 @@ def train(args):
             with autocast():
                 out = model(states)
                 loss_at = F.cross_entropy(out['action_type'], action_types, weight=class_weights)
-                move_mask = (action_types == 0) & (tile_idxs >= 0)
-                loss_tile = F.cross_entropy(out['target_tile'][move_mask], tile_idxs[move_mask]) if move_mask.any() else torch.tensor(0.0, device=device)
+                loss_tile = F.cross_entropy(out['target_tile'], tile_idxs, ignore_index=-1)
                 loss = loss_at + loss_tile
 
             optimizer.zero_grad()
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            total_loss += loss.item()
+            total_loss += loss.detach()
 
         scheduler.step()
 
         # Validation
         model.eval()
-        val_loss = 0.0
-        correct_at = 0
+        val_loss = torch.zeros((), device=device)
+        correct_at = torch.zeros((), device=device)
         with torch.no_grad():
             for states, action_types, tile_idxs in val_dl:
                 states       = states.to(device)
@@ -137,14 +140,14 @@ def train(args):
                 tile_idxs    = tile_idxs.to(device)
                 with autocast():
                     out = model(states)
-                val_loss += F.cross_entropy(out['action_type'], action_types).item()
-                correct_at += (out['action_type'].argmax(1) == action_types).sum().item()
+                val_loss += F.cross_entropy(out['action_type'], action_types).detach()
+                correct_at += (out['action_type'].argmax(1) == action_types).sum()
 
-        val_loss /= len(val_dl)
-        val_acc   = correct_at / len(val_ds)
+        val_loss  = val_loss.item() / len(val_dl)
+        val_acc   = correct_at.item() / len(val_ds)
         elapsed   = time.time() - t0
 
-        print(f"Epoch {epoch:3d}/{args.epochs}  train={total_loss/len(train_dl):.4f}"
+        print(f"Epoch {epoch:3d}/{args.epochs}  train={total_loss.item()/len(train_dl):.4f}"
               f"  val={val_loss:.4f}  acc={val_acc:.3f}  ({elapsed:.1f}s)")
 
         if val_loss < best_val_loss:
@@ -160,6 +163,8 @@ def train(args):
                 'epoch': epoch,
                 'val_loss': val_loss,
             }, out_dir / f'{args.unit_type}.pt')
+
+    del train_dl, val_dl
 
     print(f"\nBest val loss: {best_val_loss:.4f}")
     best_ckpt = torch.load(out_dir / f'{args.unit_type}.pt', weights_only=False, map_location='cpu')
@@ -193,10 +198,18 @@ def main():
     parser.add_argument('--lr',         type=float, default=1e-3)
     parser.add_argument('--file-idx',   type=int,   default=None,
                         help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')
+    parser.add_argument('--num-files',  type=int,   default=None,
+                        help='Train sequentially on this many files (0..N-1) in one process.')
     parser.add_argument('--resume',     action='store_true',
                         help='Warm-start from existing checkpoint even at file-idx 0.')
     args = parser.parse_args()
-    train(args)
+    if args.num_files:
+        for file_idx in range(args.num_files):
+            print(f"--- {args.unit_type} file {file_idx + 1}/{args.num_files} ---")
+            args.file_idx = file_idx
+            train(args)
+    else:
+        train(args)
 
 
 if __name__ == '__main__':

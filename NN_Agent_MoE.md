@@ -155,56 +155,76 @@ The 13-ch tensor is stored without the marker channels; ch13 (position marker) a
 
 ## Training scripts
 
-### Collection — `train_1.2_collect_moe.sh`
+### Collection — `train_1_collect_moe.sh`
 
 ```bash
-DATA_DIR=/Volumes/500G/Training ./train_1.2_collect_moe.sh              # All movement experts + production (~50G/worker total)
-DATA_DIR=/Volumes/500G/Training ./train_1.2_collect_moe.sh army         # Army only
-DATA_DIR=/Volumes/500G/Training ./train_1.2_collect_moe.sh production   # Production only
+DATA_DIR=/media/henrik/data/ARMY ./train_1_collect_moe.sh              # All movement experts + production (~50G/worker total)
+DATA_DIR=/media/henrik/data/ARMY ./train_1_collect_moe.sh army         # Army only
+DATA_DIR=/media/henrik/data/ARMY ./train_1_collect_moe.sh production   # Production only
 ```
 
-Stop condition: sum of all unit-type states files per worker reaches `TARGET_SIZE_GB` (default 50G). Output goes into a new `sample_N/` subdirectory under `DATA_DIR`.
+Stop condition: sum of all unit-type states files per worker reaches `TARGET_SIZE_GB` (default 50G). Output goes into a new `sample_N/` subdirectory under `DATA_DIR`. Runs on CPU via Node.js — no GPU or Docker needed.
 
-### Training — `train_2_learn_moe.sh` (all 9 experts)
+### Training — `train_2_learn_moe.sh`
 
 ```bash
-DATA_DIR=/Volumes/500G/Training/sample_1 ./train_2_learn_moe.sh
+# Train all 9 experts sequentially
+RESUME=0 DATA_DIR=/media/henrik/data/ARMY/sample_1 ./train_2_learn_moe.sh
+
+# Train specific experts only
+RESUME=1 DATA_DIR=/media/henrik/data/ARMY/sample_1 ./train_2_learn_moe.sh army
+RESUME=1 DATA_DIR=/media/henrik/data/ARMY/sample_1 ./train_2_learn_moe.sh destroyer carrier submarine battleship
+RESUME=1 DATA_DIR=/media/henrik/data/ARMY/sample_1 ./train_2_learn_moe.sh production
 ```
 
-Trains all 9 experts sequentially (army → fighter → … → battleship → production). One expert fully trained before the next starts.
+`RESUME` is required:
+- `RESUME=0` — train from scratch
+- `RESUME=1` — warm-start from existing checkpoint (safe to use even if no checkpoint exists yet)
 
-### Training — `train_2.2_learn_moe.sh` (single expert)
+**GB10 DGX Spark**: auto-detected via `nvidia-smi`. Runs inside the `sc-train` NGC Docker container (build once with `./build_docker.sh`). One container for the entire run; torch.compile warms up once and is reused across all files and unit types.
+
+**Apple Silicon / other**: runs directly via `python` (activate `sc_env` first).
+
+Trains each expert across 8 worker files sequentially (warm-starting from the previous file's checkpoint). One expert fully trained before the next starts.
+
+### Docker setup (GB10 only)
 
 ```bash
-DATA_DIR=/Volumes/500G/Training/sample_1 ./train_2.2_learn_moe.sh army       # Train army only
-DATA_DIR=/Volumes/500G/Training/sample_1 ./train_2.2_learn_moe.sh production # Train production only
+./build_docker.sh   # Build sc-train image from Dockerfile.train (run once, or after dep changes)
 ```
 
-Internally calls `train_movement.py` or `train_production.py` with 8 worker files warm-starting from the previous checkpoint.
+The image extends `nvcr.io/nvidia/pytorch:25.12-py3` and adds the project's extra Python deps. The torch.compile kernel cache persists across runs in `tmp/torch_cache/` (host-mounted into the container).
 
 ### Python training scripts
+
+Called internally by `train_2_learn_moe.sh`. Can also be run directly (with `sc_env` active):
 
 **Movement expert:**
 ```bash
 python train_movement.py \
     --unit-type army \
-    --data-dir /Volumes/500G/Training/moe \
+    --data-dir /media/henrik/data/ARMY/sample_1 \
     --out-dir ./checkpoints/moe \
-    --epochs 50
+    --epochs 40 \
+    --num-files 8 \
+    --target-vram-usage-gb 100
 ```
 
 **Production expert:**
 ```bash
 python train_production.py \
-    --data-dir /Volumes/500G/Training/moe \
+    --data-dir /media/henrik/data/ARMY/sample_1 \
     --out-dir ./checkpoints/moe \
-    --epochs 50
+    --epochs 40 \
+    --num-files 8
 ```
 
+`--num-files N` loops through worker files 0..N-1 in a single Python process (avoids torch.compile recompilation between files). `--resume` warm-starts from an existing checkpoint.
+
 Both scripts:
-- Train incrementally across 8 worker files (warm-start from previous checkpoint)
+- Train incrementally across worker files (warm-start from previous checkpoint)
 - Save `<type>.pt` checkpoint in `checkpoints/moe/`
-- Export `<type>.onnx` (with external data merged inline)
+- Export `<type>.onnx` (external data merged inline, no `.onnx.data` sidecar)
 
 ### Preserving a trained model
 
@@ -235,6 +255,11 @@ Named model directories live under `checkpoints/` (e.g. `checkpoints/caesar-moe-
 - Evaluates via `eval_game.js --agent moe --moe-dir <dir>`
 - Saves champion as `champion.json` with perturbations
 
+Output directory defaults to `/Volumes/500G/Training/evolution_moe` (Mac). Override on GB10:
+```bash
+EVOLUTION_OUT_DIR=/media/henrik/data/evolution_moe ./train_3_evolve_moe.sh
+```
+
 ---
 
 ## Status
@@ -244,9 +269,8 @@ Named model directories live under `checkpoints/` (e.g. `checkpoints/caesar-moe-
 - [x] `dataset_moe.py` — Python dataset loaders (MovementDataset, ProductionDataset)
 - [x] `train_movement.py` — movement expert training + ONNX export
 - [x] `train_production.py` — production expert training + ONNX export
-- [x] `train_1.2_collect_moe.sh` — collection (all types or single type, sum-based stop)
-- [x] `train_2_learn_moe.sh` — train all 9 experts sequentially
-- [x] `train_2.2_learn_moe.sh` — train a single expert
+- [x] `train_1_collect_moe.sh` — collection (all types or single type, sum-based stop)
+- [x] `train_2_learn_moe.sh` — train all 9 experts (or subset) sequentially; GB10 auto-uses NGC Docker
 - [x] `eval_game.js` — supports `--agent moe --moe-dir <dir>`
 - [x] `game_evaluator.py` — `run_games_moe_sequential(moe_dir, ...)`
 - [x] `models_moe.py` — shared `MovementCNN` + `ProductionCNN` definitions
