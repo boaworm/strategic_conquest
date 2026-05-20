@@ -121,9 +121,11 @@ export class NnMoEAgent implements Agent {
   private pendingUnitIds: Set<string> = new Set();
   private pendingCityIds: Set<string> = new Set();
   private pass: 'prod' | 1 | 2 = 'prod';
-  // Pre-allocated 15-channel tensor buffer — reused every inference call, zero allocations in hot path
-  // Layout: ch0-12 base state, ch13 position marker, ch14 army carried-by-transport flag (0 for all others)
-  private tensor15Buf: Float32Array = new Float32Array(0);
+  // Pre-allocated 17-channel tensor buffer — reused every inference call, zero allocations in hot path
+  // Layout: ch0-12 base state, ch13 position marker, ch14 carried/cargo flag,
+  // ch15 dx, ch16 dy (cylindrical-wrapped relative position from the marker tile).
+  // Movement experts consume all 17 channels; the production expert reads only ch0-14.
+  private tensorBuf: Float32Array = new Float32Array(0);
   private lastMarkerIdx: number = -1;
   private lastCarriedIdx: number = -1;
 
@@ -144,7 +146,7 @@ export class NnMoEAgent implements Agent {
       }
     }
     this.productionSession = sessions['production'] ?? null;
-    this.tensor15Buf = new Float32Array(15 * this.mapHeight * this.mapWidth);
+    this.tensorBuf = new Float32Array(17 * this.mapHeight * this.mapWidth);
     this.lastMarkerIdx = -1;
     this.lastCarriedIdx = -1;
   }
@@ -160,7 +162,7 @@ export class NnMoEAgent implements Agent {
     this.mpsSidecar = sidecar;
     this.movementSessions.clear();
     this.productionSession = null;
-    this.tensor15Buf = new Float32Array(15 * this.mapHeight * this.mapWidth);
+    this.tensorBuf = new Float32Array(17 * this.mapHeight * this.mapWidth);
     this.lastMarkerIdx = -1;
     this.lastCarriedIdx = -1;
   }
@@ -205,7 +207,7 @@ export class NnMoEAgent implements Agent {
 
     this.movementSessions = cached.movement;
     this.productionSession = cached.production;
-    this.tensor15Buf = new Float32Array(15 * this.mapHeight * this.mapWidth);
+    this.tensorBuf = new Float32Array(17 * this.mapHeight * this.mapWidth);
     this.lastMarkerIdx = -1;
     this.lastCarriedIdx = -1;
   }
@@ -333,7 +335,9 @@ export class NnMoEAgent implements Agent {
     let ch14Value = 0;
     if (unit.type === UnitType.Army && unit.carriedBy !== null) ch14Value = 1.0;
     else if (unit.type === UnitType.Transport) ch14Value = (unit as any).cargo?.length / 6 || 0;
-    const tensor15 = this.buildMovementTensor(obs, unit.x, unit.y, ch14Value);
+    const tensor = this.buildMovementTensor(obs, unit.x, unit.y, ch14Value);
+    const HW = tensor.length / 17;
+    const tensorH = HW / this.mapWidth;
 
     let actionTypeData: Float32Array;
     let targetTileData: Float32Array;
@@ -341,15 +345,15 @@ export class NnMoEAgent implements Agent {
     if (this.mpsSidecar) {
       const unitIdx = UNIT_TYPE_TO_IDX[unit.type];
       if (unitIdx === undefined) return null;
-      const r = await this.mpsSidecar.inferMovement(unitIdx, tensor15);
+      // The MPS server derives ch15/ch16 itself — send the first 15 channels only.
+      const r = await this.mpsSidecar.inferMovement(unitIdx, tensor.subarray(0, 15 * HW));
       actionTypeData = r.actionType;
       targetTileData = r.targetTile;
     } else {
       const session = this.movementSessions.get(unit.type);
       if (!session) return null;
-      const tensorH = (tensor15.length / 15) / this.mapWidth;
       const ort = await getOrt();
-      const input = new ort.Tensor('float32', tensor15, [1, 15, tensorH, this.mapWidth]);
+      const input = new ort.Tensor('float32', tensor, [1, 17, tensorH, this.mapWidth]);
       const results = await session.run({ input });
       actionTypeData = results.action_type.data as Float32Array;
       targetTileData = results.target_tile.data as Float32Array;
@@ -379,19 +383,23 @@ export class NnMoEAgent implements Agent {
   }
 
   private async askProductionExpert(city: CityView, obs: AgentObservation): Promise<UnitType> {
-    const tensor15 = this.buildMovementTensor(obs, city.x, city.y);
+    const tensor = this.buildMovementTensor(obs, city.x, city.y);
     const globalFeatures = this.buildGlobalFeatures(city, obs);
+
+    // Production expert is 15-channel — slice off the movement-only ch15/ch16.
+    const HW = tensor.length / 17;
+    const spatial15 = tensor.subarray(0, 15 * HW);
 
     let unitTypeData: Float32Array;
 
     if (this.mpsSidecar) {
-      const r = await this.mpsSidecar.inferProduction(tensor15, globalFeatures);
+      const r = await this.mpsSidecar.inferProduction(spatial15, globalFeatures);
       unitTypeData = r.unitType;
     } else {
       if (!this.productionSession) return UnitType.Army;
-      const tensorH = (tensor15.length / 15) / this.mapWidth;
+      const tensorH = HW / this.mapWidth;
       const ort = await getOrt();
-      const inputTensor = new ort.Tensor('float32', tensor15, [1, 15, tensorH, this.mapWidth]);
+      const inputTensor = new ort.Tensor('float32', spatial15, [1, 15, tensorH, this.mapWidth]);
       const globalTensor = new ort.Tensor('float32', globalFeatures, [1, NUM_GLOBAL]);
       const results = await this.productionSession.run({ input: inputTensor, global_features: globalTensor });
       unitTypeData = results.unit_type.data as Float32Array;
@@ -404,36 +412,57 @@ export class NnMoEAgent implements Agent {
   // ── Tensor construction ───────────────────────────────────────────────────
 
   /**
-   * Build a 15-channel tensor into the pre-allocated buffer.
+   * Build a 17-channel tensor into the pre-allocated buffer.
    * Channels 0–12 written fresh from the current observation (no stale data),
    * channel 13 = position marker for the given (x, y),
-   * channel 14 = army: 1.0 if carried by transport; transport: cargo count / 6; others: 0.
-   * Returns the shared buffer — valid until the next call.
+   * channel 14 = army: 1.0 if carried by transport; transport: cargo count / 6; others: 0,
+   * channels 15/16 = cylindrical-wrapped dx/dy relative position from (markerX, markerY).
+   * Returns the shared buffer — valid until the next call. The production expert
+   * uses only the first 15 channels (ch15/ch16 are movement-only).
    */
   private buildMovementTensor(obs: AgentObservation, markerX: number, markerY: number, ch14Value = 0): Float32Array {
-    fillViewTensor(obs as any as PlayerView, this.tensor15Buf);
-    const HW = this.tensor15Buf.length / 15;
+    fillViewTensor(obs as any as PlayerView, this.tensorBuf);
+    const HW = this.tensorBuf.length / 17;
 
     // Position marker (ch13)
-    if (this.lastMarkerIdx >= 0) this.tensor15Buf[this.lastMarkerIdx] = 0;
+    if (this.lastMarkerIdx >= 0) this.tensorBuf[this.lastMarkerIdx] = 0;
     const markerIdx = 13 * HW + markerY * this.mapWidth + markerX;
-    if (markerIdx < this.tensor15Buf.length) {
-      this.tensor15Buf[markerIdx] = 1.0;
+    if (markerIdx < this.tensorBuf.length) {
+      this.tensorBuf[markerIdx] = 1.0;
       this.lastMarkerIdx = markerIdx;
     }
 
     // ch14: carried flag (army) or cargo fraction (transport)
-    if (this.lastCarriedIdx >= 0) this.tensor15Buf[this.lastCarriedIdx] = 0;
+    if (this.lastCarriedIdx >= 0) this.tensorBuf[this.lastCarriedIdx] = 0;
     this.lastCarriedIdx = -1;
     if (ch14Value > 0) {
       const ch14Idx = 14 * HW + markerY * this.mapWidth + markerX;
-      if (ch14Idx < this.tensor15Buf.length) {
-        this.tensor15Buf[ch14Idx] = ch14Value;
+      if (ch14Idx < this.tensorBuf.length) {
+        this.tensorBuf[ch14Idx] = ch14Value;
         this.lastCarriedIdx = ch14Idx;
       }
     }
 
-    return this.tensor15Buf;
+    // ch15 (dx) / ch16 (dy): relative position from the marker tile to every tile.
+    // dx is cylindrical-wrapped to [-0.5, 0.5]; dy is plain (Y does not wrap).
+    // Both channels are fully rewritten each call, so no stale-index tracking is needed.
+    const W = this.mapWidth;
+    const H = HW / W;
+    const base15 = 15 * HW;
+    const base16 = 16 * HW;
+    for (let ty = 0; ty < H; ty++) {
+      const dy = (ty - markerY) / H;
+      const rowOff = ty * W;
+      for (let tx = 0; tx < W; tx++) {
+        const dxRaw = (tx - markerX) / W;
+        // dxRaw ∈ (-1, 1); subtract round() to wrap. ±0.5 round to 0 (matches numpy/torch).
+        const rounded = dxRaw === 0.5 || dxRaw === -0.5 ? 0 : Math.round(dxRaw);
+        this.tensorBuf[base15 + rowOff + tx] = dxRaw - rounded;
+        this.tensorBuf[base16 + rowOff + tx] = dy;
+      }
+    }
+
+    return this.tensorBuf;
   }
 
 

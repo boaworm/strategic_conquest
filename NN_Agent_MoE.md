@@ -35,16 +35,18 @@ Channels 13+ are written by the caller (agent or dataset loader), not by `fillVi
 One model per unit type: `army`, `fighter`, `missile`, `transport`, `destroyer`,
 `submarine`, `carrier`, `battleship`.
 
-**Input:** 15 channels × H × W
+**Input:** 17 channels × H × W
 - Channels 0–12: `fillViewTensor` output (13 base channels)
 - Channel 13: unit-position marker — 1.0 at the acting unit's tile, 0 elsewhere
-- Channel 14: army carried-by-transport flag — 1.0 if this army is currently aboard a transport, 0 otherwise (army model only; 0 for all other unit types)
+- Channel 14: carried/cargo flag — army: 1.0 if aboard a transport; transport: cargo count ÷ 6; 0 for all other unit types
+- Channel 15: dx — cylindrical-wrapped relative X from the unit to each tile, normalised to [−0.5, 0.5]
+- Channel 16: dy — relative Y from the unit to each tile, normalised to (−1, 1)
 
 **Output heads:**
 - `action_type` — logits over `[MOVE, SKIP]` (invalid actions are masked to −∞)
 - `target_tile` — logits over H×W (used when action_type = MOVE)
 
-**Backbone:** 3 conv layers with cylindrical X-padding, BatchNorm, ReLU; action head via global-avg-pool → MLP; tile head via 1×1 conv.
+**Backbone:** 3 conv layers with cylindrical X-padding, BatchNorm, ReLU; action head via global-avg-pool → MLP; tile head via 1×1 conv over per-tile features concatenated with broadcast global-avg-pool context (256→1).
 
 ### Production expert (×1)
 
@@ -147,7 +149,7 @@ worker-{i}-production.globals.bin # float32 28-value vectors
 worker-{i}-production.unitTypes.bin
 ```
 
-The 13-ch tensor is stored without the marker channels; ch13 (position marker) and ch14 (carried flag) are synthesised at training time by `dataset_moe.py`.
+The 13-ch tensor is stored without the marker channels; ch13 (position marker), ch14 (carried/cargo flag) and ch15/ch16 (dx/dy relative position) are synthesised at training time by `dataset_moe.py`. The runtime agent (`nnMoEAgent.ts`) synthesises the same channels for the ONNX path; the MPS sidecar receives 15 channels and derives ch15/ch16 itself.
 
 **Map height convention**: `MAP_HEIGHT` in `train_1.2_collect_moe.sh` refers to **playable rows**. The engine automatically adds one ice cap row at top and one at bottom, so the actual tensor height is `MAP_HEIGHT + 2`. Example: `MAP_HEIGHT=20` → 22-row tensor (rows 0 and 21 are impassable ice).
 
