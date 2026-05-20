@@ -102,7 +102,11 @@ def train(args):
     should_resume = ckpt_path.exists() and (args.resume or (args.file_idx is not None and args.file_idx > 0))
     if should_resume:
         ckpt = torch.load(ckpt_path, weights_only=False, map_location=device)
-        model.load_state_dict(ckpt['model_state'])
+        state = ckpt['model_state']
+        # Strip _orig_mod. prefix left by torch.compile when loading on a device that doesn't compile
+        if any(k.startswith('_orig_mod.') for k in state):
+            state = {k.replace('_orig_mod.', '', 1): v for k, v in state.items()}
+        model.load_state_dict(state)
         best_val_loss = ckpt['val_loss']
         print(f"Warm-started from checkpoint  best_val_loss={best_val_loss:.4f}")
 
@@ -172,7 +176,10 @@ def train(args):
 
     print(f"\nBest val loss: {best_val_loss:.4f}")
     best_ckpt = torch.load(out_dir / f'{args.unit_type}.pt', weights_only=False, map_location='cpu')
-    model.load_state_dict(best_ckpt['model_state'])
+    best_state = best_ckpt['model_state']
+    if any(k.startswith('_orig_mod.') for k in best_state):
+        best_state = {k.replace('_orig_mod.', '', 1): v for k, v in best_state.items()}
+    model.load_state_dict(best_state)
     export_onnx(model, map_height, map_width, out_dir / f'{args.unit_type}.onnx')
     print(f"Exported: {out_dir / args.unit_type}.onnx")
     del model
