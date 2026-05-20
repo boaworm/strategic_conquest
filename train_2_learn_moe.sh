@@ -24,6 +24,7 @@ OUT_DIR=$PROJECT_ROOT/packages/trainer/ai/checkpoints/moe
 EPOCHS=40
 NUM_FILES=8
 TARGET_VRAM_USAGE_GB=100
+PRODUCTION_MIN_BATCHES=${PRODUCTION_MIN_BATCHES:-20}
 RESUME_FLAG=$([ "$RESUME" = "1" ] && echo "--resume" || echo "")
 
 # Parse which units and whether to run production
@@ -56,7 +57,7 @@ python -u train_movement.py --unit-type $UNIT_TYPE --data-dir $DATA_DIR --out-di
   if $DO_PRODUCTION; then
     inner="$inner
 echo '=== Training production expert ==='
-python -u train_production.py --data-dir $DATA_DIR --out-dir $OUT_DIR --epochs $EPOCHS --num-files $NUM_FILES --target-vram-usage-gb $TARGET_VRAM_USAGE_GB $RESUME_FLAG"
+python -u train_production.py --data-dir $DATA_DIR --out-dir $OUT_DIR --epochs $EPOCHS --num-files $NUM_FILES --target-vram-usage-gb $TARGET_VRAM_USAGE_GB --min-batches $PRODUCTION_MIN_BATCHES $RESUME_FLAG"
   fi
 
   docker rm -f sc-train-run &>/dev/null || true
@@ -88,6 +89,7 @@ else
       --epochs               "$EPOCHS" \
       --num-files            "$NUM_FILES" \
       --target-vram-usage-gb "$TARGET_VRAM_USAGE_GB" \
+      --max-batch-size       "$PRODUCTION_MAX_BATCH" \
       $RESUME_FLAG
   fi
 fi

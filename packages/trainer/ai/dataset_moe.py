@@ -87,13 +87,13 @@ class MovementDataset(Dataset):
         if N == 0:
             raise ValueError(f"No valid data loaded for unit type '{unit_type}' (all files empty or missing)")
 
-        # Pre-allocate final arrays — one allocation each, no concatenation needed
-        states17          = np.zeros((N, 17, self.H, self.W), dtype=np.float32)  # built in fp32, converted to bf16 at end
+        # Allocate only the final tensor — no fp32 intermediate ever exists in full
+        tgt_dtype = torch.bfloat16 if use_bf16 else torch.float32
+        self.states17     = torch.zeros((N, 17, self.H, self.W), dtype=tgt_dtype)
         self.positions    = np.empty((N, 2),  dtype=np.int16)
         self.action_types = np.empty(N,       dtype=np.int64)
         self.tile_idxs    = np.empty(N,       dtype=np.int64)
 
-        # Pass 2: fill slice by slice — peak extra RAM = one file's raw states at a time
         offset = 0
         for sf, n in zip(state_files, file_ns):
             if n == 0:
@@ -105,36 +105,46 @@ class MovementDataset(Dataset):
             tf  = Path(base + '.tiles.bin')
             cf  = Path(base + '.carried.bin')
             cgf = Path(base + '.cargo.bin')
+            sl  = slice(offset, offset + n)
 
+            # ch0-12: mmap → assign directly into final tensor (fp32→tgt_dtype on the fly)
             raw_states = np.memmap(sf, dtype=np.float32, mode='r')
-            states13 = raw_states[:n * 13 * self.H * self.W].reshape(n, 13, self.H, self.W)
+            self.states17[sl, :13] = torch.from_numpy(
+                raw_states[:n * 13 * self.H * self.W].reshape(n, 13, self.H, self.W)
+            )
+            del raw_states
 
-            raw_pos  = np.memmap(pf, dtype=np.int16, mode='r')[:n * 2].reshape(n, 2)
+            raw_pos = np.memmap(pf, dtype=np.int16, mode='r')[:n * 2].reshape(n, 2)
             xs = raw_pos[:, 0].astype(np.int32)
             ys = raw_pos[:, 1].astype(np.int32)
             valid = (xs >= 0) & (xs < self.W) & (ys >= 0) & (ys < self.H)
             rows  = np.where(valid)[0]
+            self.positions[sl] = raw_pos
 
-            carried = np.memmap(cf,  dtype=np.uint8, mode='r')[:n].astype(np.float32) if cf.exists()  else np.zeros(n, dtype=np.float32)
-            cargo   = np.memmap(cgf, dtype=np.uint8, mode='r')[:n].astype(np.float32) / 6.0          if cgf.exists() else np.zeros(n, dtype=np.float32)
+            # ch13: unit marker — small fp32 temp, one file at a time
+            marker = torch.zeros(n, self.H, self.W)
+            marker[rows, ys[rows], xs[rows]] = 1.0
+            self.states17[sl, 13] = marker.to(tgt_dtype)
+            del marker
 
-            sl = slice(offset, offset + n)
-            states17[sl, :13] = states13
-            states17[offset + rows, 13, ys[rows], xs[rows]] = 1.0
-            states17[offset + rows, 14, ys[rows], xs[rows]] = (carried + cargo)[rows]
-            # ch15-16: dx/dy from LUT
-            states17[sl, 15] = lut[ys.clip(0, self.H-1), xs.clip(0, self.W-1), 0]
-            states17[sl, 16] = lut[ys.clip(0, self.H-1), xs.clip(0, self.W-1), 1]
+            # ch14: carried/cargo — small fp32 temp, one file at a time
+            carried = np.memmap(cf,  dtype=np.uint8, mode='r')[:n].astype(np.float32) if cf.exists() else np.zeros(n, dtype=np.float32)
+            cargo   = np.memmap(cgf, dtype=np.uint8, mode='r')[:n].astype(np.float32) / 6.0 if cgf.exists() else np.zeros(n, dtype=np.float32)
+            cargo_ch = torch.zeros(n, self.H, self.W)
+            cargo_ch[rows, ys[rows], xs[rows]] = torch.from_numpy((carried + cargo)[rows])
+            self.states17[sl, 14] = cargo_ch.to(tgt_dtype)
+            del carried, cargo, cargo_ch
 
-            self.positions[sl]    = raw_pos
+            # ch15-16: LUT lookup — numpy fancy-index produces small fp32 arrays
+            self.states17[sl, 15] = torch.from_numpy(lut[ys.clip(0, self.H-1), xs.clip(0, self.W-1), 0])
+            self.states17[sl, 16] = torch.from_numpy(lut[ys.clip(0, self.H-1), xs.clip(0, self.W-1), 1])
+
             self.action_types[sl] = np.memmap(af, dtype=np.int8,  mode='r')[:n].astype(np.int64)
             self.tile_idxs[sl]    = np.memmap(tf, dtype=np.int32, mode='r')[:n].astype(np.int64)
 
-            del raw_states, states13, raw_pos
+            del raw_pos
             offset += n
 
-        # CUDA: store as bfloat16 (halves memory, matches autocast); MPS: keep float32 (bfloat16 support limited)
-        self.states17 = torch.from_numpy(states17).bfloat16() if use_bf16 else torch.from_numpy(states17)
         self.action_types = torch.from_numpy(self.action_types)
         self.tile_idxs    = torch.from_numpy(self.tile_idxs)
 

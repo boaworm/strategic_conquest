@@ -48,23 +48,43 @@ def train(args):
     file_label = f"file {args.file_idx + 1}" if args.file_idx is not None else "all files"
     print(f"Loaded {len(dataset):,} production samples ({file_label})")
 
-    use_amp  = (device.type == "cuda")
+    use_amp    = (device.type == "cuda")
+    dl_workers = 4 if device.type == "cuda" else 0
     batch_size = args.batch_size
+    prefetch_factor = 2
     if args.target_vram_usage_gb > 0:
-        bytes_per_sample = 3_400_000 if use_amp else 6_800_000
-        dataset_bytes = dataset.states15.nbytes if hasattr(dataset.states15, 'nbytes') else dataset.states15.numel() * dataset.states15.element_size()
-        fixed_bytes   = dataset_bytes + 2 * 1024 ** 3
-        target_bytes  = int(args.target_vram_usage_gb * 1024 ** 3)
-        batch_size    = max(256, ((target_bytes - fixed_bytes) // bytes_per_sample) // 256 * 256)
-        print(f"Auto batch size: {batch_size:,}  (target {args.target_vram_usage_gb} GB, dataset {dataset_bytes / 1024**3:.1f} GB, {'bf16' if use_amp else 'fp32'})")
+        bytes_per_sample       = 3_400_000 if use_amp else 6_800_000
+        dataset_bytes          = dataset.states15.nbytes if hasattr(dataset.states15, 'nbytes') else dataset.states15.numel() * dataset.states15.element_size()
+        input_bytes_per_sample = dataset.states15.element_size() * dataset.states15.shape[1] * dataset.map_height * dataset.map_width
+        fixed_bytes            = dataset_bytes + 2 * 1024 ** 3
+        target_bytes           = int(args.target_vram_usage_gb * 1024 ** 3)
+
+        # Batch size: activation budget, capped so we have at least min_batches per epoch
+        train_n_approx = int(len(dataset) * 0.9)
+        batch_size     = max(256, ((target_bytes - fixed_bytes) // bytes_per_sample) // 256 * 256)
+        if args.min_batches > 0:
+            batch_size = min(batch_size, max(256, (train_n_approx // args.min_batches) // 256 * 256))
+
+        # Remaining memory → prefetch buffers (input tensors only, not activations)
+        activation_bytes    = batch_size * bytes_per_sample
+        remaining_bytes     = target_bytes - fixed_bytes - activation_bytes
+        prefetch_batch_cost = batch_size * input_bytes_per_sample
+        if dl_workers > 0 and prefetch_batch_cost > 0:
+            prefetch_factor = max(2, int(remaining_bytes // (dl_workers * prefetch_batch_cost)))
+
+        print(f"Auto batch size: {batch_size:,}  prefetch_factor: {prefetch_factor}  "
+              f"(target {args.target_vram_usage_gb} GB, dataset {dataset_bytes / 1024**3:.1f} GB, {'bf16' if use_amp else 'fp32'})")
 
     val_n   = max(1, int(len(dataset) * 0.1))
     train_n = len(dataset) - val_n
     train_ds, val_ds = random_split(dataset, [train_n, val_n],
                                     generator=torch.Generator().manual_seed(42))
 
-    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=0)
-    val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=0)
+    dl_kwargs  = dict(num_workers=dl_workers, pin_memory=(device.type == "cuda"),
+                      persistent_workers=(dl_workers > 0),
+                      prefetch_factor=(prefetch_factor if dl_workers > 0 else None))
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  **dl_kwargs)
+    val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, **dl_kwargs)
 
     model = ProductionCNN(
         channels=15,
@@ -85,9 +105,18 @@ def train(args):
     should_resume = ckpt_path.exists() and (args.resume or (args.file_idx is not None and args.file_idx > 0))
     if should_resume:
         ckpt = torch.load(ckpt_path, weights_only=False, map_location=device)
-        model.load_state_dict(ckpt['model_state'])
+        state_dict = ckpt['model_state']
+        state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+        model.load_state_dict(state_dict)
         best_val_loss = ckpt['val_loss']
         print(f"Warm-started from checkpoint  best_val_loss={best_val_loss:.4f}")
+
+    if device.type == "cuda":
+        try:
+            model = torch.compile(model)
+            print("Using torch.compile")
+        except Exception:
+            pass
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -180,8 +209,9 @@ def main():
     parser.add_argument('--data-dir',   required=True)
     parser.add_argument('--out-dir',    default='./checkpoints/moe')
     parser.add_argument('--epochs',     type=int,   default=50)
-    parser.add_argument('--batch-size',           type=int,   default=0,   help="Fixed batch size (0 = use --target-vram-usage-gb)")
-    parser.add_argument('--target-vram-usage-gb', type=float, default=0,   help="Auto-compute batch size to hit this RAM target")
+    parser.add_argument('--batch-size',           type=int,   default=0,    help="Fixed batch size (0 = use --target-vram-usage-gb)")
+    parser.add_argument('--min-batches',          type=int,   default=20,   help="Minimum batches per epoch; caps auto batch size so pipeline stays full")
+    parser.add_argument('--target-vram-usage-gb', type=float, default=0,    help="Auto-compute batch size to hit this RAM target")
     parser.add_argument('--lr',         type=float, default=1e-3)
     parser.add_argument('--weight-decay', type=float, default=0.0)
     parser.add_argument('--file-idx',   type=int,   default=None,
