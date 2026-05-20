@@ -95,3 +95,86 @@ if errors:
 else:
     print("Sanity check passed")
 EOF
+
+if [ -n "$COMBINE_DATA_INTO_GB_CHUNKS" ]; then
+  echo "=== Combining worker files into ${COMBINE_DATA_INTO_GB_CHUNKS}G chunks ==="
+  python3 - <<EOF
+import math, os
+from pathlib import Path
+
+data_dir    = Path("$DATA_DIR")
+chunk_bytes = $COMBINE_DATA_INTO_GB_CHUNKS * 1024**3
+
+def cat_files(srcs, dst):
+    with open(dst, 'wb') as out:
+        for src in srcs:
+            with open(src, 'rb') as inp:
+                while True:
+                    buf = inp.read(64 * 1024 * 1024)
+                    if not buf:
+                        break
+                    out.write(buf)
+
+def combine_unit(unit, states_files, exts, optional_exts=[]):
+    file_size     = states_files[0].stat().st_size
+    max_per_group = max(1, int(chunk_bytes // file_size))
+    if max_per_group == 1:
+        print(f"{unit}: {file_size/1024**3:.1f}G per file, nothing to combine")
+        return
+    num_groups = math.ceil(len(states_files) / max_per_group)
+    print(f"{unit}: {len(states_files)} x {file_size/1024**3:.1f}G -> {num_groups} file(s) of up to {max_per_group}")
+
+    # Write to tmp files first to avoid read/write conflicts
+    for g in range(num_groups):
+        group = states_files[g * max_per_group:(g + 1) * max_per_group]
+        for ext in exts:
+            srcs = [Path(str(sf).replace('.states.bin', f'.{ext}.bin')) for sf in group]
+            cat_files(srcs, data_dir / f'_tmp-{g}-{unit}.{ext}.bin')
+        for ext in optional_exts:
+            srcs = [Path(str(sf).replace('.states.bin', f'.{ext}.bin')) for sf in group
+                    if Path(str(sf).replace('.states.bin', f'.{ext}.bin')).exists()]
+            if srcs:
+                cat_files(srcs, data_dir / f'_tmp-{g}-{unit}.{ext}.bin')
+
+    # Delete originals
+    all_exts = exts + optional_exts
+    for sf in states_files:
+        base = str(sf).replace('.states.bin', '')
+        for ext in all_exts:
+            p = Path(f'{base}.{ext}.bin')
+            if p.exists():
+                p.unlink()
+
+    # Rename tmp -> worker-N
+    for g in range(num_groups):
+        for p in data_dir.glob(f'_tmp-{g}-{unit}.*.bin'):
+            p.rename(data_dir / p.name.replace(f'_tmp-{g}-', f'worker-{g}-'))
+
+ALL_MOVEMENT_TYPES = ['army','fighter','missile','transport','destroyer','submarine','carrier','battleship']
+unit_filter  = "$UNIT_TYPE_FILTER"
+prod_only    = "$PROD_ONLY" == "1"
+
+if prod_only:
+    movement_types = []
+elif unit_filter:
+    movement_types = [unit_filter]
+else:
+    movement_types = ALL_MOVEMENT_TYPES
+
+for unit in movement_types:
+    states_files = sorted(data_dir.glob(f'worker-*-{unit}.states.bin'))
+    if states_files:
+        combine_unit(unit, states_files,
+                     exts=['states','positions','actions','tiles'],
+                     optional_exts=['carried','cargo'])
+
+if not unit_filter:
+    prod_files = sorted(data_dir.glob('worker-*-production.states.bin'))
+    if prod_files:
+        combine_unit('production', prod_files,
+                     exts=['states','cities','globals','unitTypes'])
+
+print("Done.")
+EOF
+  echo "=== Combining complete ==="
+fi
