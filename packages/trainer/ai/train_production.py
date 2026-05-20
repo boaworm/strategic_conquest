@@ -13,6 +13,7 @@ Saves:
 """
 
 import argparse
+import gc
 import os
 import time
 import warnings
@@ -129,13 +130,19 @@ def train(args):
                 'val_loss': val_loss,
             }, out_dir / 'production.pt')
 
-    del train_dl, val_dl
+    map_height, map_width = dataset.map_height, dataset.map_width
+    del train_dl, val_dl, optimizer, dataset
+    gc.collect()
+    torch.cuda.empty_cache()
 
     print(f"\nBest val loss: {best_val_loss:.4f}")
     best_ckpt = torch.load(out_dir / 'production.pt', weights_only=False, map_location='cpu')
     model.load_state_dict(best_ckpt['model_state'])
-    export_onnx(model, dataset.map_height, dataset.map_width, out_dir / 'production.onnx')
+    export_onnx(model, map_height, map_width, out_dir / 'production.onnx')
     print(f"Exported: {out_dir}/production.onnx")
+    del model
+    gc.collect()
+    torch.cuda.empty_cache()
 
 
 def export_onnx(model: ProductionCNN, map_height: int, map_width: int, output_path: Path):

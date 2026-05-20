@@ -19,6 +19,7 @@ import warnings
 import logging
 from pathlib import Path
 
+import gc
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -164,13 +165,19 @@ def train(args):
                 'val_loss': val_loss,
             }, out_dir / f'{args.unit_type}.pt')
 
-    del train_dl, val_dl
+    map_height, map_width = dataset.map_height, dataset.map_width
+    del train_dl, val_dl, optimizer, scaler, dataset
+    gc.collect()
+    torch.cuda.empty_cache()
 
     print(f"\nBest val loss: {best_val_loss:.4f}")
     best_ckpt = torch.load(out_dir / f'{args.unit_type}.pt', weights_only=False, map_location='cpu')
     model.load_state_dict(best_ckpt['model_state'])
-    export_onnx(model, dataset.map_height, dataset.map_width, out_dir / f'{args.unit_type}.onnx')
+    export_onnx(model, map_height, map_width, out_dir / f'{args.unit_type}.onnx')
     print(f"Exported: {out_dir / args.unit_type}.onnx")
+    del model
+    gc.collect()
+    torch.cuda.empty_cache()
 
 
 def export_onnx(model: MovementCNN, map_height: int, map_width: int, output_path: Path):
