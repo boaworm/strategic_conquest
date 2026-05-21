@@ -23,7 +23,6 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
 
 from dataset_moe import ProductionDataset, NUM_UNIT_TYPES, NUM_GLOBAL
 from models_moe import ProductionCNN
@@ -49,15 +48,13 @@ def train(args):
     print(f"Loaded {len(dataset):,} production samples ({file_label})")
 
     use_amp    = (device.type == "cuda")
-    dl_workers = 4 if device.type == "cuda" else 0
+    map_height, map_width = dataset.map_height, dataset.map_width
     batch_size = args.batch_size
-    prefetch_factor = 2
     if args.target_vram_usage_gb > 0:
-        bytes_per_sample       = 3_400_000 if use_amp else 6_800_000
-        dataset_bytes          = dataset.states15.nbytes if hasattr(dataset.states15, 'nbytes') else dataset.states15.numel() * dataset.states15.element_size()
-        input_bytes_per_sample = dataset.states15.element_size() * dataset.states15.shape[1] * dataset.map_height * dataset.map_width
-        fixed_bytes            = dataset_bytes + 2 * 1024 ** 3
-        target_bytes           = int(args.target_vram_usage_gb * 1024 ** 3)
+        bytes_per_sample = 3_400_000 if use_amp else 6_800_000
+        dataset_bytes    = dataset.states15.numel() * dataset.states15.element_size()
+        fixed_bytes      = dataset_bytes + 2 * 1024 ** 3
+        target_bytes     = int(args.target_vram_usage_gb * 1024 ** 3)
 
         # Batch size: activation budget, capped so we have at least min_batches per epoch
         train_n_approx = int(len(dataset) * 0.9)
@@ -65,37 +62,35 @@ def train(args):
         if args.min_batches > 0:
             batch_size = min(batch_size, max(256, (train_n_approx // args.min_batches) // 256 * 256))
 
-        # Remaining memory → prefetch buffers (input tensors only, not activations)
-        activation_bytes    = batch_size * bytes_per_sample
-        remaining_bytes     = target_bytes - fixed_bytes - activation_bytes
-        prefetch_batch_cost = batch_size * input_bytes_per_sample
-        if dl_workers > 0 and prefetch_batch_cost > 0:
-            prefetch_factor = max(2, int(remaining_bytes // (dl_workers * prefetch_batch_cost)))
-
-        print(f"Auto batch size: {batch_size:,}  prefetch_factor: {prefetch_factor}  "
+        print(f"Auto batch size: {batch_size:,}  "
               f"(target {args.target_vram_usage_gb} GB, dataset {dataset_bytes / 1024**3:.1f} GB, {'bf16' if use_amp else 'fp32'})")
 
-    val_n   = max(1, int(len(dataset) * 0.1))
-    train_n = len(dataset) - val_n
-    train_ds, val_ds = random_split(dataset, [train_n, val_n],
-                                    generator=torch.Generator().manual_seed(42))
+    # ── Tier 2: hold the whole shard resident on the device and index it there.
+    states_all  = dataset.states15.to(device)
+    globals_all = torch.from_numpy(dataset.globals).to(device)
+    types_all   = torch.from_numpy(dataset.unit_types).to(device)
+    dataset.states15 = None          # free the CPU copy of the shard
+    del dataset
+    gc.collect()
 
-    dl_kwargs  = dict(num_workers=dl_workers, pin_memory=(device.type == "cuda"),
-                      persistent_workers=(dl_workers > 0),
-                      prefetch_factor=(prefetch_factor if dl_workers > 0 else None))
-    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  **dl_kwargs)
-    val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, **dl_kwargs)
+    N = states_all.shape[0]
+    val_n   = max(1, int(N * 0.1))
+    train_n = N - val_n
+    split   = torch.randperm(N, generator=torch.Generator().manual_seed(42))
+    train_idx = split[:train_n].to(device)
+    val_idx   = split[train_n:].to(device)
+    train_batches = train_n // batch_size            # drop_last: every batch is full-size
+    val_batches   = max(1, val_n // batch_size)
+    if train_batches == 0:
+        raise ValueError(f"batch_size {batch_size} exceeds train split {train_n}")
 
-    model = ProductionCNN(
-        channels=15,
-        map_height=dataset.map_height,
-        map_width=dataset.map_width,
-    ).to(device)
+    model = ProductionCNN(channels=15, map_height=map_height, map_width=map_width).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    # bf16 autocast has fp32 range -- no GradScaler needed (it would force a per-step sync).
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay,
+                                 fused=(device.type == "cuda"))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    scaler   = torch.amp.GradScaler(enabled=use_amp)
-    autocast = lambda: torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=use_amp)
+    autocast  = lambda: torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=use_amp)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -113,6 +108,7 @@ def train(args):
 
     if device.type == "cuda":
         try:
+            # default mode (reduce-overhead cudagraphs break across per-file recompiles; little gain when bandwidth-bound)
             model = torch.compile(model)
             print("Using torch.compile")
         except Exception:
@@ -123,42 +119,48 @@ def train(args):
         total_loss = torch.zeros((), device=device)
         t0 = time.time()
 
-        for states, globals_, unit_types in train_dl:
-            states     = states.to(device)
-            globals_   = globals_.to(device)
-            unit_types = unit_types.to(device)
+        perm = train_idx[torch.randperm(train_n, device=device)]
+        for b in range(train_batches):
+            idx = perm[b * batch_size : (b + 1) * batch_size]
+            states     = states_all.index_select(0, idx)
+            globals_   = globals_all.index_select(0, idx)
+            unit_types = types_all.index_select(0, idx)
 
             with autocast():
                 out = model(states, globals_)
                 loss = F.cross_entropy(out['unit_type'], unit_types)
 
-            optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
             total_loss += loss.detach()
 
         scheduler.step()
+        train_loss = total_loss.item() / train_batches
+
+        # Validate periodically (and on the final epoch) -- used only for model selection.
+        if epoch % args.val_every != 0 and epoch != args.epochs:
+            print(f"Epoch {epoch:3d}/{args.epochs}  train={train_loss:.4f}  ({time.time()-t0:.1f}s)")
+            continue
 
         model.eval()
         val_loss = torch.zeros((), device=device)
         correct  = torch.zeros((), device=device)
         with torch.no_grad():
-            for states, globals_, unit_types in val_dl:
-                states     = states.to(device)
-                globals_   = globals_.to(device)
-                unit_types = unit_types.to(device)
+            for b in range(val_batches):
+                idx = val_idx[b * batch_size : (b + 1) * batch_size]
+                states     = states_all.index_select(0, idx)
+                globals_   = globals_all.index_select(0, idx)
+                unit_types = types_all.index_select(0, idx)
                 with autocast():
                     out = model(states, globals_)
                 val_loss += F.cross_entropy(out['unit_type'], unit_types).detach()
                 correct  += (out['unit_type'].argmax(1) == unit_types).sum()
 
-        val_loss  = val_loss.item() / len(val_dl)
-        val_acc   = correct.item() / len(val_ds)
-        elapsed   = time.time() - t0
-
-        print(f"Epoch {epoch:3d}/{args.epochs}  train={total_loss.item()/len(train_dl):.4f}"
-              f"  val={val_loss:.4f}  acc={val_acc:.3f}  ({elapsed:.1f}s)")
+        val_loss = val_loss.item() / val_batches
+        val_acc  = correct.item() / (val_batches * batch_size)
+        print(f"Epoch {epoch:3d}/{args.epochs}  train={train_loss:.4f}"
+              f"  val={val_loss:.4f}  acc={val_acc:.3f}  ({time.time()-t0:.1f}s)")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -166,23 +168,27 @@ def train(args):
                 'model_state': model.state_dict(),
                 'config': {
                     'channels':   15,
-                    'map_height': dataset.map_height,
-                    'map_width':  dataset.map_width,
+                    'map_height': map_height,
+                    'map_width':  map_width,
                     'num_global': NUM_GLOBAL,
                 },
                 'epoch':    epoch,
                 'val_loss': val_loss,
-            }, out_dir / 'production.pt')
+            }, ckpt_path)
 
-    map_height, map_width = dataset.map_height, dataset.map_width
-    del train_dl, val_dl, optimizer, scaler, dataset
+    del states_all, globals_all, types_all, train_idx, val_idx, split, optimizer
     gc.collect()
     torch.cuda.empty_cache()
 
     print(f"\nBest val loss: {best_val_loss:.4f}")
     best_ckpt = torch.load(out_dir / 'production.pt', weights_only=False, map_location='cpu')
-    model.load_state_dict(best_ckpt['model_state'])
-    export_onnx(model, map_height, map_width, out_dir / 'production.onnx')
+    best_state = best_ckpt['model_state']
+    if any(k.startswith('_orig_mod.') for k in best_state):
+        best_state = {k.replace('_orig_mod.', '', 1): v for k, v in best_state.items()}
+    # `model` may be a torch.compile OptimizedModule; load/export the underlying module.
+    base_model = getattr(model, '_orig_mod', model)
+    base_model.load_state_dict(best_state)
+    export_onnx(base_model, map_height, map_width, out_dir / 'production.onnx')
     print(f"Exported: {out_dir}/production.onnx")
     del model
     gc.collect()
@@ -214,6 +220,8 @@ def main():
     parser.add_argument('--target-vram-usage-gb', type=float, default=0,    help="Auto-compute batch size to hit this RAM target")
     parser.add_argument('--lr',         type=float, default=1e-3)
     parser.add_argument('--weight-decay', type=float, default=0.0)
+    parser.add_argument('--val-every',  type=int,   default=5,
+                        help='Run validation every N epochs (always on the final epoch).')
     parser.add_argument('--file-idx',   type=int,   default=None,
                         help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')
     parser.add_argument('--num-files',  type=int,   default=None,

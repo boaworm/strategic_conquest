@@ -17,9 +17,17 @@ ALL_MODEL_NAMES = UNIT_TYPE_NAMES + ['production']
 
 
 def _circular_pad(x: torch.Tensor, pad: int) -> torch.Tensor:
-    x = F.pad(x, (pad, pad, 0, 0), mode="circular")   # wrap X
-    x = F.pad(x, (0, 0, pad, pad), mode="constant", value=0)  # zero-pad Y
-    return x
+    """Circular (wrap-around) padding on the X axis only.
+
+    The Y zero-pad is folded into each conv layer's own ``padding=(1, 0)``.
+    ``F.pad`` does not preserve channels_last, so the result is restored to the
+    input's memory format — this keeps a channels_last tensor on cuDNN's NHWC
+    bf16 conv path with no layout-conversion kernels.
+    """
+    out = F.pad(x, (pad, pad, 0, 0), mode="circular")   # wrap X
+    if x.is_contiguous(memory_format=torch.channels_last):
+        out = out.contiguous(memory_format=torch.channels_last)
+    return out
 
 
 class MovementCNN(nn.Module):
@@ -43,9 +51,9 @@ class MovementCNN(nn.Module):
         self.map_height = map_height
         self.map_width  = map_width
 
-        self.conv1 = nn.Conv2d(channels, 64,  kernel_size=3, padding=0)
-        self.conv2 = nn.Conv2d(64,       128, kernel_size=3, padding=0)
-        self.conv3 = nn.Conv2d(128,      128, kernel_size=3, padding=0)
+        self.conv1 = nn.Conv2d(channels, 64,  kernel_size=3, padding=(1, 0))
+        self.conv2 = nn.Conv2d(64,       128, kernel_size=3, padding=(1, 0))
+        self.conv3 = nn.Conv2d(128,      128, kernel_size=3, padding=(1, 0))
         self.bn1   = nn.BatchNorm2d(64)
         self.bn2   = nn.BatchNorm2d(128)
         self.bn3   = nn.BatchNorm2d(128)
@@ -92,9 +100,9 @@ class ProductionCNN(nn.Module):
         self.map_height = map_height
         self.map_width  = map_width
 
-        self.conv1 = nn.Conv2d(channels, 64,  kernel_size=3, padding=0)
-        self.conv2 = nn.Conv2d(64,       128, kernel_size=3, padding=0)
-        self.conv3 = nn.Conv2d(128,      128, kernel_size=3, padding=0)
+        self.conv1 = nn.Conv2d(channels, 64,  kernel_size=3, padding=(1, 0))
+        self.conv2 = nn.Conv2d(64,       128, kernel_size=3, padding=(1, 0))
+        self.conv3 = nn.Conv2d(128,      128, kernel_size=3, padding=(1, 0))
         self.bn1   = nn.BatchNorm2d(64)
         self.bn2   = nn.BatchNorm2d(128)
         self.bn3   = nn.BatchNorm2d(128)

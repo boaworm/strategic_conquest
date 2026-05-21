@@ -23,7 +23,6 @@ import gc
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
 
 from dataset_moe import MovementDataset, MOVEMENT_ACTION_TYPES, NUM_MOVEMENT_ACTIONS
 from models_moe import MovementCNN
@@ -63,29 +62,35 @@ def train(args):
         batch_size    = max(256, ((target_bytes - fixed_bytes) // (3_400_000)) // 256 * 256)
         print(f"Auto batch size: {batch_size:,}  (target {args.target_vram_usage_gb} GB, dataset {dataset.states17.nbytes / 1024**3:.1f} GB)")
 
-    val_n   = max(1, int(len(dataset) * 0.1))
-    train_n = len(dataset) - val_n
-    train_ds, val_ds = random_split(dataset, [train_n, val_n],
-                                    generator=torch.Generator().manual_seed(42))
+    use_amp = (device.type == "cuda")
+    map_height, map_width = dataset.map_height, dataset.map_width
 
-    # MPS (Apple Silicon): no DataLoader workers (causes issues), no bfloat16, no torch.compile
-    # CUDA (DGX Spark):    workers + prefetch for pipelining, bfloat16 autocast, torch.compile
-    dl_workers = 4 if device.type == "cuda" else 0
-    dl_kwargs  = dict(num_workers=dl_workers, persistent_workers=False, prefetch_factor=(2 if dl_workers > 0 else None))
-    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  **dl_kwargs)
-    val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, **dl_kwargs)
+    # ── Tier 2: hold the whole shard resident on the device and index it there.
+    # No DataLoader, no worker processes, no per-batch host->device copy.
+    states_all  = dataset.states17.to(device)
+    actions_all = dataset.action_types.to(device)
+    tiles_all   = dataset.tile_idxs.to(device)
+    dataset.states17 = None          # free the CPU copy of the shard
+    del dataset
+    gc.collect()
 
-    model = MovementCNN(
-        channels=17,
-        map_height=dataset.map_height,
-        map_width=dataset.map_width,
-    ).to(device)
+    N = states_all.shape[0]
+    val_n   = max(1, int(N * 0.1))
+    train_n = N - val_n
+    split   = torch.randperm(N, generator=torch.Generator().manual_seed(42))
+    train_idx = split[:train_n].to(device)
+    val_idx   = split[train_n:].to(device)
+    train_batches = train_n // batch_size            # drop_last: every batch is full-size
+    val_batches   = max(1, val_n // batch_size)
+    if train_batches == 0:
+        raise ValueError(f"batch_size {batch_size} exceeds train split {train_n}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    model = MovementCNN(channels=17, map_height=map_height, map_width=map_width).to(device)
+
+    # bf16 autocast has fp32 range -- no GradScaler needed (it would force a per-step sync).
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, fused=(device.type == "cuda"))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    use_amp  = (device.type == "cuda")
-    scaler   = torch.amp.GradScaler(enabled=use_amp)
-    autocast = lambda: torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=use_amp)
+    autocast  = lambda: torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=use_amp)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -100,22 +105,65 @@ def train(args):
         best_val_loss = ckpt['val_loss']
         print(f"Warm-started from checkpoint  best_val_loss={best_val_loss:.4f}")
 
-    if device.type == "cuda":
+    if device.type == "cuda" and not args.profile:
         try:
+            # default mode (reduce-overhead cudagraphs break across per-file recompiles; little gain when bandwidth-bound)
             model = torch.compile(model)
             print("Using torch.compile")
         except Exception:
             pass
+
+    # Diagnostic: profile a few eager steps, dump a Chrome trace, and exit.
+    # Eager (uncompiled) so every CUDA kernel is individually visible in the trace.
+    if args.profile:
+        from torch.profiler import profile, ProfilerActivity, schedule
+        prof_dir = Path(__file__).resolve().parents[3] / "tmp"
+        prof_dir.mkdir(parents=True, exist_ok=True)
+        trace_path = prof_dir / f"profile_{args.unit_type}.json"
+        # Deliberately small batch: the per-kernel mix we want to measure is
+        # ~batch-independent, whereas a big eager batch holds ~batch x activation
+        # memory and would OOM. This keeps the profiler path lightweight (~40 GB).
+        prof_bs = min(1024, train_n)
+        wait, warmup = 5, 5
+        active = max(1, min(20, train_n // prof_bs - wait - warmup))
+        model.train()
+        perm = train_idx[torch.randperm(train_n, device=device)]
+        print(f"Profiling {active} eager steps (batch {prof_bs:,})...")
+        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                     schedule=schedule(wait=wait, warmup=warmup, active=active, repeat=1)) as prof:
+            for b in range(wait + warmup + active):
+                idx = perm[b * prof_bs : (b + 1) * prof_bs]
+                states       = states_all.index_select(0, idx)
+                action_types = actions_all.index_select(0, idx)
+                tile_idxs    = tiles_all.index_select(0, idx)
+                with autocast():
+                    out = model(states)
+                    loss_at   = F.cross_entropy(out['action_type'], action_types, weight=class_weights)
+                    loss_tile = F.cross_entropy(out['target_tile'], tile_idxs, ignore_index=-1)
+                    loss = loss_at + loss_tile
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
+                prof.step()
+        prof.export_chrome_trace(str(trace_path))
+        try:
+            print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=25))
+        except Exception:
+            print(prof.key_averages().table(row_limit=25))
+        print(f"\nChrome trace: {trace_path}  (open in chrome://tracing or ui.perfetto.dev)")
+        return
 
     for epoch in range(1, args.epochs + 1):
         model.train()
         total_loss = torch.zeros((), device=device)
         t0 = time.time()
 
-        for states, action_types, tile_idxs in train_dl:
-            states       = states.to(device)
-            action_types = action_types.to(device)
-            tile_idxs    = tile_idxs.to(device)
+        perm = train_idx[torch.randperm(train_n, device=device)]
+        for b in range(train_batches):
+            idx = perm[b * batch_size : (b + 1) * batch_size]
+            states       = states_all.index_select(0, idx)
+            action_types = actions_all.index_select(0, idx)
+            tile_idxs    = tiles_all.index_select(0, idx)
 
             with autocast():
                 out = model(states)
@@ -123,34 +171,36 @@ def train(args):
                 loss_tile = F.cross_entropy(out['target_tile'], tile_idxs, ignore_index=-1)
                 loss = loss_at + loss_tile
 
-            optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
             total_loss += loss.detach()
 
         scheduler.step()
+        train_loss = total_loss.item() / train_batches
 
-        # Validation
+        # Validate periodically (and on the final epoch) -- used only for model selection.
+        if epoch % args.val_every != 0 and epoch != args.epochs:
+            print(f"Epoch {epoch:3d}/{args.epochs}  train={train_loss:.4f}  ({time.time()-t0:.1f}s)")
+            continue
+
         model.eval()
-        val_loss = torch.zeros((), device=device)
+        val_loss   = torch.zeros((), device=device)
         correct_at = torch.zeros((), device=device)
         with torch.no_grad():
-            for states, action_types, tile_idxs in val_dl:
-                states       = states.to(device)
-                action_types = action_types.to(device)
-                tile_idxs    = tile_idxs.to(device)
+            for b in range(val_batches):
+                idx = val_idx[b * batch_size : (b + 1) * batch_size]
+                states       = states_all.index_select(0, idx)
+                action_types = actions_all.index_select(0, idx)
                 with autocast():
                     out = model(states)
-                val_loss += F.cross_entropy(out['action_type'], action_types).detach()
+                val_loss   += F.cross_entropy(out['action_type'], action_types).detach()
                 correct_at += (out['action_type'].argmax(1) == action_types).sum()
 
-        val_loss  = val_loss.item() / len(val_dl)
-        val_acc   = correct_at.item() / len(val_ds)
-        elapsed   = time.time() - t0
-
-        print(f"Epoch {epoch:3d}/{args.epochs}  train={total_loss.item()/len(train_dl):.4f}"
-              f"  val={val_loss:.4f}  acc={val_acc:.3f}  ({elapsed:.1f}s)")
+        val_loss = val_loss.item() / val_batches
+        val_acc  = correct_at.item() / (val_batches * batch_size)
+        print(f"Epoch {epoch:3d}/{args.epochs}  train={train_loss:.4f}"
+              f"  val={val_loss:.4f}  acc={val_acc:.3f}  ({time.time()-t0:.1f}s)")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -158,16 +208,15 @@ def train(args):
                 'model_state': model.state_dict(),
                 'config': {
                     'channels': 17,
-                    'map_height': dataset.map_height,
-                    'map_width':  dataset.map_width,
+                    'map_height': map_height,
+                    'map_width':  map_width,
                 },
                 'unit_type': args.unit_type,
                 'epoch': epoch,
                 'val_loss': val_loss,
-            }, out_dir / f'{args.unit_type}.pt')
+            }, ckpt_path)
 
-    map_height, map_width = dataset.map_height, dataset.map_width
-    del train_dl, val_dl, optimizer, scaler, dataset
+    del states_all, actions_all, tiles_all, train_idx, val_idx, split, optimizer
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -176,8 +225,11 @@ def train(args):
     best_state = best_ckpt['model_state']
     if any(k.startswith('_orig_mod.') for k in best_state):
         best_state = {k.replace('_orig_mod.', '', 1): v for k, v in best_state.items()}
-    model.load_state_dict(best_state)
-    export_onnx(model, map_height, map_width, out_dir / f'{args.unit_type}.onnx')
+    # `model` may be a torch.compile OptimizedModule; the stripped state_dict has
+    # bare keys, so load/export the underlying module to keep keys consistent.
+    base_model = getattr(model, '_orig_mod', model)
+    base_model.load_state_dict(best_state)
+    export_onnx(base_model, map_height, map_width, out_dir / f'{args.unit_type}.onnx')
     print(f"Exported: {out_dir / args.unit_type}.onnx")
     del model
     gc.collect()
@@ -207,14 +259,21 @@ def main():
     parser.add_argument('--batch-size',       type=int,   default=0,    help="Fixed batch size (0 = use --target-vram-usage-gb)")
     parser.add_argument('--target-vram-usage-gb', type=float, default=0,    help="Auto-compute batch size to hit this RAM target")
     parser.add_argument('--lr',         type=float, default=1e-3)
+    parser.add_argument('--val-every',  type=int,   default=5,
+                        help='Run validation every N epochs (always on the final epoch).')
     parser.add_argument('--file-idx',   type=int,   default=None,
                         help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')
     parser.add_argument('--num-files',  type=int,   default=None,
                         help='Train sequentially on this many files (0..N-1) in one process.')
     parser.add_argument('--resume',     action='store_true',
                         help='Warm-start from existing checkpoint even at file-idx 0.')
+    parser.add_argument('--profile',    action='store_true',
+                        help='Profile ~20 eager steps, write a Chrome trace to tmp/, and exit.')
     args = parser.parse_args()
-    if args.num_files:
+    if args.profile:
+        args.file_idx = 0
+        train(args)
+    elif args.num_files:
         for file_idx in range(args.num_files):
             print(f"--- {args.unit_type} file {file_idx + 1}/{args.num_files} ---")
             args.file_idx = file_idx
