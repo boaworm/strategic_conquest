@@ -23,7 +23,7 @@ PROJECT_ROOT=$(pwd)
 OUT_DIR=$PROJECT_ROOT/packages/trainer/ai/checkpoints/moe
 EPOCHS=40
 NUM_FILES=8
-TARGET_VRAM_USAGE_GB=100
+TARGET_VRAM_USAGE_GB=50
 PRODUCTION_MIN_BATCHES=${PRODUCTION_MIN_BATCHES:-20}
 RESUME_FLAG=$([ "$RESUME" = "1" ] && echo "--resume" || echo "")
 PROFILE_FLAG=$([ "$PROFILE" = "1" ] && echo "--profile" || echo "")

@@ -1,4 +1,4 @@
-# Performance — MoE Training on GB10 / DGX Spark
+# Performance — MoE Training (GB10 / DGX Spark) & Runtime Inference
 
 Analysis of why GPU power draw sits at 35–45 W (just above the ~35 W idle floor)
 while `nvidia-smi` reports 100 % utilisation, and a tiered list of improvements.
@@ -580,6 +580,144 @@ how far 4.B can be pushed — verify, don't assume.
 
 The production expert shares the 4.B backbone gains; its 28-value global feature
 vector is already reasonably rich, so 4.C matters less there.
+
+---
+
+## Runtime / Inference Performance — `nnMoEAgent`
+
+Scope: the *inference* path used to **run** the MoE agent in games —
+`packages/shared/src/nnMoEAgent.ts` and its ONNX dependents
+(`record_worker.ts`, `eval_game.js`, `eval_server.js`). Distinct from the
+training sections above. Per `CLAUDE.md` the runtime must work CPU-only, and
+use CoreML on macOS / CUDA on Linux when available.
+
+**Not yet measured** — the training box was busy. Numbers below are code
+analysis; confirm with the benchmark in "How to measure" before/after each
+change.
+
+### Cost model
+
+`act()` is called once per action. Per turn: ~1 inference per idle city
+(production) + ~1 inference per unit move-step (movement) → on the order of
+10–30 `session.run()` calls/turn. Each call:
+
+1. `buildMovementTensor` — `fillViewTensor` (memset 13·HW + sparse fills + a
+   full H·W terrain/fog loop) then ch13/14 markers then a full H·W `dx`/`dy`
+   loop (`nnMoEAgent.ts:446-463`).
+2. `new ort.Tensor(...)` wrapper allocation.
+3. **`session.run()` — the ONNX forward pass; dominant cost.**
+4. Argmax + action masking (tiny).
+
+The model is tiny (~240 K params, 3 convs, <1 MB ONNX). For a model this
+small the per-`run()` *dispatch/threading overhead* and *cold-start graph
+compilation* dominate far more than the arithmetic. That is where the levers
+are — not the TS tensor-building loops, which are microseconds.
+
+Structural note: the 8 movement experts cannot be batched across units in a
+turn (each unit must see the board *after* the previous unit moved — batching
+would change move selection, forbidden by `CLAUDE.md`), and the 9 models
+cannot be merged without a retrain. So the levers are config + per-call
+overhead, not architecture.
+
+### Tier R1 — ONNX Runtime session options (config; the big one)
+
+`nnMoEAgent.init()` creates sessions with only `executionProviders` +
+`logSeverityLevel` (`nnMoEAgent.ts:187-190`). It sets **no thread limits**.
+ORT's CPU EP defaults `intraOpNumThreads` to the physical core count. When
+`record` / `collect` / `eval` run with `WORKERS=8`, that is 8 processes ×
+~10–20 threads each — heavy oversubscription and context-switch thrashing for
+ops that finish in microseconds.
+
+**R1.1 Set `intraOpNumThreads: 1`, `interOpNumThreads: 1`,
+`executionMode: 'sequential'`.** For a sub-millisecond model, thread fork/join
+overhead exceeds any parallelism gain even single-process; in the 8-worker
+case it removes the thrashing outright. Make it env-overridable
+(`NN_ORT_THREADS`) so the single-game server can be retuned later if measured.
+*Impact: potentially large for parallel record/eval throughput; neutral-to-positive single-process. Effort: trivial. Risk: none.*
+Code: `nnMoEAgent.ts:187-190`.
+
+### Tier R2 — CoreML vs CPU, and CoreML model cache (config)
+
+`getExecutionProviders()` returns `['coreml','cpu']` on macOS
+(`nnMoEAgent.ts:99-104`). For a ~240 K-param net, CoreML's dispatch to GPU/ANE
+carries a high fixed per-inference latency (the Neural Engine especially is
+built for large models); the CPU EP is frequently *faster* for models this
+small. `CLAUDE.md` says "use CoreML *if possible*" — if it is measurably
+slower here, CPU is the correct choice.
+
+**R2.1 Measure CoreML vs CPU for this model size and pick the winner.**
+Decision pending data. *Effort: trivial once measured. Risk: none.*
+
+**R2.2 If CoreML stays — enable its model cache.** CoreML compiles the ONNX
+graph at `InferenceSession.create()` (the slow part of the "ONNX sessions
+ready in Xs" log). ORT's CoreML EP (object-form provider) accepts a model
+cache directory so the compiled artifact persists across process restarts —
+every `record` worker is a fresh process and currently recompiles all 9
+models. *Impact: large cold-start win for multi-process workloads. Effort: low. Risk: low.*
+
+### Tier R3 — Parallel session load (cold start)
+
+`init()` loads the 9 models in a sequential `for` loop
+(`nnMoEAgent.ts:192-201`). Load them with `Promise.all` so disk I/O / graph
+compilation overlaps. *Impact: moderate cold-start win (≈9× → ~1× wall time for the load). Effort: low. Risk: none.*
+
+### Tier R4 — Reuse the input `ort.Tensor` wrappers (per-call alloc)
+
+`tensorBuf` is already reused in place, but a fresh `new ort.Tensor(...)`
+wraps it every inference (`nnMoEAgent.ts:356`, `:402-403`). The shape is
+constant; create the input Tensor(s) once in `init()` and reuse — ORT reads
+the backing `Float32Array` at `run()` time, so in-place mutation is safe.
+Movement: one reusable tensor; production: one reusable spatial tensor + one
+reusable global tensor. *Impact: small. Effort: low. Risk: low.*
+
+### Tier R5 — Faster `dx`/`dy` fill (per-call overhead)
+
+ch15/ch16 are filled by a full H·W loop with a divide + `Math.round` + branch
+per tile (`nnMoEAgent.ts:446-463`). `dx` depends only on column, `dy` only on
+row. Precompute small LUTs in `init()` — `dxRow[markerX]` (W floats each, 50
+rows) and `dyCol[markerY]` (H floats each) — total ~10 KB. Per action: ch15 =
+H `.set()` copies of `dxRow[markerX]`; ch16 = H `buf.fill()` of a per-row
+constant. *Impact: small. Effort: low. Risk: low — must reproduce the exact wrap (±0.5 → 0).*
+
+### Tier R6 — Single-pass `buildGlobalFeatures` (per-call alloc)
+
+`buildGlobalFeatures` allocates a new `Float32Array(28)` and runs ~19
+`.filter().length` passes over `myUnits` / `visibleEnemyUnits`
+(`nnMoEAgent.ts:469-510`). Reuse one pre-allocated buffer; count all unit
+types in a single pass per array. Production-only (~3–5×/turn), so small —
+but removes ~19 throwaway arrays per call. *Impact: small. Effort: low. Risk: low.*
+
+### Tier R7 — Hoist `getOrt()` out of the hot path
+
+`await getOrt()` is called inside `askMovementExpert` / `askProductionExpert`
+(`nnMoEAgent.ts:355`, `:401`). After the first call it resolves immediately,
+but store the resolved `ort` on the instance in `init()` and drop the hot-path
+`await`. *Impact: negligible. Effort: trivial. Risk: none.*
+
+### Apply to dependents
+
+Session options live at `InferenceSession.create()`. `eval_server.js` builds
+its own sessions and passes them via `initFromSessions` — it must set the same
+R1/R2 options there. `record_worker.ts` and `eval_game.js` go through
+`nnMoEAgent.init()` and inherit the fix automatically.
+
+### How to measure
+
+Short Node benchmark (no game loop needed): load the 9 models from a model
+dir, warm up ~20 runs, time ~500 `session.run()` calls for a movement model
+and the production model. Sweep: `['coreml','cpu']` vs `['cpu']`;
+default threads vs `intraOpNumThreads:1`. Report load time + mean latency.
+Also watch aggregate throughput of `WORKERS=8 npm run record` before/after R1.
+
+### Suggested order
+
+1. **R1** — thread limits. Biggest expected win; trivial; measure record
+   throughput before/after.
+2. **R2.1** — benchmark CoreML vs CPU, set the default.
+3. **R3** — parallel session load.
+4. **R4 / R6 / R7** — per-call allocation cleanup (bundle them).
+5. **R5** — `dx`/`dy` LUT.
+6. **R2.2** — CoreML model cache, only if R2.1 keeps CoreML.
 
 ---
 
