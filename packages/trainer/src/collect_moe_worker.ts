@@ -303,7 +303,7 @@ while (true) {
   }
 
   const allTargetsReached = checkAllFileSizes();
-  const pctTag = targetSizeBytes > 0 ? ` ${Math.floor(Object.values(unitTypeTargetsReached).filter(v => v).length / unitTypes.length * 100)}%` : '';
+  const pctTag = targetSizeBytes > 0 ? ` ${Math.floor(unitTypes.reduce((sum, t) => sum + checkFileSizeForUnitType(t), 0) / (unitTypes.length * targetSizeBytes) * 100)}%` : '';
   process.stderr.write(`[MoE-W${workerId}]${pctTag} game ${gameNumber}: Moves=${movesSampled}, Production=${prodSampled}\n`);
 
   if (allTargetsReached) {
