@@ -26,15 +26,17 @@ MAP_HEIGHT=20
 if [ -z "$1" ]; then
   echo "=== Collecting all movement experts + production ==="
   export PROD_ONLY=0
-  export UNIT_TYPE_FILTER=
+  export UNIT_TYPES=
 elif [ "$1" = "production" ]; then
   echo "=== Collecting production data only ==="
   export PROD_ONLY=1
-  export UNIT_TYPE_FILTER=
+  export UNIT_TYPES=
 else
-  echo "=== Collecting movement data for: $1 ==="
+  # Join all positional args with commas: e.g. destroyer battleship carrier → destroyer,battleship,carrier
+  UNIT_TYPES_VAL=$(IFS=,; echo "$*")
+  echo "=== Collecting movement data for: $UNIT_TYPES_VAL ==="
   export PROD_ONLY=0
-  export UNIT_TYPE_FILTER="$1"
+  export UNIT_TYPES="$UNIT_TYPES_VAL"
 fi
 
 export MAX_SAMPLES_PER_GAME

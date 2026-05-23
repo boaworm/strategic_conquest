@@ -22,7 +22,7 @@ const mapWidth    = parseInt(process.env.MAP_WIDTH!);
 const mapHeight   = parseInt(process.env.MAP_HEIGHT!);
 const maxTurns    = parseInt(process.env.MAX_TURNS!);
 const prodOnly    = process.env.PROD_ONLY === '1';
-const unitTypeFilter = process.env.UNIT_TYPE_FILTER;
+const unitTypesStr = process.env.UNIT_TYPES ?? '';
 const targetSizeBytes = parseInt(process.env.TARGET_SIZE_BYTES ?? '0');
 const MAX_SAMPLES_PER_GAME = parseInt(process.env.MAX_SAMPLES_PER_GAME ?? '3000');
 const MAX_PER_BUCKET       = Math.max(50, Math.floor(MAX_SAMPLES_PER_GAME / 9));
@@ -32,6 +32,15 @@ const MAX_PER_PROD_BUCKET    = prodOnly ? Infinity : MAX_PER_BUCKET * PROD_SAMPL
 const MOVEMENT_ACTION_TO_IDX: Record<string, number> = { MOVE: 0, SKIP: 1 };
 const UNIT_TYPE_NAMES = ['army', 'fighter', 'missile', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'] as const;
 const UNIT_TYPE_TO_IDX: Record<string, number> = { army: 0, fighter: 1, missile: 2, transport: 3, destroyer: 4, submarine: 5, carrier: 6, battleship: 7 };
+
+// Initialize unit types tracking (after constants are declared)
+const unitTypes: string[] = unitTypesStr ? unitTypesStr.split(',').filter(Boolean) : [];
+const unitTypeTargetsReached: Record<string, boolean> = {};
+if (unitTypes.length === 0 && !prodOnly) {
+  // Default to all movement types if none specified
+  unitTypes.push(...UNIT_TYPE_NAMES);
+}
+unitTypes.forEach(type => { unitTypeTargetsReached[type] = false; });
 
 const NUM_GLOBAL = 28;
 const FLUSH_EVERY = 256;
@@ -61,7 +70,7 @@ function openFiles(name: string) {
 }
 
 const movementFiles = prodOnly ? null : Object.fromEntries(
-  UNIT_TYPE_NAMES.map(name => [name, openFiles(name)])
+  unitTypes.map(name => [name, openFiles(name)])
 ) as Record<string, ReturnType<typeof openFiles>> | null;
 
 const prodBase = path.join(process.env.DATA_DIR!, `worker-${workerId}-production`);
@@ -77,7 +86,7 @@ type MovementBuf = { states: Buffer[]; positions: Buffer[]; actions: number[]; t
 type ProductionBuf = { states: Buffer[]; cities: Buffer[]; globals: Buffer[]; unitTypes: number[] };
 
 const movementBufs = prodOnly ? null : Object.fromEntries(
-  UNIT_TYPE_NAMES.map(n => [n, { states: [] as Buffer[], positions: [] as Buffer[], actions: [] as number[], tiles: [] as number[], carried: [] as number[], cargo: [] as number[] }])
+  unitTypes.map(n => [n, { states: [] as Buffer[], positions: [] as Buffer[], actions: [] as number[], tiles: [] as number[], carried: [] as number[], cargo: [] as number[] }])
 ) as Record<string, MovementBuf> | null;
 
 const prodBuf: ProductionBuf = { states: [], cities: [], globals: [], unitTypes: [] };
@@ -165,15 +174,44 @@ function saveProductionSample(tensor: Float32Array, cityX: number, cityY: number
   if (prodBuf.states.length >= FLUSH_EVERY) flushProduction();
 }
 
-function checkFileSize(): number {
+function checkFileSizeForUnitType(unitType: string): number {
   if (targetSizeBytes <= 0) return 0;
-  const unitTypes = unitTypeFilter ? [unitTypeFilter] : UNIT_TYPE_NAMES;
-  let totalSize = 0;
-  for (const name of unitTypes) {
-    const statesFile = path.join(process.env.DATA_DIR!, `worker-${workerId}-${name}.states.bin`);
-    if (fs.existsSync(statesFile)) totalSize += fs.statSync(statesFile).size;
+  const statesFile = path.join(process.env.DATA_DIR!, `worker-${workerId}-${unitType}.states.bin`);
+  if (fs.existsSync(statesFile)) {
+    return fs.statSync(statesFile).size;
   }
-  return totalSize;
+  return 0;
+}
+
+function checkAllFileSizes(): boolean {
+  if (targetSizeBytes <= 0) return false;
+
+  // Check if all specified unit types have reached target size
+  let allDone = true;
+  for (const unitType of unitTypes) {
+    const size = checkFileSizeForUnitType(unitType);
+    if (size >= targetSizeBytes) {
+      if (!unitTypeTargetsReached[unitType]) {
+        unitTypeTargetsReached[unitType] = true;
+        console.log(`[MoE-W${workerId}] Unit type ${unitType} reached target size: ${size} bytes`);
+      }
+    } else {
+      allDone = false;
+    }
+  }
+
+  // Check production if not filtering
+  if (!unitTypes.length && !prodOnly) {
+    const prodStatesFile = path.join(process.env.DATA_DIR!, `worker-${workerId}-production.states.bin`);
+    if (fs.existsSync(prodStatesFile)) {
+      const prodSize = fs.statSync(prodStatesFile).size;
+      if (prodSize < targetSizeBytes) allDone = false;
+    } else {
+      allDone = false;
+    }
+  }
+
+  return allDone;
 }
 
 
@@ -193,8 +231,15 @@ while (true) {
   agents.player1.init({ playerId: 'player1', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
   agents.player2.init({ playerId: 'player2', mapWidth: state.mapWidth, mapHeight: state.mapHeight });
 
+  // Initialize game counts for unit types we're tracking
   const gameCounts: Record<string, number> = {};
-  for (const name of [...UNIT_TYPE_NAMES, 'production']) gameCounts[name] = 0;
+  for (const name of unitTypes) {
+    gameCounts[name] = 0;
+  }
+  // Include production if we're collecting it
+  if (!prodOnly && (unitTypes.length === 0 || unitTypes.includes("production"))) {
+    gameCounts['production'] = 0;
+  }
 
   let prevPlayer = state.currentPlayer;
   let actionsThisTurn = 0;
@@ -211,16 +256,20 @@ while (true) {
       const tensor = playerViewToTensor(view);
       if (!prodOnly && (action.type === 'MOVE' || action.type === 'SKIP')) {
         const unit = view.myUnits.find((u: any) => u.id === (action as any).unitId);
-        if (unit && (!unitTypeFilter || unit.type === unitTypeFilter) && gameCounts[unit.type] < MAX_PER_BUCKET) {
+        if (unit && unitTypes.includes(unit.type) && !unitTypeTargetsReached[unit.type] && gameCounts[unit.type] < MAX_PER_BUCKET) {
           const tileIdx = action.type === 'MOVE' ? ((action as any).to.y * state.mapWidth + (action as any).to.x) : -1;
           const isCarried = unit.type === 'army' && unit.carriedBy != null;
           const cargoCount = unit.type === 'transport' ? (unit.cargo?.length ?? 0) : 0;
           saveMovementSample(unit.type, tensor, unit.x, unit.y, action.type, tileIdx, isCarried, cargoCount);
           gameCounts[unit.type]++;
         }
-      } else if (action.type === 'SET_PRODUCTION' && !unitTypeFilter) {
+      } else if (action.type === 'SET_PRODUCTION' &&
+                 !prodOnly &&
+                 (unitTypes.length === 0 || unitTypes.includes("production")) &&
+                 !unitTypeTargetsReached["production"] &&
+                 gameCounts['production'] < MAX_PER_PROD_BUCKET) {
         const city = view.myCities.find((c: any) => c.id === (action as any).cityId);
-        if (city && gameCounts['production'] < MAX_PER_PROD_BUCKET) {
+        if (city) {
           const globals = buildGlobalFeatures(view, city, state.turn);
           saveProductionSample(tensor, city.x, city.y, globals, (action as any).unitType);
           gameCounts['production']++;
@@ -237,8 +286,10 @@ while (true) {
     }
   }
 
-  const movesSampled = Object.entries(gameCounts).filter(([k]) => k !== 'production').reduce((sum, [, v]) => sum + v, 0);
-  const prodSampled = unitTypeFilter ? 0 : gameCounts['production'];
+  const movesSampled = Object.entries(gameCounts)
+    .filter(([k]) => k !== 'production')
+    .reduce((sum, [, v]) => sum + v, 0);
+  const prodSampled = gameCounts['production'] ?? 0;
 
   // Accumulate totals
   for (const [k, v] of Object.entries(gameCounts)) {
@@ -246,14 +297,16 @@ while (true) {
   }
 
   // Flush after every game so disk reflects reality for size checks and survives interrupts
-  if (!prodOnly) { for (const name of UNIT_TYPE_NAMES) flushMovement(name); }
-  if (!unitTypeFilter) flushProduction();
+  if (!prodOnly) { for (const name of unitTypes) flushMovement(name); }
+  if (!prodOnly && (unitTypes.length === 0 || unitTypes.includes("production"))) {
+    flushProduction();
+  }
 
-  const currentSize = checkFileSize();
-  const pctTag = targetSizeBytes > 0 ? ` ${Math.floor(currentSize / targetSizeBytes * 100)}%` : '';
+  const allTargetsReached = checkAllFileSizes();
+  const pctTag = targetSizeBytes > 0 ? ` ${Math.floor(Object.values(unitTypeTargetsReached).filter(v => v).length / unitTypes.length * 100)}%` : '';
   process.stderr.write(`[MoE-W${workerId}]${pctTag} game ${gameNumber}: Moves=${movesSampled}, Production=${prodSampled}\n`);
 
-  if (currentSize >= targetSizeBytes) {
+  if (allTargetsReached) {
     break;
   }
 
@@ -262,20 +315,26 @@ while (true) {
 }
 
 // Flush and close
-if (!prodOnly) { for (const name of UNIT_TYPE_NAMES) flushMovement(name); }
-if (!unitTypeFilter) flushProduction();
+if (!prodOnly) { for (const name of unitTypes) flushMovement(name); }
+if (!prodOnly && (unitTypes.length === 0 || unitTypes.includes("production"))) {
+  flushProduction();
+}
 
-if (!prodOnly) {
-  for (const name of UNIT_TYPE_NAMES) {
-    const f = movementFiles![name];
+if (!prodOnly && movementFiles) {
+  for (const name of unitTypes) {
+    const f = movementFiles[name];
     fs.closeSync(f.statesFd); fs.closeSync(f.positionsFd); fs.closeSync(f.actionsFd); fs.closeSync(f.tilesFd);
     if (f.carriedFd >= 0) fs.closeSync(f.carriedFd);
     if (f.cargoFd   >= 0) fs.closeSync(f.cargoFd);
   }
 }
-if (!unitTypeFilter) {
+if (!prodOnly && (unitTypes.length === 0 || unitTypes.includes("production"))) {
   fs.closeSync(prodFiles.statesFd); fs.closeSync(prodFiles.citiesFd); fs.closeSync(prodFiles.globalsFd); fs.closeSync(prodFiles.unitTypesFd);
 }
 
-fs.writeFileSync(path.join(process.env.DATA_DIR!, `result-${workerId}.json`), JSON.stringify({ samples: totalSamples, wins: { player1: 0, player2: 0, draw: 0 } }));
+fs.writeFileSync(path.join(process.env.DATA_DIR!, `result-${workerId}.json`), JSON.stringify({
+  samples: totalSamples,
+  wins: { player1: 0, player2: 0, draw: 0 },
+  unitTypeTargetsReached: unitTypeTargetsReached
+}));
 process.stderr.write(`[MoE-W${workerId}] done — ${gamesCompleted} games\n`);

@@ -23,7 +23,7 @@ const MAP_HEIGHT = parseInt(process.env.MAP_HEIGHT ?? '20');
 const MAX_TURNS  = parseInt(process.env.MAX_TURNS  ?? '500');
 const MAX_SAMPLES_PER_GAME = parseInt(process.env.MAX_SAMPLES_PER_GAME ?? '3000');
 const PROD_ONLY  = process.env.PROD_ONLY === '1';
-const UNIT_TYPE_FILTER = process.env.UNIT_TYPE_FILTER;
+const UNIT_TYPES = process.env.UNIT_TYPES ?? '';
 const TARGET_SIZE_BYTES = parseInt(process.env.TARGET_SIZE_BYTES ?? '0');
 
 const UNIT_TYPE_NAMES = ['army', 'fighter', 'missile', 'transport', 'destroyer', 'submarine', 'carrier', 'battleship'];
@@ -44,7 +44,7 @@ function spawnWorker(workerId: number): Promise<void> {
         MAX_TURNS:       String(MAX_TURNS),
         MAX_SAMPLES_PER_GAME: String(MAX_SAMPLES_PER_GAME),
         PROD_ONLY:       String(PROD_ONLY ? 1 : 0),
-        UNIT_TYPE_FILTER: UNIT_TYPE_FILTER ?? '',
+        UNIT_TYPES: UNIT_TYPES ?? '',
         TARGET_SIZE_BYTES: String(TARGET_SIZE_BYTES),
       },
       stdio: ['pipe', 'pipe', 'inherit'],
@@ -82,7 +82,14 @@ function allWorkersDone(): boolean {
 async function main(): Promise<void> {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  console.log(`MoE data collection: ${WORKERS} workers, map ${MAP_WIDTH}×${MAP_HEIGHT}, target ${TARGET_SIZE_BYTES} bytes`);
+  const unitTypesList = UNIT_TYPES ? UNIT_TYPES.split(',').filter(Boolean) : [];
+let description = 'all movement experts';
+if (unitTypesList.length > 0) {
+  description = unitTypesList.join(', ');
+} else if (PROD_ONLY) {
+  description = 'production expert';
+}
+console.log(`MoE data collection: ${WORKERS} workers, map ${MAP_WIDTH}×${MAP_HEIGHT}, target ${TARGET_SIZE_BYTES} bytes, collecting: ${description}`);
 
   const t0 = Date.now();
 
