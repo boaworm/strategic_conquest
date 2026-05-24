@@ -28,6 +28,13 @@ from dataset_moe import ProductionDataset, NUM_UNIT_TYPES, NUM_GLOBAL
 from models_moe import ProductionCNN
 
 
+def _empty_cache(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    elif device.type == "mps":
+        torch.mps.empty_cache()
+
+
 # ── Training ──────────────────────────────────────────────────────────────────
 
 def train(args):
@@ -66,9 +73,13 @@ def train(args):
               f"(target {args.target_vram_usage_gb} GB, dataset {dataset_bytes / 1024**3:.1f} GB, {'bf16' if use_amp else 'fp32'})")
 
     # ── Tier 2: hold the whole shard resident on the device and index it there.
-    states_all  = dataset.states15.to(device)
-    globals_all = torch.from_numpy(dataset.globals).to(device)
-    types_all   = torch.from_numpy(dataset.unit_types).to(device)
+    # MPS exception: Metal caps any single MTLBuffer at ~recommendedMaxWorkingSetSize
+    # (<50 GB on a 64 GB M1 Max), so multi-tens-of-GB shards can't be one device
+    # tensor. Keep them in unified RAM and copy per batch; CUDA path unchanged.
+    storage_device = torch.device("cpu") if device.type == "mps" else device
+    states_all  = dataset.states15.to(storage_device)
+    globals_all = torch.from_numpy(dataset.globals).to(storage_device)
+    types_all   = torch.from_numpy(dataset.unit_types).to(storage_device)
     dataset.states15 = None          # free the CPU copy of the shard
     del dataset
     gc.collect()
@@ -77,8 +88,8 @@ def train(args):
     val_n   = max(1, int(N * 0.1))
     train_n = N - val_n
     split   = torch.randperm(N, generator=torch.Generator().manual_seed(42))
-    train_idx = split[:train_n].to(device)
-    val_idx   = split[train_n:].to(device)
+    train_idx = split[:train_n].to(storage_device)
+    val_idx   = split[train_n:].to(storage_device)
     train_batches = train_n // batch_size            # drop_last: every batch is full-size
     val_batches   = max(1, val_n // batch_size)
     if train_batches == 0:
@@ -119,12 +130,12 @@ def train(args):
         total_loss = torch.zeros((), device=device)
         t0 = time.time()
 
-        perm = train_idx[torch.randperm(train_n, device=device)]
+        perm = train_idx[torch.randperm(train_n, device=storage_device)]
         for b in range(train_batches):
             idx = perm[b * batch_size : (b + 1) * batch_size]
-            states     = states_all.index_select(0, idx)
-            globals_   = globals_all.index_select(0, idx)
-            unit_types = types_all.index_select(0, idx)
+            states     = states_all.index_select(0, idx).to(device, non_blocking=True)
+            globals_   = globals_all.index_select(0, idx).to(device, non_blocking=True)
+            unit_types = types_all.index_select(0, idx).to(device, non_blocking=True)
 
             with autocast():
                 out = model(states, globals_)
@@ -149,9 +160,9 @@ def train(args):
         with torch.no_grad():
             for b in range(val_batches):
                 idx = val_idx[b * batch_size : (b + 1) * batch_size]
-                states     = states_all.index_select(0, idx)
-                globals_   = globals_all.index_select(0, idx)
-                unit_types = types_all.index_select(0, idx)
+                states     = states_all.index_select(0, idx).to(device, non_blocking=True)
+                globals_   = globals_all.index_select(0, idx).to(device, non_blocking=True)
+                unit_types = types_all.index_select(0, idx).to(device, non_blocking=True)
                 with autocast():
                     out = model(states, globals_)
                 val_loss += F.cross_entropy(out['unit_type'], unit_types).detach()
@@ -178,7 +189,7 @@ def train(args):
 
     del states_all, globals_all, types_all, train_idx, val_idx, split, optimizer
     gc.collect()
-    torch.cuda.empty_cache()
+    _empty_cache(device)
 
     print(f"\nBest val loss: {best_val_loss:.4f}")
     best_ckpt = torch.load(out_dir / 'production.pt', weights_only=False, map_location='cpu')
@@ -192,7 +203,7 @@ def train(args):
     print(f"Exported: {out_dir}/production.onnx")
     del model
     gc.collect()
-    torch.cuda.empty_cache()
+    _empty_cache(device)
 
 
 def export_onnx(model: ProductionCNN, map_height: int, map_width: int, output_path: Path):

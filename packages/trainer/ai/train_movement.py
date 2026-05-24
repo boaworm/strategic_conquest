@@ -28,6 +28,13 @@ from dataset_moe import MovementDataset, MOVEMENT_ACTION_TYPES, NUM_MOVEMENT_ACT
 from models_moe import MovementCNN
 
 
+def _empty_cache(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    elif device.type == "mps":
+        torch.mps.empty_cache()
+
+
 # ── Training ──────────────────────────────────────────────────────────────────
 
 def train(args):
@@ -67,9 +74,13 @@ def train(args):
 
     # ── Tier 2: hold the whole shard resident on the device and index it there.
     # No DataLoader, no worker processes, no per-batch host->device copy.
-    states_all  = dataset.states17.to(device)
-    actions_all = dataset.action_types.to(device)
-    tiles_all   = dataset.tile_idxs.to(device)
+    # MPS exception: Metal caps any single MTLBuffer at ~recommendedMaxWorkingSetSize
+    # (<50 GB on a 64 GB M1 Max), so multi-tens-of-GB shards can't be one device
+    # tensor. Keep them in unified RAM and copy per batch; CUDA path unchanged.
+    storage_device = torch.device("cpu") if device.type == "mps" else device
+    states_all  = dataset.states17.to(storage_device)
+    actions_all = dataset.action_types.to(storage_device)
+    tiles_all   = dataset.tile_idxs.to(storage_device)
     dataset.states17 = None          # free the CPU copy of the shard
     del dataset
     gc.collect()
@@ -78,8 +89,8 @@ def train(args):
     val_n   = max(1, int(N * 0.1))
     train_n = N - val_n
     split   = torch.randperm(N, generator=torch.Generator().manual_seed(42))
-    train_idx = split[:train_n].to(device)
-    val_idx   = split[train_n:].to(device)
+    train_idx = split[:train_n].to(storage_device)
+    val_idx   = split[train_n:].to(storage_device)
     train_batches = train_n // batch_size            # drop_last: every batch is full-size
     val_batches   = max(1, val_n // batch_size)
     if train_batches == 0:
@@ -127,15 +138,15 @@ def train(args):
         wait, warmup = 5, 5
         active = max(1, min(20, train_n // prof_bs - wait - warmup))
         model.train()
-        perm = train_idx[torch.randperm(train_n, device=device)]
+        perm = train_idx[torch.randperm(train_n, device=storage_device)]
         print(f"Profiling {active} eager steps (batch {prof_bs:,})...")
         with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                      schedule=schedule(wait=wait, warmup=warmup, active=active, repeat=1)) as prof:
             for b in range(wait + warmup + active):
                 idx = perm[b * prof_bs : (b + 1) * prof_bs]
-                states       = states_all.index_select(0, idx)
-                action_types = actions_all.index_select(0, idx)
-                tile_idxs    = tiles_all.index_select(0, idx)
+                states       = states_all.index_select(0, idx).to(device, non_blocking=True)
+                action_types = actions_all.index_select(0, idx).to(device, non_blocking=True)
+                tile_idxs    = tiles_all.index_select(0, idx).to(device, non_blocking=True)
                 with autocast():
                     out = model(states)
                     loss_at   = F.cross_entropy(out['action_type'], action_types, weight=class_weights)
@@ -158,12 +169,12 @@ def train(args):
         total_loss = torch.zeros((), device=device)
         t0 = time.time()
 
-        perm = train_idx[torch.randperm(train_n, device=device)]
+        perm = train_idx[torch.randperm(train_n, device=storage_device)]
         for b in range(train_batches):
             idx = perm[b * batch_size : (b + 1) * batch_size]
-            states       = states_all.index_select(0, idx)
-            action_types = actions_all.index_select(0, idx)
-            tile_idxs    = tiles_all.index_select(0, idx)
+            states       = states_all.index_select(0, idx).to(device, non_blocking=True)
+            action_types = actions_all.index_select(0, idx).to(device, non_blocking=True)
+            tile_idxs    = tiles_all.index_select(0, idx).to(device, non_blocking=True)
 
             with autocast():
                 out = model(states)
@@ -190,8 +201,8 @@ def train(args):
         with torch.no_grad():
             for b in range(val_batches):
                 idx = val_idx[b * batch_size : (b + 1) * batch_size]
-                states       = states_all.index_select(0, idx)
-                action_types = actions_all.index_select(0, idx)
+                states       = states_all.index_select(0, idx).to(device, non_blocking=True)
+                action_types = actions_all.index_select(0, idx).to(device, non_blocking=True)
                 with autocast():
                     out = model(states)
                 val_loss   += F.cross_entropy(out['action_type'], action_types).detach()
@@ -218,7 +229,7 @@ def train(args):
 
     del states_all, actions_all, tiles_all, train_idx, val_idx, split, optimizer
     gc.collect()
-    torch.cuda.empty_cache()
+    _empty_cache(device)
 
     print(f"\nBest val loss: {best_val_loss:.4f}")
     best_ckpt = torch.load(out_dir / f'{args.unit_type}.pt', weights_only=False, map_location='cpu')
@@ -233,7 +244,7 @@ def train(args):
     print(f"Exported: {out_dir / args.unit_type}.onnx")
     del model
     gc.collect()
-    torch.cuda.empty_cache()
+    _empty_cache(device)
 
 
 def export_onnx(model: MovementCNN, map_height: int, map_width: int, output_path: Path):

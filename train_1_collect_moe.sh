@@ -10,7 +10,7 @@ set -e
 if [ -z "$DATA_DIR" ]; then echo "DATA_DIR env var required"; exit 1; fi
 BASE_DATA_DIR="$DATA_DIR"
 
-TARGET_SIZE_GB=50
+TARGET_SIZE_GB=40
 TARGET_SIZE_BYTES=$((TARGET_SIZE_GB * 1024 * 1024 * 1024))
 
 RUN_NUM=$(ls -1 "$BASE_DATA_DIR" 2>/dev/null | grep -E '^sample_[0-9]+$' | sed 's/sample_//' | sort -n | tail -1)

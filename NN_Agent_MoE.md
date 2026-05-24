@@ -185,7 +185,7 @@ RESUME=1 DATA_DIR=/media/henrik/data/ARMY/sample_1 ./train_2_learn_moe.sh produc
 
 **GB10 DGX Spark**: auto-detected via `nvidia-smi`. Runs inside the `sc-train` NGC Docker container (build once with `./build_docker.sh`). One container for the entire run; torch.compile warms up once and is reused across all files and unit types.
 
-**Apple Silicon / other**: runs directly via `python` (activate `sc_env` first).
+**Apple Silicon / other**: runs directly via `python` (activate `sc_env` first). MPS path uses fp32 (no autocast) and `torch.compile` in default mode; compile soft-falls back to eager if an op isn't supported by the current PyTorch/MPS build.
 
 Trains each expert across 8 worker files sequentially (warm-starting from the previous file's checkpoint). One expert fully trained before the next starts.
 

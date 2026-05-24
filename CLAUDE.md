@@ -20,8 +20,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development and training
 Two supported platforms:
-- **Apple Silicon M1 Max, 64 GB** — MPS backend, float32, no torch.compile, no DataLoader workers
-- **NVIDIA GB10 DGX Spark, 128 GB unified** — CUDA/Blackwell backend, bfloat16 + autocast, torch.compile, DataLoader workers=4
+- **Apple Silicon M1 Max, 64 GB** — MPS backend, float32, torch.compile (default mode, soft-falls back on unsupported ops)
+- **NVIDIA GB10 DGX Spark, 128 GB unified** — CUDA/Blackwell backend, bfloat16 + autocast, torch.compile
+
+Both paths keep the dataset resident on the device and index it there (no DataLoader, no worker processes).
 
 Training code auto-detects platform: CUDA → MPS → CPU.
 
