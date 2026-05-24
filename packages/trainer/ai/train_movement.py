@@ -154,6 +154,8 @@ def train(args):
                     loss = loss_at + loss_tile
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
+                if device.type == "mps":
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
                 prof.step()
         prof.export_chrome_trace(str(trace_path))
@@ -184,6 +186,8 @@ def train(args):
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            if device.type == "mps":
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             total_loss += loss.detach()
 
