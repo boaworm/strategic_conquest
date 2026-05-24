@@ -131,11 +131,12 @@ def train(args):
         t0 = time.time()
 
         perm = train_idx[torch.randperm(train_n, device=storage_device)]
+        isOnCuda = (device.type == "cuda")
         for b in range(train_batches):
             idx = perm[b * batch_size : (b + 1) * batch_size]
-            states     = states_all.index_select(0, idx).to(device, non_blocking=True)
-            globals_   = globals_all.index_select(0, idx).to(device, non_blocking=True)
-            unit_types = types_all.index_select(0, idx).to(device, non_blocking=True)
+            states     = states_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
+            globals_   = globals_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
+            unit_types = types_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
 
             with autocast():
                 out = model(states, globals_)
@@ -162,9 +163,9 @@ def train(args):
         with torch.no_grad():
             for b in range(val_batches):
                 idx = val_idx[b * batch_size : (b + 1) * batch_size]
-                states     = states_all.index_select(0, idx).to(device, non_blocking=True)
-                globals_   = globals_all.index_select(0, idx).to(device, non_blocking=True)
-                unit_types = types_all.index_select(0, idx).to(device, non_blocking=True)
+                states     = states_all.index_select(0, idx).to(device, non_blocking=nb)
+                globals_   = globals_all.index_select(0, idx).to(device, non_blocking=nb)
+                unit_types = types_all.index_select(0, idx).to(device, non_blocking=nb)
                 with autocast():
                     out = model(states, globals_)
                 val_loss += F.cross_entropy(out['unit_type'], unit_types).detach()

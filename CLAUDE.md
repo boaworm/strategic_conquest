@@ -18,19 +18,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Hardware requirements
 
-## Development and training
-Two supported platforms:
-- **Apple Silicon M1 Max, 64 GB** — MPS backend, float32, torch.compile (default mode, soft-falls back on unsupported ops)
-- **NVIDIA GB10 DGX Spark, 128 GB unified** — CUDA/Blackwell backend, bfloat16 + autocast, torch.compile
+## Two supported training/development platforms
 
-Both paths keep the dataset resident on the device and index it there (no DataLoader, no worker processes).
+### Platform A — Apple Silicon (local dev machine)
+- **Hardware**: Apple M1 Max, 64 GB unified memory
+- **Backend**: MPS (Metal Performance Shaders)
+- **dtype**: float32 (bfloat16 not supported on MPS)
+- **torch.compile**: enabled, default mode, soft-falls back on unsupported ops
+- **Dataset**: resident on MPS device, indexed there (no DataLoader, no worker processes)
+- **Inference**: MPS; CoreML export preferred for production agent
 
-Training code auto-detects platform: CUDA → MPS → CPU.
+### Platform B — NVIDIA GB10 / SM121 / DGX Spark (remote training machine)
+- **Hardware**: NVIDIA GB10 (Blackwell), 128 GB unified memory
+- **Backend**: CUDA
+- **dtype**: bfloat16 + autocast
+- **torch.compile**: enabled
+- **Dataset**: resident on CUDA device, indexed there (no DataLoader, no worker processes)
+- **Inference**: CUDA
 
-## Runtime
-Must be able to run the nnAgent using CPU only
-If possible, use apple CoreML (if on mac) to run agent.
-Else, fall back to run on CPU.
+### Cross-platform rules
+- Training code auto-detects platform: **CUDA → MPS → CPU**
+- **Any change to training, model, or inference code MUST NOT introduce regressions on the other platform.** If you modify a CUDA path, verify the MPS path is unaffected, and vice versa.
+- dtype differences matter: CUDA uses bfloat16, MPS uses float32 — never assume one dtype in shared code. Cast explicitly or use the platform-detected dtype throughout.
+- Do not add CUDA-only or MPS-only APIs in shared code paths. Guard with `if device.type == "cuda"` / `if device.type == "mps"` where platform-specific behavior is unavoidable.
+- When adding new ops or layers, check they are supported on **both** MPS and CUDA before committing.
+
+## Runtime (agent inference — game/web app)
+- Device priority: CUDA → MPS → CoreML → CPU
+- CPU is acceptable **only** when neither CUDA nor MPS is available (e.g. a CPU-only web server running the game)
+- CoreML is preferred over raw MPS for production agent inference on Apple Silicon
+
+## Training and evolution
+- **CUDA or MPS is mandatory.** If neither is available, the process must exit with a clear error — do NOT silently fall back to CPU.
+- This applies to `train.py`, genetic evolution, data collection, and any other training workload.
 
 # GIT
 I do all git commit, push, pull, add, delete, rename/mv
@@ -228,4 +248,6 @@ const action: AgentAction = agent.act(obs)
 
 ## Hardware Rules
 
-**NEVER fall back to CPU for NN inference.** Always use MPS (Apple GPU) on Apple Silicon. CPU is unacceptable for production inference.
+- **Training/evolution: CUDA or MPS required — no CPU fallback.** Missing both is a hard exit condition.
+- **Game inference: CPU is acceptable** only when no GPU device is available (e.g. CPU-only web server).
+- **Both platforms are first-class.** A change that works on one but breaks the other is a regression. Always consider both paths.

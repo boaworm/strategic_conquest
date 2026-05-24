@@ -126,6 +126,7 @@ def train(args):
 
     # Diagnostic: profile a few eager steps, dump a Chrome trace, and exit.
     # Eager (uncompiled) so every CUDA kernel is individually visible in the trace.
+    isOnCuda = (device.type == "cuda")
     if args.profile:
         from torch.profiler import profile, ProfilerActivity, schedule
         prof_dir = Path(__file__).resolve().parents[3] / "tmp"
@@ -144,9 +145,9 @@ def train(args):
                      schedule=schedule(wait=wait, warmup=warmup, active=active, repeat=1)) as prof:
             for b in range(wait + warmup + active):
                 idx = perm[b * prof_bs : (b + 1) * prof_bs]
-                states       = states_all.index_select(0, idx).to(device, non_blocking=True)
-                action_types = actions_all.index_select(0, idx).to(device, non_blocking=True)
-                tile_idxs    = tiles_all.index_select(0, idx).to(device, non_blocking=True)
+                states       = states_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
+                action_types = actions_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
+                tile_idxs    = tiles_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
                 with autocast():
                     out = model(states)
                     loss_at   = F.cross_entropy(out['action_type'], action_types, weight=class_weights)
@@ -174,9 +175,9 @@ def train(args):
         perm = train_idx[torch.randperm(train_n, device=storage_device)]
         for b in range(train_batches):
             idx = perm[b * batch_size : (b + 1) * batch_size]
-            states       = states_all.index_select(0, idx).to(device, non_blocking=True)
-            action_types = actions_all.index_select(0, idx).to(device, non_blocking=True)
-            tile_idxs    = tiles_all.index_select(0, idx).to(device, non_blocking=True)
+            states       = states_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
+            action_types = actions_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
+            tile_idxs    = tiles_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
 
             with autocast():
                 out = model(states)
@@ -205,8 +206,8 @@ def train(args):
         with torch.no_grad():
             for b in range(val_batches):
                 idx = val_idx[b * batch_size : (b + 1) * batch_size]
-                states       = states_all.index_select(0, idx).to(device, non_blocking=True)
-                action_types = actions_all.index_select(0, idx).to(device, non_blocking=True)
+                states       = states_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
+                action_types = actions_all.index_select(0, idx).to(device, non_blocking=isOnCuda)
                 with autocast():
                     out = model(states)
                 val_loss   += F.cross_entropy(out['action_type'], action_types).detach()
