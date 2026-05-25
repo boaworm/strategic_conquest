@@ -63,10 +63,21 @@ def train(args):
     batch_size = args.batch_size
     if args.target_vram_usage_gb > 0:
         # Empirical: ~3.4 MB activation memory per sample (measured on GB10 with this model)
-        # Fixed overhead: dataset + CUDA context + model + ~2 GB headroom
-        fixed_bytes   = dataset.states17.nbytes + 2 * 1024 ** 3
-        target_bytes  = int(args.target_vram_usage_gb * 1024 ** 3)
-        batch_size    = max(256, ((target_bytes - fixed_bytes) // (3_400_000)) // 256 * 256)
+        if device.type == "mps":
+            # Dataset stays in CPU/unified RAM; batches are copied to MPS per step.
+            # Budget from total system RAM rather than a VRAM ceiling.
+            import os
+            try:
+                total_bytes = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+            except (AttributeError, ValueError):
+                total_bytes = 16 * 1024 ** 3
+            # Reserve: dataset + 4 GB OS/other + 2 GB model/optimizer
+            fixed_bytes = dataset.states17.nbytes + 6 * 1024 ** 3
+            available   = total_bytes - fixed_bytes
+        else:
+            fixed_bytes = dataset.states17.nbytes + 2 * 1024 ** 3
+            available   = int(args.target_vram_usage_gb * 1024 ** 3) - fixed_bytes
+        batch_size = max(256, (available // 3_400_000) // 256 * 256)
         print(f"Auto batch size: {batch_size:,}  (target {args.target_vram_usage_gb} GB, dataset {dataset.states17.nbytes / 1024**3:.1f} GB)")
 
     use_amp = (device.type == "cuda")
@@ -279,8 +290,10 @@ def main():
                         help='Run validation every N epochs (always on the final epoch).')
     parser.add_argument('--file-idx',   type=int,   default=None,
                         help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')
-    parser.add_argument('--num-files',  type=int,   default=None,
+    parser.add_argument('--num-files',    type=int,   default=None,
                         help='Train sequentially on this many files (0..N-1) in one process.')
+    parser.add_argument('--start-at-file', type=int, default=0,
+                        help='Skip files before this 0-based index (default 0 = no skip).')
     parser.add_argument('--resume',     action='store_true',
                         help='Warm-start from existing checkpoint even at file-idx 0.')
     parser.add_argument('--profile',    action='store_true',
@@ -290,7 +303,7 @@ def main():
         args.file_idx = 0
         train(args)
     elif args.num_files:
-        for file_idx in range(args.num_files):
+        for file_idx in range(args.start_at_file, args.num_files):
             print(f"--- {args.unit_type} file {file_idx + 1}/{args.num_files} ---")
             args.file_idx = file_idx
             train(args)

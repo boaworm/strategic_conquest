@@ -238,13 +238,15 @@ def main():
                         help='Run validation every N epochs (always on the final epoch).')
     parser.add_argument('--file-idx',   type=int,   default=None,
                         help='Train on a single worker file (0-based). Warm-starts from existing checkpoint if > 0.')
-    parser.add_argument('--num-files',  type=int,   default=None,
+    parser.add_argument('--num-files',    type=int,   default=None,
                         help='Train sequentially on this many files (0..N-1) in one process.')
+    parser.add_argument('--start-at-file', type=int, default=0,
+                        help='Skip files before this 0-based index (default 0 = no skip).')
     parser.add_argument('--resume',     action='store_true',
                         help='Warm-start from existing checkpoint even at file-idx 0.')
     args = parser.parse_args()
     if args.num_files:
-        for file_idx in range(args.num_files):
+        for file_idx in range(args.start_at_file, args.num_files):
             print(f"--- production file {file_idx + 1}/{args.num_files} ---")
             args.file_idx = file_idx
             train(args)

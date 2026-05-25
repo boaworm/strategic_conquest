@@ -26,6 +26,7 @@ NUM_FILES=8
 TARGET_VRAM_USAGE_GB=50
 PRODUCTION_MIN_BATCHES=${PRODUCTION_MIN_BATCHES:-20}
 RESUME_FLAG=$([ "$RESUME" = "1" ] && echo "--resume" || echo "")
+START_AT_FILE_FLAG=$([ -n "$START_AT_FILE" ] && echo "--start-at-file $START_AT_FILE" || echo "")
 PROFILE_FLAG=$([ "$PROFILE" = "1" ] && echo "--profile" || echo "")
 
 # Parse which units and whether to run production
@@ -53,7 +54,7 @@ if is_gb10; then
   for UNIT_TYPE in "${UNITS[@]}"; do
     inner="$inner
 echo '=== Training movement expert: $UNIT_TYPE ==='
-python -u train_movement.py --unit-type $UNIT_TYPE --data-dir $DATA_DIR --out-dir $OUT_DIR --epochs $EPOCHS --num-files $NUM_FILES --target-vram-usage-gb $TARGET_VRAM_USAGE_GB $RESUME_FLAG $PROFILE_FLAG"
+python -u train_movement.py --unit-type $UNIT_TYPE --data-dir $DATA_DIR --out-dir $OUT_DIR --epochs $EPOCHS --num-files $NUM_FILES --target-vram-usage-gb $TARGET_VRAM_USAGE_GB $RESUME_FLAG $PROFILE_FLAG $START_AT_FILE_FLAG"
   done
   if $DO_PRODUCTION; then
     inner="$inner
@@ -80,7 +81,7 @@ else
       --epochs               "$EPOCHS" \
       --num-files            "$NUM_FILES" \
       --target-vram-usage-gb "$TARGET_VRAM_USAGE_GB" \
-      $RESUME_FLAG $PROFILE_FLAG
+      $RESUME_FLAG $PROFILE_FLAG $START_AT_FILE_FLAG
   done
   if $DO_PRODUCTION; then
     echo "=== Training production expert ==="
@@ -91,7 +92,7 @@ else
       --num-files            "$NUM_FILES" \
       --target-vram-usage-gb "$TARGET_VRAM_USAGE_GB" \
       --max-batch-size       "$PRODUCTION_MAX_BATCH" \
-      $RESUME_FLAG
+      $RESUME_FLAG $START_AT_FILE_FLAG
   fi
 fi
 
