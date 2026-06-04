@@ -140,14 +140,15 @@ class MPSSidecar {
     this.proc.stdin.write(Buffer.from([unitTypeIdx]));
     this.proc.stdin.write(tBytes);
 
-    const responseSize = (5 + this._mapHeight * this._mapWidth) * 4;
+    const NUM_ACTIONS = 2;  // must match NUM_MOVEMENT_ACTIONS in models_moe.py
+    const responseSize = (NUM_ACTIONS + this._mapHeight * this._mapWidth) * 4;
     const buf = await this._readExact(responseSize);
     // buf is a Node.js Buffer — slice its ArrayBuffer for alignment safety
     const ab  = buf.buffer.slice(buf.byteOffset, buf.byteOffset + responseSize);
     const flt = new Float32Array(ab);
     return {
-      actionType: flt.subarray(0, 5),
-      targetTile: flt.subarray(5),
+      actionType: flt.subarray(0, NUM_ACTIONS),
+      targetTile: flt.subarray(NUM_ACTIONS),
     };
   }
 

@@ -13,7 +13,7 @@ Binary protocol over stdin / stdout:
 
   MSG_INFER_MOVEMENT = 2
     payload:  [1B unit_type_idx] [float32 LE × 15*H*W]
-    response: [float32 LE × 5] [float32 LE × H*W]
+    response: [float32 LE × 2] [float32 LE × H*W]   (2 = NUM_MOVEMENT_ACTIONS: MOVE, SKIP)
 
   MSG_INFER_PRODUCTION = 3
     payload:  [float32 LE × 15*H*W] [float32 LE × 28]
@@ -73,16 +73,16 @@ _H: int = 0
 _W: int = 0
 
 
-def _init_models(H: int, W: int, channels: int = 15) -> None:
+def _init_models(H: int, W: int, mov_channels: int = 17, prod_channels: int = 15) -> None:
     global _H, _W
     _H, _W = H, W
     _models.clear()
     for name in UNIT_TYPE_NAMES:
-        m = MovementCNN(channels=channels, map_height=H, map_width=W)
+        m = MovementCNN(channels=mov_channels, map_height=H, map_width=W)
         _models[name] = m.to(device).eval()
-    prod = ProductionCNN(channels=channels, map_height=H, map_width=W)
+    prod = ProductionCNN(channels=prod_channels, map_height=H, map_width=W)
     _models['production'] = prod.to(device).eval()
-    sys.stderr.write(f'[moe_mps_server] models initialised ({len(_models)} experts, {W}x{H})\n')
+    sys.stderr.write(f'[moe_mps_server] models initialised ({len(_models)} experts, {W}x{H}, mov={mov_channels}ch prod={prod_channels}ch)\n')
     sys.stderr.flush()
 
 
@@ -94,11 +94,19 @@ def _handle_set_base(payload: bytes) -> None:
     W = struct.unpack('>H', payload[2:4])[0]
     npz_bytes = payload[4:]
 
-    if not _models or _H != H or _W != W:
-        _init_models(H, W)
-
     buf = io.BytesIO(npz_bytes)
     data = np.load(buf, allow_pickle=False)
+
+    # Infer in-channels from the actual conv1 weights in the npz
+    mov_ch = 17
+    prod_ch = 15
+    if 'army/conv1.weight' in data.files:
+        mov_ch = int(data['army/conv1.weight'].shape[1])
+    if 'production/conv1.weight' in data.files:
+        prod_ch = int(data['production/conv1.weight'].shape[1])
+
+    if not _models or _H != H or _W != W:
+        _init_models(H, W, mov_channels=mov_ch, prod_channels=prod_ch)
 
     for name in ALL_MODEL_NAMES:
         if name not in _models:

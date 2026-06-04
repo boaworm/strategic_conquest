@@ -26,3 +26,4 @@ data/
 packages/server/public/index.html
 .claude
 .vscode
+.aider*
