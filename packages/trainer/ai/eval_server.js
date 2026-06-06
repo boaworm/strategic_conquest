@@ -17,11 +17,54 @@ import { createInterface } from 'readline';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { createGameState, applyAction, getPlayerView, BasicAgent, NnMoEAgent } from '@sc/shared';
+import { createGameState, applyAction, getPlayerView, BasicAgent, NnMoEAgent, UNIT_STATS, distToNearestFriendlyCity } from '@sc/shared';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const MAX_CONSECUTIVE_FAILURES = 3;
+
+/**
+ * Strike-value of a combat event from p1's perspective.
+ *   enemy killed (defender or attacker): + (buildTime + cargo)
+ *   own killed   (defender or attacker): - (buildTime + cargo)
+ *
+ * Location multiplier (Run 7+ zone-based formulation):
+ *   zone_factor = dist_to_enemy_city / (dist_to_my_city + dist_to_enemy_city)
+ *   loc_factor  = 1 + γ · zone_factor
+ *     → zone_factor = 1 when the strike happens at MY city (max defensive value)
+ *     → zone_factor = 0 when at THEIR city (low value: they can replace easily)
+ *     → zone_factor = 0.5 in the middle (neutral)
+ *   γ=4 gives loc_factor range [1, 5].
+ */
+function strikeFromCombat(state, combat, attackerUnit, defenderUnit, p1, p2, gamma) {
+  if (!combat) return 0;
+  let signed = 0;
+
+  const cargoVal = u => (u?.cargo ?? []).reduce((s, cid) => {
+    const c = state.units.find(x => x.id === cid);
+    return c ? s + (UNIT_STATS[c.type]?.buildTime ?? 0) : s;
+  }, 0);
+
+  if (combat.defenderDestroyed && defenderUnit) {
+    const v = (UNIT_STATS[defenderUnit.type]?.buildTime ?? 0) + cargoVal(defenderUnit);
+    signed += (defenderUnit.owner === p1) ? -v : +v;
+  }
+  if (combat.attackerDestroyed && attackerUnit) {
+    const v = (UNIT_STATS[attackerUnit.type]?.buildTime ?? 0) + cargoVal(attackerUnit);
+    signed += (attackerUnit.owner === p1) ? -v : +v;
+  }
+  if (signed === 0) return 0;
+
+  const loc = defenderUnit ?? attackerUnit;
+  const dMyRaw    = distToNearestFriendlyCity(state, loc.x, loc.y, p1);
+  const dEnemyRaw = distToNearestFriendlyCity(state, loc.x, loc.y, p2);
+  // Cap infinities (player wiped out) to a finite far-distance fallback.
+  const dMy    = isFinite(dMyRaw)    ? dMyRaw    : 100;
+  const dEnemy = isFinite(dEnemyRaw) ? dEnemyRaw : 100;
+  const zone = dEnemy / (dMy + dEnemy + 1e-6);
+  const mult = 1 + gamma * zone;
+  return signed * mult;
+}
 
 // ── MPSSidecar ────────────────────────────────────────────────────────────────
 
@@ -181,16 +224,34 @@ class MPSSidecar {
 
 // ── Game runner ───────────────────────────────────────────────────────────────
 
-async function runGame(nnAgent, basicAgent, mapWidth, mapHeight, maxTurns) {
+async function runGame(nnAgent, basicAgent, mapWidth, mapHeight, maxTurns, alpha, beta, gamma, fitnessMode, strikeScale) {
   const state = createGameState({ width: mapWidth, height: mapHeight });
   const totalCities = state.cities.length;
+  const p1 = 'player1';
+  const p2 = 'player2';
   let winner = null;
   let cityScore = 0;
+  let strikeValue = 0;  // signed sum of combat events from p1's perspective
+
+  // Capture pre-action attacker/defender so we can read their type+cargo+location even if killed.
+  const captureCombat = (action, currentPid) => {
+    if (!action || !action.unitId) return { attackerUnit: null, defenderUnit: null };
+    const attacker = state.units.find(u => u.id === action.unitId);
+    // For MOVE/ATTACK actions, defender is at the target tile (any enemy unit there)
+    let defender = null;
+    if (action.targetX !== undefined && action.targetY !== undefined) {
+      defender = state.units.find(u => u.x === action.targetX && u.y === action.targetY && u.owner !== currentPid);
+    }
+    return {
+      attackerUnit: attacker ? { ...attacker, cargo: [...(attacker.cargo || [])] } : null,
+      defenderUnit: defender ? { ...defender, cargo: [...(defender.cargo || [])] } : null,
+    };
+  };
 
   while (winner === null && state.turn < maxTurns) {
     const pid = state.currentPlayer;
 
-    if (pid === 'player1') {
+    if (pid === p1) {
       let consecutiveFailures = 0;
       let done = false;
       while (!done && state.winner === null && state.currentPlayer === pid) {
@@ -200,7 +261,11 @@ async function runGame(nnAgent, basicAgent, mapWidth, mapHeight, maxTurns) {
           applyAction(state, action, pid);
           done = true;
         } else {
+          const snap = captureCombat(action, pid);
           const res = applyAction(state, action, pid);
+          if (res.combat) {
+            strikeValue += strikeFromCombat(state, res.combat, snap.attackerUnit, snap.defenderUnit, p1, p2, gamma);
+          }
           if (!res.success) {
             consecutiveFailures++;
             if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
@@ -212,11 +277,16 @@ async function runGame(nnAgent, basicAgent, mapWidth, mapHeight, maxTurns) {
           }
         }
       }
-      cityScore += state.cities.filter(c => c.owner === 'player1').length;
+      cityScore += state.cities.filter(c => c.owner === p1).length;
     } else {
       const view = getPlayerView(state, pid);
       const action = basicAgent.act({ ...view, myPlayerId: pid });
+      // capture for p2's actions too — strike value counts attacks against p1
+      const snap = captureCombat(action, pid);
       const res = applyAction(state, action, pid);
+      if (res.combat) {
+        strikeValue += strikeFromCombat(state, res.combat, snap.attackerUnit, snap.defenderUnit, p1, p2, gamma);
+      }
       if (!res.success && action.type !== 'END_TURN') {
         applyAction(state, { type: 'END_TURN' }, pid);
       }
@@ -225,7 +295,19 @@ async function runGame(nnAgent, basicAgent, mapWidth, mapHeight, maxTurns) {
     winner = state.winner;
   }
 
-  return totalCities > 0 ? cityScore / (maxTurns * totalCities) : 0;
+  const cityFitness = totalCities > 0 ? cityScore / (maxTurns * totalCities) : 0;
+  // Three fitness modes:
+  //   additive       : α·cityScore + β·strikeValue                     (Run 5 — strikes can compensate for city loss)
+  //   multiplicative : cityScore · (1 + β·strikeValue)                 (Run 6 — multiplier unbounded above, gameable)
+  //   bounded        : cityScore + β·tanh(strikeValue / strikeScale)   (Run 7+ — strike contribution bounded to ±β)
+  if (fitnessMode === 'multiplicative') {
+    return cityFitness * (1 + beta * strikeValue);
+  }
+  if (fitnessMode === 'bounded') {
+    const s = strikeScale > 0 ? strikeScale : 100;
+    return cityFitness + beta * Math.tanh(strikeValue / s);
+  }
+  return alpha * cityFitness + beta * strikeValue;
 }
 
 // ── Request handler ───────────────────────────────────────────────────────────
@@ -239,7 +321,7 @@ async function handleRequest(req, sidecar) {
     return { ok: true };
   }
 
-  const { weights_npz, games, width, height, maxTurns } = req;
+  const { weights_npz, games, width, height, maxTurns, alpha = 1.0, beta = 0.0, gamma = 0.0, fitnessMode = 'additive', strikeScale = 100 } = req;
 
   const state0 = createGameState({ width, height });
   const actualMapHeight = state0.mapHeight;
@@ -259,7 +341,7 @@ async function handleRequest(req, sidecar) {
 
   const results = [];
   for (let g = 0; g < games; g++) {
-    const fitness = await runGame(nnAgent, basicAgent, width, height, maxTurns);
+    const fitness = await runGame(nnAgent, basicAgent, width, height, maxTurns, alpha, beta, gamma, fitnessMode, strikeScale);
     results.push(fitness);
   }
   return { results };

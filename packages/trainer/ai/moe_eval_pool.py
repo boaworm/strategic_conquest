@@ -38,13 +38,18 @@ _SERVER_CWD = str(Path(__file__).parent.parent)
 NUM_GLOBAL = 28  # must match models_moe.py
 
 
+def _clean_key(layer: str) -> str:
+    """Strip torch.compile's `_orig_mod.` prefix so npz keys match model.state_dict()."""
+    return layer.removeprefix('_orig_mod.')
+
+
 def _build_base_npz(base_states: dict) -> bytes:
     """Pack base model weights (no perturbation) into a numpy .npz buffer."""
     from models_moe import ALL_MODEL_NAMES
     arrays = {}
     for name in ALL_MODEL_NAMES:
         for layer, param in base_states[name].items():
-            arrays[f'{name}/{layer}'] = param.detach().cpu().numpy()
+            arrays[f'{name}/{_clean_key(layer)}'] = param.detach().cpu().numpy()
     buf = io.BytesIO()
     np.savez(buf, **arrays)
     return buf.getvalue()
@@ -56,7 +61,7 @@ def _build_delta_npz(perturbations: dict) -> bytes:
     arrays = {}
     for name in ALL_MODEL_NAMES:
         for layer, arr in perturbations.get(name, {}).items():
-            arrays[f'{name}/{layer}'] = arr
+            arrays[f'{name}/{_clean_key(layer)}'] = arr
     buf = io.BytesIO()
     np.savez(buf, **arrays)
     return buf.getvalue()
@@ -70,12 +75,13 @@ def _export_model_to_bytes(model, model_name: str, config: dict) -> bytes:
     """Export a PyTorch model to ONNX bytes (in-memory, no disk I/O)."""
     model.eval().cpu()
     H, W = config['map_height'], config['map_width']
+    in_channels = int(model.conv1.weight.shape[1])
     buf = io.BytesIO()
 
     with _ONNX_EXPORT_LOCK, warnings.catch_warnings():
         warnings.simplefilter("ignore")
         if model_name == 'production':
-            dummy_spatial = torch.randn(1, 15, H, W)
+            dummy_spatial = torch.randn(1, in_channels, H, W)
             dummy_global  = torch.randn(1, NUM_GLOBAL)
             torch.onnx.export(
                 model, (dummy_spatial, dummy_global), buf,
@@ -84,7 +90,7 @@ def _export_model_to_bytes(model, model_name: str, config: dict) -> bytes:
                 output_names=["unit_type"],
             )
         else:
-            dummy = torch.randn(1, 15, H, W)
+            dummy = torch.randn(1, in_channels, H, W)
             torch.onnx.export(
                 model, dummy, buf,
                 export_params=True, opset_version=18, do_constant_folding=True,
@@ -125,7 +131,9 @@ class _EvalServer:
         if 'error' in resp:
             raise RuntimeError(f"eval_server set_base error: {resp['error']}")
 
-    def evaluate(self, weights_npz_b64: str, games: int, width: int, height: int, max_turns: int) -> list:
+    def evaluate(self, weights_npz_b64: str, games: int, width: int, height: int, max_turns: int,
+                 alpha: float = 1.0, beta: float = 0.0, gamma: float = 0.0,
+                 fitness_mode: str = 'additive', strike_scale: float = 100.0) -> list:
         """Send one delta genome request, block until response."""
         resp = self._send_recv({
             'weights_npz': weights_npz_b64,
@@ -133,10 +141,25 @@ class _EvalServer:
             'width': width,
             'height': height,
             'maxTurns': max_turns,
+            'alpha': alpha,
+            'beta': beta,
+            'gamma': gamma,
+            'fitnessMode': fitness_mode,
+            'strikeScale': strike_scale,
         })
         if 'error' in resp:
             raise RuntimeError(f"eval_server error: {resp['error']}")
         return resp['results']
+
+    def kill(self):
+        """Force-terminate the subprocess; blocked readline() will see EOF."""
+        try:
+            self._proc.kill()
+        except Exception:
+            pass
+
+    def is_alive(self) -> bool:
+        return self._proc.poll() is None
 
     def close(self):
         try:
@@ -153,11 +176,22 @@ class MoEEvalPool:
     """
 
     def __init__(self, num_workers: int, map_width: int, map_height: int,
-                 max_turns: int, games_per_agent: int):
+                 max_turns: int, games_per_agent: int,
+                 per_genome_timeout: float = 120.0,
+                 alpha: float = 1.0, beta: float = 0.0, gamma: float = 0.0,
+                 fitness_mode: str = 'additive', strike_scale: float = 100.0):
         self.map_width = map_width
         self.map_height = map_height
         self.max_turns = max_turns
         self.games_per_agent = games_per_agent
+        self.per_genome_timeout = per_genome_timeout
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.fitness_mode = fitness_mode
+        self.strike_scale = strike_scale
+        self._base_npz_b64: str | None = None
+        self._pool_lock = threading.Lock()
 
         # Queue of idle servers
         self._idle: Queue = Queue()
@@ -167,14 +201,14 @@ class MoEEvalPool:
             self._servers.append(s)
             self._idle.put(s)
 
-        print(f"[MoEEvalPool] {num_workers} eval servers ready", flush=True)
+        print(f"[MoEEvalPool] {num_workers} eval servers ready (per-genome timeout={per_genome_timeout}s)", flush=True)
 
     def set_base(self, base_states: dict, map_width: int, map_height: int) -> None:
         """Send base weights to all eval servers (call once before evolution loop)."""
         npz_bytes = _build_base_npz(base_states)
-        b64 = base64.b64encode(npz_bytes).decode('ascii')
+        self._base_npz_b64 = base64.b64encode(npz_bytes).decode('ascii')
         for server in self._servers:
-            server.set_base(b64, map_width, map_height)
+            server.set_base(self._base_npz_b64, map_width, map_height)
         print(f"[MoEEvalPool] base weights loaded into {len(self._servers)} servers", flush=True)
 
     def preexport(self, base_states: dict, perturbations: dict, configs: dict = None) -> str:
@@ -184,20 +218,49 @@ class MoEEvalPool:
         """
         return base64.b64encode(_build_delta_npz(perturbations)).decode('ascii')
 
+    def _respawn_server(self, dead_server: '_EvalServer') -> '_EvalServer':
+        """Kill the dead server and spawn a replacement with base weights loaded."""
+        try: dead_server.kill()
+        except Exception: pass
+        new_server = _EvalServer()
+        if self._base_npz_b64 is not None:
+            new_server.set_base(self._base_npz_b64, self.map_width, self.map_height)
+        with self._pool_lock:
+            try:
+                idx = self._servers.index(dead_server)
+                self._servers[idx] = new_server
+            except ValueError:
+                self._servers.append(new_server)
+        return new_server
+
     def evaluate_b64(self, weights_npz_b64: str) -> list:
         """
         Send pre-built npz weights to an idle server, return fitness list.
         Thread-safe — multiple threads can call this concurrently.
+        Per-genome timeout kills the sidecar and respawns a replacement.
         """
         server = self._idle.get()
+        timer = None
+        if self.per_genome_timeout and self.per_genome_timeout > 0:
+            timer = threading.Timer(self.per_genome_timeout, server.kill)
+            timer.daemon = True
+            timer.start()
         try:
             results = server.evaluate(
                 weights_npz_b64, self.games_per_agent,
                 self.map_width, self.map_height, self.max_turns,
+                alpha=self.alpha, beta=self.beta, gamma=self.gamma,
+                fitness_mode=self.fitness_mode, strike_scale=self.strike_scale,
             )
-        finally:
+            if timer: timer.cancel()
             self._idle.put(server)
-        return results
+            return results
+        except Exception:
+            if timer: timer.cancel()
+            # server is suspect (killed by timer or died on its own) — replace it
+            new_server = self._respawn_server(server)
+            self._idle.put(new_server)
+            raise
 
     def evaluate(self, base_states: dict, perturbations: dict, configs: dict) -> list:
         """Export + evaluate in one call (kept for compatibility)."""
