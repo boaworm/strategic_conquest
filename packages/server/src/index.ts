@@ -305,6 +305,8 @@ io.on('connection', (socket) => {
 
 // ── Start ────────────────────────────────────────────────────
 
-server.listen(PORT, () => {
-  console.log(`Strategic Conquest server listening on port ${PORT}`);
+// Bind to localhost by default; the public entry point is the reverse proxy
+const HOST = process.env.HOST || '127.0.0.1';
+server.listen(PORT, HOST, () => {
+  console.log(`Strategic Conquest server listening on ${HOST}:${PORT}`);
 });
